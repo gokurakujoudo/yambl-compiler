@@ -1,0 +1,1 @@
+"""Canonical YAMBL source layout."""

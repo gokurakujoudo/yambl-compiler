@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "yambl-compiler"
+version = "0.1.0"
+description = "Static checks and formatting for YAMBL models"
+requires-python = ">=3.14"
+dependencies = ["lclang==1.1.2", "lark==1.3.1"]
+
+[project.optional-dependencies]
+dev = ["black==26.10.1", "ruff==0.17.1", "mypy==2.4.0", "pyright==1.1.414", "coverage==7.16.2", "docutils==0.22.4"]
+
+[project.scripts]
+yambl = "yambl_compiler.application.cli:main"
+
+[tool.setuptools.package-data]
+yambl_compiler = ["py.typed"]
+"yambl_compiler.syntax" = ["grammar.lark"]
+
+[tool.black]
+line-length = 100
+skip-string-normalization = true
+target-version = ["py314"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+[tool.ruff.lint]
+select = ["F", "I"]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+python_version = "3.14"
+
+[tool.pyright]
+include = ["src"]
+typeCheckingMode = "strict"
+pythonVersion = "3.14"
+venvPath = "."
+venv = "venv"
+
+[tool.coverage.run]
+branch = true
+source = ["src/yambl_compiler"]
+[tool.coverage.report]
+fail_under = 100
+show_missing = true

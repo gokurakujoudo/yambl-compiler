@@ -1,0 +1,33 @@
+start: namespace_decl? import_decl* declaration*
+namespace_decl: NAMESPACE qualified_name
+qualified_name: NAME ("." NAME)*
+import_decl: FROM qualified_name IMPORT NAME
+?declaration: entity | decodes
+entity: ENTITY NAME "{" field* "}"
+field: annotation? field_body
+field_body: (ID | ATTR | SNAPSHOT ATTR) NAME ":" type_expr
+annotation: "@" TEMPORAL "(" NAME ":" type_expr ")"
+decodes: DECODES NAME "{" entry* "}"
+entry: "-" INT NAME ":" STRING
+type_expr: NAME (parameters | arguments)?
+arguments: "<" type_expr ("," type_expr)* ">"
+parameters: "[" parameter ("," parameter)* "]"
+?parameter: named_parameter | literal
+named_parameter: NAME ":" literal
+?literal: INT | STRING
+NAME: /[a-zA-Z_][a-zA-Z_0-9]*/
+NAMESPACE: /namespace\b/
+FROM: /from\b/
+IMPORT: /import\b/
+ENTITY: /entity\b/
+ID: /id\b/
+ATTR: /attr\b/
+SNAPSHOT: /snapshot\b/
+TEMPORAL: /temporal\b/
+DECODES: /decodes\b/
+INT: /-?[0-9]+/
+STRING: /'([^'\\\r\n]|\\[^\r\n])*'/
+COMMENT: /#[^\r\n]*/
+%import common.WS
+%ignore WS
+%ignore COMMENT
