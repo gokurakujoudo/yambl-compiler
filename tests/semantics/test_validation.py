@@ -37,7 +37,7 @@ class ValidationTests(unittest.TestCase):
         diagnostics = check(sources)
         self.assertEqual(len(diagnostics), 1)
         self.assertEqual(diagnostics[0].path, Path('other/two.yambl'))
-        self.assertIn('visible Decodes instance', diagnostics[0].message)
+        self.assertIn('undefined Decodes: Currencies', diagnostics[0].message)
 
     def test_invalid_types(self):
         cases = {
@@ -51,8 +51,8 @@ class ValidationTests(unittest.TestCase):
             'collection[2]': 'invalid type arguments',
             'collection<Thing, Thing>': 'invalid type arguments',
             'map<string>': 'invalid type arguments',
-            'code<Thing>': 'visible Decodes instance',
-            'code<Currencies<string>>': 'visible Decodes instance',
+            'code<Thing>': 'Decodes instance identifier',
+            'code<Currencies<string>>': 'Decodes instance identifier',
             'string<Thing>': 'does not accept generic',
             'decimal[18, scale: 4]': 'invalid parameters',
             'decimal[precision: 18, 4]': 'invalid parameters',

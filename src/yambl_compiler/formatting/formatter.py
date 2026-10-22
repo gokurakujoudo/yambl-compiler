@@ -56,8 +56,12 @@ def format_document(document: Document) -> str:
     # The start and field rules contain only subtrees, as specified by grammar.lark.
     for declaration in cast(list[Tree[Token]], document.tree.children):
         items = tokens(declaration)
-        if declaration.data in ('entity', 'decodes'):
-            header = line_piece(items[:3], 0)
+        if declaration.data in ('entity', 'decodes', 'extension'):
+            for metadata in children(declaration, 'metadata'):
+                pieces.append(line_piece(tokens(metadata), 0))
+            header_tokens = tokens(children(declaration, f'{declaration.data}_header')[0])
+            brace = next(item for item in items if item.type == 'LBRACE')
+            header = line_piece([*header_tokens, brace], 0)
             closing = line_piece(items[-1:], 0)
             pieces.extend((header, closing))
             blocks.append((header.end, closing.start))

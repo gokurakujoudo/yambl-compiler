@@ -3,10 +3,18 @@
 import unittest
 from pathlib import Path
 
-from yambl_compiler.syntax.parser import Diagnostic, parse
+from tests.support import document
+from yambl_compiler.syntax.parser import Diagnostic, parse, string_value, tokens
 
 
 class SyntaxTests(unittest.TestCase):
+    def test_escaped_quotes_and_literal_backslashes(self):
+        parsed = document(
+            r"entity A { @description('Security\'s # currency \\ path \d') attr x: string }"
+        )
+        value = next(token for token in tokens(parsed.tree) if token.type == 'STRING')
+        self.assertEqual(string_value(value), "Security's # currency \\ path \\d")
+
     def test_syntax_and_locations(self):
         for source in [
             'entity Fund',

@@ -112,7 +112,7 @@ def run(path: Path, operation: Literal['check', 'format'], verify: bool = False)
         if operation == 'check':
             diagnostics = check(documents)
             return Report(
-                not diagnostics,
+                not any(item.severity == 'error' for item in diagnostics),
                 [str(item) for item in diagnostics] + [f'checked {len(documents)} file(s)'],
             )
         changed = 0

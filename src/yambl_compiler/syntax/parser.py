@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from lark import Lark, Token, Tree, UnexpectedInput
 
@@ -35,19 +35,21 @@ class Diagnostic:
     :param line: One-based source line.
     :param column: One-based source column.
     :param message: Human-readable explanation.
+    :param severity: Error or a nonfatal warning.
     """
 
     path: Path
     line: int
     column: int
     message: str
+    severity: Literal['error', 'warning'] = 'error'
 
     def __str__(self) -> str:
         """Render an editor-compatible diagnostic.
 
         :returns: Path, location, severity, and explanation.
         """
-        return f'{self.path}:{self.line}:{self.column}: error: {self.message}'
+        return f'{self.path}:{self.line}:{self.column}: {self.severity}: {self.message}'
 
 
 @dataclass(frozen=True)
@@ -101,3 +103,32 @@ def parse(text: str, path: Path = Path('<input>')) -> Document | Diagnostic:
         return Document(path, text, cast(TextParser, PARSER).parse(text))
     except UnexpectedInput as error:
         return Diagnostic(path, max(1, error.line), max(1, error.column), 'invalid YAMBL syntax')
+
+
+def diagnostic(
+    document: Document,
+    node: Tree[Token],
+    message: str,
+    severity: Literal['error', 'warning'] = 'error',
+) -> Diagnostic:
+    """Locate a diagnostic at the first token of a rule.
+
+    :param document: Owning source.
+    :param node: Offending syntax.
+    :param message: Explanation.
+    :param severity: Error or nonfatal warning.
+    :returns: Positioned diagnostic.
+    """
+    token = tokens(node)[0]
+    return Diagnostic(document.path, token.line or 1, token.column or 1, message, severity)
+
+
+def string_value(token: Token) -> str:
+    """Decode escaped quotes and backslashes without interpreting regex escapes.
+
+    :param token: A parsed single-quoted STRING token.
+    :returns: Unquoted text; other backslash sequences retain their spelling.
+    """
+    import re
+
+    return re.sub(r"\\(['\\])", r'\1', str(token)[1:-1])

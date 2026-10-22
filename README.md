@@ -27,20 +27,42 @@ typed `LCL[...]` overrides are also supported; only load configuration you trust
 Exit status is 0 for success, 1 for invalid sources, I/O failures, or formatting
 drift, and 2 for CLI usage or unexpected runtime errors. Source diagnostics and
 summaries go to stdout; lclang workflow logs go to stderr. A dry run that finds
-formatting drift returns 1.
+formatting drift returns 1. Warnings alone return 0.
 
 ## Checks
 
-The checker supports entity and Decodes declarations, fields, independent temporal
-snapshots, primitive parameters, collection generics, namespaces, and imports.
-It checks naming conventions, duplicate declarations and fields, Decodes entry
-identity, imports, references, and built-in type constraints. Diagnostics include
+The checker supports entity and Decodes declarations, attribute extensions, single
+inheritance, snapshot and SCD Type 2 attributes, configuration parameters, metadata,
+dimensions, primitive parameters, collection generics, namespaces, and imports.
+It checks naming conventions, duplicate declarations and fields, inheritance cycles,
+Decodes entry identity, imports, references, and built-in type constraints. Diagnostics include
 the source path, line, and column. Each file reports its first syntax error;
 semantic diagnostics are collected after every file parses.
 
 Namespace declarations determine scope independently of directories. Files in
 the same namespace share declarations. Cross-namespace imports apply only to the
 importing file. Circular entity references are supported.
+
+`extend Security { ... }` merges attributes directly into `Security`. It creates
+no separate entity or namespace symbol. Each merged attribute retains its metadata
+and source file, line, and column; its references resolve in the declaring file's
+scope. Inheritance checks use the complete merged fields, independent of file
+order. Duplicate local or inherited names are errors; overrides are not supported.
+Extensions add attributes, not identifiers. Inheritance and extensions currently
+target user-defined entity types; `Decodes` is sealed.
+
+Both `code<Currencies>` and `code<'Currencies'>` name a Decodes instance. Undefined
+dictionaries are allowed: each occurrence produces an `undefined Decodes: NAME`
+warning with its path, line, and column. This includes uses inside generics and
+`@dimensions`. Missing explicit imports and unknown entity types remain errors.
+
+`@title('...')` and `@description('...')` attach metadata to entities, Decodes
+declarations, or fields. `@dimensions(source: Type, ...)` describes additional
+attribute dimensions. `@temporal(as_of_date: date)` applies to `snapshot` or `scd`.
+`config` attributes are time-independent and may declare a default with `= literal`.
+Supported defaults are integer literals for `integer` and `snowflake_id`, numeric
+literals for `float` and `decimal`, single-quoted strings for `string`, and
+`true` / `false` for `bool`. Other default types and expressions are not implemented.
 
 Checking a single file searches its parents for the nearest `yambl-root.lclcfg`.
 If found, all YAMBL sources beneath that root form the compilation unit, and
@@ -56,8 +78,9 @@ Current implementation limits:
   places declarations in the compilation unit's unnamed namespace.
 - Imports accept one name, without aliases or wildcards. Import collisions fail.
 - Identifiers use ASCII letters, digits, and underscores. Strings use single
-  quotes and may contain backslash escapes; their spelling is preserved without
-  interpreting escapes or choosing a regular-expression dialect.
+  quotes; `\'` represents a quote and `\\` a backslash. Other escape sequences
+  retain their spelling. Formatting preserves the original string spelling and
+  does not choose a regular-expression dialect.
 - `snowflake_id` is a built-in value type. Its bit layout and generation policy
   are not specified. Unresolved types fail; custom value-type declarations are
   not defined yet.
@@ -65,6 +88,10 @@ Current implementation limits:
   does not attempt linguistic plural detection.
 - Static checks describe model declarations. They do not validate business data
   completeness, snapshot consistency, regex matches, or stored collection values.
+- The language specifies `NOT_DEFINED` when a subtype field does not apply to an
+  instance's actual type. Instance evaluation, SCD history storage, and configuration
+  overrides are future runtime or backend work. The checker does not execute them;
+  `NOT_DEFINED` is not currently accepted as a configuration default literal.
 
 ## Formatting
 
@@ -96,7 +123,11 @@ Source and unit tests use the same functional package structure:
 | Source package under `src/yambl_compiler/` | Matching tests | Responsibility |
 | --- | --- | --- |
 | `syntax/parser.py`, `syntax/grammar.lark` | `tests/syntax/test_parser.py` | Tokens, parse trees, source diagnostics |
-| `semantics/validation.py` | `tests/semantics/test_validation.py` | Namespaces, references, type constraints |
+| `semantics/validation.py` | `tests/semantics/test_validation.py` | Compilation-unit validation |
+| `semantics/symbols.py` | `tests/semantics/test_symbols.py` | Namespace symbols and file-local imports |
+| `semantics/types.py` | `tests/semantics/test_types.py` | Type constraints and external Decodes |
+| `semantics/fields.py` | `tests/semantics/test_fields.py` | Metadata, modes, dimensions, and defaults |
+| `semantics/entities.py` | `tests/semantics/test_entities.py` | Merged attributes, locations, and inheritance |
 | `formatting/formatter.py` | `tests/formatting/test_formatter.py` | Layout and comment preservation |
 | `application/project.py` | `tests/application/test_project.py` | File discovery and publication |
 | `application/cli.py` | `tests/application/test_cli.py` | lclang CLI workflows |

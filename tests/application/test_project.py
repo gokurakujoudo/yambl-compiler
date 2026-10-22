@@ -9,6 +9,22 @@ from yambl_compiler.application.project import replace_text, run, source_files
 
 
 class ProjectTests(FilesystemCase):
+    def test_warnings_pass_and_errors_still_fail(self):
+        source = self.write('security.yambl', "entity Security { attr market: code<'Markets'> }")
+        report = run(source, 'check')
+        self.assertTrue(report.ok)
+        self.assertIn('warning: undefined Decodes: Markets', report.messages[0])
+        self.assertEqual(report.messages[-1], 'checked 1 file(s)')
+        source.write_text(
+            "entity Security { attr market: code<'Markets'> attr x: Missing }", encoding='utf-8'
+        )
+        report = run(source, 'check')
+        self.assertFalse(report.ok)
+        self.assertTrue(
+            any('warning: undefined Decodes: Markets' in item for item in report.messages)
+        )
+        self.assertTrue(any('error: unknown type: Missing' in item for item in report.messages))
+
     def test_inaccessible_directory_stops_batch(self):
         source = self.write('a.yambl', 'entity A{}')
         blocked = self.write('restricted/b.yambl', 'entity B{}').parent

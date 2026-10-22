@@ -2,15 +2,26 @@ start: namespace_decl? import_decl* declaration*
 namespace_decl: NAMESPACE qualified_name
 qualified_name: NAME ("." NAME)*
 import_decl: FROM qualified_name IMPORT NAME
-?declaration: entity | decodes
-entity: ENTITY NAME "{" field* "}"
-field: annotation? field_body
-field_body: (ID | ATTR | SNAPSHOT ATTR) NAME ":" type_expr
-annotation: "@" TEMPORAL "(" NAME ":" type_expr ")"
-decodes: DECODES NAME "{" entry* "}"
+?declaration: entity | decodes | extension
+entity: metadata* entity_header "{" field* "}"
+entity_header: ENTITY NAME inheritance?
+inheritance: INHERITS NAME
+extension: extension_header "{" field* "}"
+extension_header: EXTEND NAME
+field: annotation* field_body
+field_body: (ID | ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) NAME ":" type_expr default_value?
+default_value: "=" (INT | NUMBER | STRING | BOOLEAN)
+?annotation: metadata | temporal | dimensions
+metadata: "@" METADATA "(" STRING ")"
+temporal: "@" TEMPORAL "(" dimension ("," dimension)* ")"
+dimensions: "@" DIMENSIONS "(" dimension ("," dimension)* ")"
+dimension: NAME ":" type_expr
+decodes: metadata* decodes_header "{" entry* "}"
+decodes_header: DECODES NAME
 entry: "-" INT NAME ":" STRING
 type_expr: NAME (parameters | arguments)?
-arguments: "<" type_expr ("," type_expr)* ">"
+arguments: "<" (type_expr | string_argument) ("," (type_expr | string_argument))* ">"
+string_argument: STRING
 parameters: "[" parameter ("," parameter)* "]"
 ?parameter: named_parameter | literal
 named_parameter: NAME ":" literal
@@ -23,9 +34,17 @@ ENTITY: /entity\b/
 ID: /id\b/
 ATTR: /attr\b/
 SNAPSHOT: /snapshot\b/
+SCD: /scd\b/
+CONFIG: /config\b/
+EXTEND: /extend\b/
+INHERITS: /inherits\b/
+METADATA: /(?:title|description)\b/
+DIMENSIONS: /dimensions\b/
 TEMPORAL: /temporal\b/
 DECODES: /decodes\b/
 INT: /-?[0-9]+/
+NUMBER.1: /-?(?:[0-9]+\.[0-9]+(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)/
+BOOLEAN: /(?:true|false)\b/
 STRING: /'([^'\\\r\n]|\\[^\r\n])*'/
 COMMENT: /#[^\r\n]*/
 %import common.WS
