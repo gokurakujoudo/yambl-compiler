@@ -157,3 +157,17 @@ A stable intermediate representation and target generation are future work.
 Planned targets include database schemas, data interfaces, and Python libraries.
 The current business example lives in
 [fmc-data-model](https://github.com/gokurakujoudo/fmc-data-model).
+
+## VS Code language server
+
+The companion [YAMBL extension](https://github.com/gokurakujoudo/yambl/tree/feat/language-foundations/tools/vscode)
+bundles a JavaScript LSP in `yambl/tools/lsp/`. It runs with VS Code's own Node
+runtime and never invokes this Python package. The Python CLI remains available
+for repository checks and automation.
+
+When changing syntax, keywords, annotations, built-ins, or validation rules, update
+the LSP and TextMate grammar in the language repository too. From this repository,
+run `node ../yambl/tools/lsp/tests/parity.cjs` to compare syntax acceptance,
+diagnostics, and formatting against the editor regression corpus and FMC sources.
+That development check uses this repository's venv; installed editor users do not
+need Python. The server's implementation limits are documented with its source.
