@@ -168,6 +168,12 @@ for repository checks and automation.
 When changing syntax, keywords, annotations, built-ins, or validation rules, update
 the LSP and TextMate grammar in the language repository too. From this repository,
 run `node ../yambl/tools/lsp/tests/parity.cjs` to compare syntax acceptance,
-diagnostics, and formatting against the editor regression corpus and FMC sources.
+core diagnostics, and formatting against the editor regression corpus and FMC sources.
 That development check uses this repository's venv; installed editor users do not
 need Python. The server's implementation limits are documented with its source.
+
+The editor intentionally suppresses `undefined Decodes` warnings because those
+dictionaries may be supplied dynamically. This CLI continues to report each
+external dictionary use. Missing explicit imports and unknown entity types remain
+errors in both implementations. Parity tests compare the shared validation rules
+before the editor applies that diagnostic filter.
