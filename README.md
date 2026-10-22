@@ -32,7 +32,7 @@ formatting drift returns 1. Warnings alone return 0.
 ## Checks
 
 The checker supports entity and Decodes declarations, attribute extensions, single
-inheritance, snapshot and SCD Type 2 attributes, configuration parameters, metadata,
+inheritance, final entities, static, snapshot and SCD Type 2 attributes, configuration parameters, metadata,
 dimensions, primitive parameters, collection generics, namespaces, and imports.
 It checks naming conventions, duplicate declarations and fields, inheritance cycles,
 Decodes entry identity, imports, references, and built-in type constraints. Diagnostics include
@@ -47,9 +47,14 @@ importing file. Circular entity references are supported.
 no separate entity or namespace symbol. Each merged attribute retains its metadata
 and source file, line, and column; its references resolve in the declaring file's
 scope. Inheritance checks use the complete merged fields, independent of file
-order. Duplicate local or inherited names are errors; overrides are not supported.
+order. Duplicate local names are errors. An inherited attribute may be redeclared
+with `@override` when its signature matches. Independent branches sharing an
+ancestor must mark same-name attributes with `@overload` and use matching signatures.
+Overload groups need at least two independent implementations. Both markers compare
+resolved types, attribute modes and metadata; config defaults may differ.
+A `final entity` cannot be inherited or extended.
 Extensions add attributes, not identifiers. Inheritance and extensions currently
-target user-defined entity types; `Decodes` is sealed.
+target user-defined entity types; `Decodes` is sealed and `ConfigGroup` is final.
 
 Both `code<Currencies>` and `code<'Currencies'>` name a Decodes instance. Undefined
 dictionaries are allowed: each occurrence produces an `undefined Decodes: NAME`
@@ -63,6 +68,21 @@ attribute dimensions. `@temporal(as_of_date: date)` applies to `snapshot` or `sc
 Supported defaults are integer literals for `integer` and `snowflake_id`, numeric
 literals for `float` and `decimal`, single-quoted strings for `string`, and
 `true` / `false` for `bool`. Other default types and expressions are not implemented.
+
+`ConfigGroup` is a built-in entity reference. `type<Entity>` accepts any entity
+type; `type<T>` restricts the value to T and its descendants. Entity is a constraint,
+not a common root entity. `field_mapping<mode, Target>` selects attributes by mode
+across the target, inherited fields, extensions and descendants. Target can be an
+entity name or `self.field`, where any declared field of type `type<...>` is valid,
+regardless of its name or mode. Forward references and inherited or extended fields
+are supported; their types resolve in their original file scopes. Self paths have
+one field segment. Modes are `attr`, `static`, `config`, `snapshot`, and `scd`.
+Mapping values follow each selected field's complete type. Type values are value
+types; field mappings are collections and follow the existing outer-container rules.
+
+The checker retains effective fields, overload identities and declaration locations.
+It does not accept configuration-group instance syntax or evaluate mappings,
+conditions, configuration precedence, or computed fields.
 
 Checking a single file searches its parents for the nearest `yambl-root.lclcfg`.
 If found, all YAMBL sources beneath that root form the compilation unit, and
@@ -115,7 +135,8 @@ Avoid concurrent edits while formatting. Repeating a successful run changes noth
 
 The parser retains a concrete syntax tree and source positions. The formatter
 uses those positions to preserve comments; the validator resolves a compilation
-unit in two passes. The filesystem layer owns discovery and publication. Thin
+unit by resolving scopes, merging entity fields, checking field relationships, and
+validating types. The filesystem layer owns discovery and publication. Thin
 lclang workflows expose the `check` and `format` commands.
 
 Source and unit tests use the same functional package structure:
@@ -127,6 +148,7 @@ Source and unit tests use the same functional package structure:
 | `semantics/symbols.py` | `tests/semantics/test_symbols.py` | Namespace symbols and file-local imports |
 | `semantics/types.py` | `tests/semantics/test_types.py` | Type constraints and external Decodes |
 | `semantics/fields.py` | `tests/semantics/test_fields.py` | Metadata, modes, dimensions, and defaults |
+| `semantics/signatures.py` | `tests/semantics/test_signatures.py` | Resolved field contract comparisons |
 | `semantics/entities.py` | `tests/semantics/test_entities.py` | Merged attributes, locations, and inheritance |
 | `formatting/formatter.py` | `tests/formatting/test_formatter.py` | Layout and comment preservation |
 | `application/project.py` | `tests/application/test_project.py` | File discovery and publication |

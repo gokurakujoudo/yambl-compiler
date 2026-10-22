@@ -5,7 +5,7 @@ import re
 from lark import Token, Tree
 
 from yambl_compiler.semantics.symbols import Unit
-from yambl_compiler.semantics.types import check_type
+from yambl_compiler.semantics.types import FieldTypes, check_type
 from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, tokens
 
 
@@ -35,7 +35,11 @@ def check_metadata(node: Tree[Token], unit: Unit, diagnostics: list[Diagnostic])
 
 
 def check_field(
-    field: Tree[Token], unit: Unit, diagnostics: list[Diagnostic], extension: bool
+    field: Tree[Token],
+    unit: Unit,
+    diagnostics: list[Diagnostic],
+    extension: bool,
+    self_fields: FieldTypes | None = None,
 ) -> None:
     """Check field syntax semantics without inspecting business records.
 
@@ -43,6 +47,7 @@ def check_field(
     :param unit: Owning source and scope.
     :param diagnostics: Destination for type and modifier diagnostics.
     :param extension: Whether this field adds an attribute to an existing entity.
+    :param self_fields: Effective fields for dependent mapping types.
     :returns: None; appends errors and unresolved Decodes warnings.
     """
     body = children(field, 'field_body')[0]
@@ -55,7 +60,16 @@ def check_field(
             diagnostic(unit.document, body, 'extend may add attributes, not id fields')
         )
     type_node = children(body, 'type_expr')[0]
-    check_type(type_node, unit, diagnostics)
+    check_type(type_node, unit, diagnostics, self_fields)
+    markers = children(field, 'field_marker')
+    if len(markers) > 1:
+        diagnostics.append(
+            diagnostic(
+                unit.document, markers[-1], 'only one overload or override marker is allowed'
+            )
+        )
+    if markers and mode == 'id':
+        diagnostics.append(diagnostic(unit.document, markers[0], 'field markers require an attr'))
     check_metadata(field, unit, diagnostics)
     for temporal in children(field, 'temporal'):
         if mode not in ('snapshot', 'scd') or [str(t) for t in tokens(temporal)] != [
@@ -89,7 +103,7 @@ def check_field(
                     diagnostic(unit.document, dimension, f'duplicate dimension: {dimension_name}')
                 )
             dimensions_seen.add(dimension_name)
-            check_type(children(dimension, 'type_expr')[0], unit, diagnostics)
+            check_type(children(dimension, 'type_expr')[0], unit, diagnostics, self_fields)
     for default in children(body, 'default_value'):
         if mode != 'config':
             diagnostics.append(

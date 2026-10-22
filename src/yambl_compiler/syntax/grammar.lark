@@ -4,14 +4,15 @@ qualified_name: NAME ("." NAME)*
 import_decl: FROM qualified_name IMPORT NAME
 ?declaration: entity | decodes | extension
 entity: metadata* entity_header "{" field* "}"
-entity_header: ENTITY NAME inheritance?
+entity_header: FINAL? ENTITY NAME inheritance?
 inheritance: INHERITS NAME
 extension: extension_header "{" field* "}"
 extension_header: EXTEND NAME
 field: annotation* field_body
-field_body: (ID | ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) NAME ":" type_expr default_value?
+field_body: (ID | ATTR | STATIC ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) NAME ":" type_expr default_value?
 default_value: "=" (INT | NUMBER | STRING | BOOLEAN)
-?annotation: metadata | temporal | dimensions
+?annotation: metadata | temporal | dimensions | field_marker
+field_marker: "@" FIELD_MARKER
 metadata: "@" METADATA "(" STRING ")"
 temporal: "@" TEMPORAL "(" dimension ("," dimension)* ")"
 dimensions: "@" DIMENSIONS "(" dimension ("," dimension)* ")"
@@ -20,7 +21,8 @@ decodes: metadata* decodes_header "{" entry* "}"
 decodes_header: DECODES NAME
 entry: "-" INT NAME ":" STRING
 type_expr: NAME (parameters | arguments)?
-arguments: "<" (type_expr | string_argument) ("," (type_expr | string_argument))* ">"
+arguments: "<" (type_expr | string_argument | self_field) ("," (type_expr | string_argument | self_field))* ">"
+self_field: SELF "." NAME
 string_argument: STRING
 parameters: "[" parameter ("," parameter)* "]"
 ?parameter: named_parameter | literal
@@ -31,6 +33,10 @@ NAMESPACE: /namespace\b/
 FROM: /from\b/
 IMPORT: /import\b/
 ENTITY: /entity\b/
+FINAL: /final\b/
+STATIC: /static\b/
+SELF.2: /self\b/
+FIELD_MARKER: /(?:overload|override)\b/
 ID: /id\b/
 ATTR: /attr\b/
 SNAPSHOT: /snapshot\b/

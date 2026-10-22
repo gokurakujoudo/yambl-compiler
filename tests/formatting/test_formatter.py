@@ -7,6 +7,12 @@ from yambl_compiler.formatting.formatter import format_document
 
 
 class FormattingTests(unittest.TestCase):
+    def test_dependent_types_and_relationship_markers(self):
+        source = "final entity Selection{attr selected:type<Entity> @overload config attr limit:integer=10 attr when:field_mapping<static,self.selected>}#end"
+        expected = 'final entity Selection {\n    attr selected: type<Entity>\n    @overload\n    config attr limit: integer = 10\n    attr when: field_mapping<static, self.selected>\n}  # end\n'
+        self.assertEqual(format_document(document(source)), expected)
+        self.assertEqual(format_document(document(expected)), expected)
+
     def test_extensions_metadata_and_defaults(self):
         source = "@title( 'Security' ) entity Security{}\n\nextend Security{@description('Security\\'s # price') @dimensions(source:code<'PriceSources'>) @temporal(as_of_date:date) snapshot attr price:decimal config attr days:integer=20}\n\nentity Bond inherits Security{@temporal(as_of_date:date) scd attr notional:decimal}"
         expected = "@title('Security')\nentity Security {\n}\n\nextend Security {\n    @description('Security\\'s # price')\n    @dimensions(source: code<'PriceSources'>)\n    @temporal(as_of_date: date)\n    snapshot attr price: decimal\n    config attr days: integer = 20\n}\n\nentity Bond inherits Security {\n    @temporal(as_of_date: date)\n    scd attr notional: decimal\n}\n"

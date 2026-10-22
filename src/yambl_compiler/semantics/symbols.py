@@ -10,8 +10,9 @@ from lark import Token, Tree
 from yambl_compiler.syntax.parser import Diagnostic, Document, children, diagnostic, tokens
 
 VALUES = {'bool', 'string', 'integer', 'float', 'decimal', 'date', 'datetime', 'snowflake_id'}
-GENERICS = {'collection', 'values', 'map', 'code'}
-ENTITIES = {'Decodes', 'DecodesEntry'}
+GENERICS = {'collection', 'values', 'map', 'code', 'type', 'field_mapping'}
+ENTITIES = {'Decodes', 'DecodesEntry', 'ConfigGroup'}
+RESERVED = VALUES | GENERICS | ENTITIES | {'Entity'}
 type EntityKey = tuple[str, str]
 
 
@@ -58,6 +59,15 @@ def header(node: Tree[Token]) -> Tree[Token]:
     return children(node, f'{node.data}_header')[0]
 
 
+def declaration_name(node: Tree[Token]) -> str:
+    """Read a declaration name independently of header modifiers.
+
+    :param node: Entity, extension or dictionary declaration.
+    :returns: Declared name.
+    """
+    return str(next(token for token in tokens(header(node)) if token.type == 'NAME'))
+
+
 def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic]) -> list[Unit]:
     """Resolve declarations before imports so file order does not affect visibility.
 
@@ -71,7 +81,7 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
             *children(document.tree, 'entity'),
             *children(document.tree, 'decodes'),
         ]:
-            name = str(tokens(header(declaration))[1])
+            name = declaration_name(declaration)
             key = (namespace(document), name)
             if not re.fullmatch(r'[A-Z][a-zA-Z0-9]*', name):
                 diagnostics.append(
@@ -79,7 +89,7 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
                         document, header(declaration), 'declaration names must use PascalCase'
                     )
                 )
-            if name in VALUES | GENERICS | ENTITIES or key in symbols:
+            if name in RESERVED or key in symbols:
                 diagnostics.append(
                     diagnostic(
                         document, header(declaration), f'duplicate or reserved declaration: {name}'
