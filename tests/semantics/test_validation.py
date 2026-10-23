@@ -15,7 +15,7 @@ class ValidationTests(unittest.TestCase):
         sources = [
             'namespace core entity Fund { id fund_id: string attr holding: collection<HoldingEntry> }',
             'namespace core entity HoldingEntry { attr fund: Fund attr security: Security }',
-            'namespace core from dictionaries.money import Currencies entity Security { attr currency: code<Currencies> attr dictionary: Decodes attr entries: collection<DecodesEntry> }',
+            'namespace core from dictionaries.money import Currencies entity Security { attr currency: code<Currencies> attr dictionary: Decodes attr entries: values<decodes_entry> }',
             "namespace dictionaries.money decodes Currencies { - 100 CNY: '人民币' - 200 USD: 'USD' }",
             "entity Types { attr a: bool attr b: integer attr c: float attr d: decimal attr e: date attr f: datetime attr g: string['x#'] attr h: string[regex: 'x'] attr i: decimal[18, 4] attr j: decimal[scale: 4, precision: 18] attr k: values<string> attr m: map<Decodes, decimal> attr n: map<string, Decodes> @temporal(as_of_date: date) snapshot attr total: decimal }",
         ]

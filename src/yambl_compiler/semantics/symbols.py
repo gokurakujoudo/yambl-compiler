@@ -7,12 +7,13 @@ from typing import Literal
 
 from lark import Token, Tree
 
+from yambl_compiler.semantics.builtins import ENTITIES as ENTITIES
+from yambl_compiler.semantics.builtins import STRUCTURES as STRUCTURES
 from yambl_compiler.syntax.parser import Diagnostic, Document, children, diagnostic, tokens
 
 VALUES = {'bool', 'string', 'integer', 'float', 'decimal', 'date', 'datetime', 'snowflake_id'}
 GENERICS = {'collection', 'values', 'map', 'code', 'type', 'field_mapping'}
-ENTITIES = {'Decodes', 'DecodesEntry', 'ConfigGroup'}
-RESERVED = VALUES | GENERICS | ENTITIES | {'Entity'}
+RESERVED = VALUES | GENERICS | ENTITIES | STRUCTURES | {'Entity'}
 type EntityKey = tuple[str, str]
 
 
@@ -21,11 +22,11 @@ class Symbol:
     """Identify a declaration independently of its importing file.
 
     :param key: Declaring namespace and name.
-    :param kind: Entity type or Decodes instance.
+    :param kind: Entity type, structured value type, or Decodes instance.
     """
 
     key: EntityKey
-    kind: Literal['entity', 'decodes']
+    kind: Literal['entity', 'decodes', 'value']
 
 
 @dataclass(frozen=True)
@@ -41,13 +42,28 @@ class Unit:
 
 
 def namespace(document: Document) -> str:
-    """Read a file's declared namespace.
+    """Read a file's complete namespace including its repository prefix.
 
     :param document: Parsed source.
-    :returns: Declared name, or the unnamed namespace.
+    :returns: Complete namespace, or the empty namespace.
     """
     declarations = children(document.tree, 'namespace_decl')
-    return ''.join(tokens(declarations[0])[1:]) if declarations else ''
+    local = ''.join(tokens(declarations[0])[1:]) if declarations else ''
+    return '.'.join(part for part in (document.prefix, local) if part)
+
+
+def symbol_key(document: Document, name: str, local: str | None = None) -> EntityKey:
+    """Construct a repository-qualified symbol identity.
+
+    :param document: Declaring or importing document.
+    :param name: Symbol name.
+    :param local: Relative import namespace, or None for the document namespace.
+    :returns: Repository and namespace identity paired with the symbol name.
+    """
+    ns = (
+        namespace(document) if local is None else '.'.join(p for p in (document.prefix, local) if p)
+    )
+    return (document.repository + '\0' + ns if document.repository else ns, name)
 
 
 def header(node: Tree[Token]) -> Tree[Token]:
@@ -80,34 +96,53 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
         for declaration in [
             *children(document.tree, 'entity'),
             *children(document.tree, 'decodes'),
+            *children(document.tree, 'value'),
         ]:
             name = declaration_name(declaration)
-            key = (namespace(document), name)
-            if not re.fullmatch(r'[A-Z][a-zA-Z0-9]*', name):
+            key = symbol_key(document, name)
+            pattern = (
+                r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*'
+                if declaration.data == 'value'
+                else r'[A-Z][a-zA-Z0-9]*'
+            )
+            if not re.fullmatch(pattern, name):
                 diagnostics.append(
                     diagnostic(
-                        document, header(declaration), 'declaration names must use PascalCase'
+                        document,
+                        header(declaration),
+                        (
+                            'value names must use snake_case'
+                            if declaration.data == 'value'
+                            else 'declaration names must use PascalCase'
+                        ),
                     )
                 )
-            if name in RESERVED or key in symbols:
+            if (name in RESERVED and not document.builtin) or key in symbols:
                 diagnostics.append(
                     diagnostic(
                         document, header(declaration), f'duplicate or reserved declaration: {name}'
                     )
                 )
-            symbols[key] = Symbol(key, 'entity' if declaration.data == 'entity' else 'decodes')
+            kind: Literal['entity', 'decodes', 'value'] = (
+                'value'
+                if declaration.data == 'value'
+                else ('entity' if declaration.data == 'entity' else 'decodes')
+            )
+            symbols[key] = Symbol(key, kind)
     units: list[Unit] = []
     for document in documents:
         scope = {
-            name: symbol for (ns, name), symbol in symbols.items() if ns == namespace(document)
+            name: symbol
+            for (ns, name), symbol in symbols.items()
+            if ns == symbol_key(document, '')[0]
         }
         for imported in children(document.tree, 'import_decl'):
             ns = ''.join(tokens(children(imported, 'qualified_name')[0]))
             name = str(tokens(imported)[-1])
-            target = symbols.get((ns, name))
+            target = symbols.get(symbol_key(document, name, ns))
             if target is None:
                 diagnostics.append(diagnostic(document, imported, f'unknown import: {ns}.{name}'))
-            elif name in scope or name in ENTITIES:
+            elif name in scope or name in RESERVED:
                 diagnostics.append(
                     diagnostic(document, imported, f'import conflicts with visible name: {name}')
                 )

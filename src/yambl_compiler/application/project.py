@@ -2,13 +2,15 @@
 
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal, Never
 
+from yambl_compiler.application.repository import ROOT_NAME, find_root, read_prefix
 from yambl_compiler.formatting.formatter import format_document
+from yambl_compiler.semantics.builtins import AUTHOR_ROOT, MODEL_ROOT
 from yambl_compiler.semantics.validation import check
-from yambl_compiler.syntax.parser import Diagnostic, Document, parse
+from yambl_compiler.syntax.parser import Diagnostic, Document, children, parse
 
 
 @dataclass(frozen=True)
@@ -24,25 +26,24 @@ class Report:
 
 
 def source_files(path: Path, dependencies: bool) -> list[Path]:
-    """Select sources, optionally expanding a file to its enclosing repository.
+    """Select sources, optionally expanding input to its enclosing repository.
 
     :param path: Existing YAMBL file or directory.
-    :param dependencies: Whether to find the nearest root marker for single-file checks.
+    :param dependencies: Whether to resolve the repository and enforce its boundaries.
     :returns: Sorted source paths, excluding environments and generated directories.
     :raises ValueError: If the input is missing, has another extension, or contains no sources.
     :raises OSError: If any selected directory cannot be scanned.
     """
     path = path.resolve()
+    if not path.exists():
+        raise ValueError(f'directory or file does not exist: {path}')
+    if path.is_file() and path.suffix != '.yambl':
+        raise ValueError(f'expected a .yambl file: {path}')
+    root = find_root(path) if dependencies else None
+    if root is not None:
+        path = root
     if path.is_file():
-        if path.suffix != '.yambl':
-            raise ValueError(f'expected a .yambl file: {path}')
-        if dependencies:
-            for parent in path.parents:
-                if (parent / 'yambl-root.lclcfg').is_file():
-                    path = parent
-                    break
-        if path.is_file():
-            return [path]
+        return [path]
     if not path.is_dir():
         raise ValueError(f'directory or file does not exist: {path}')
     excluded = {'venv', '.venv', 'build', 'dist', '__pycache__'}
@@ -58,6 +59,10 @@ def source_files(path: Path, dependencies: bool) -> list[Path]:
         raise error
 
     for directory, subdirs, files in path.walk(on_error=scan_failed):
+        if dependencies and directory != path and ROOT_NAME in files:
+            raise ValueError(
+                f'{directory / ROOT_NAME}:1:1: error: nested or multiple model repositories are unsupported'
+            )
         subdirs[:] = [name for name in subdirs if not name.startswith('.') and name not in excluded]
         result.extend(
             directory / name
@@ -98,6 +103,11 @@ def run(path: Path, operation: Literal['check', 'format'], verify: bool = False)
     messages: list[str] = []
     try:
         paths = source_files(path, dependencies=operation == 'check')
+        root = find_root(path.resolve()) if operation == 'check' else None
+        prefix = read_prefix(root / ROOT_NAME) if root is not None else ''
+        builtin = root in (MODEL_ROOT.resolve(), AUTHOR_ROOT.resolve())
+        if root is not None and builtin and prefix:
+            raise ValueError(f'{root / ROOT_NAME}:1:1: error: built-in prefix must be empty')
         documents: list[Document] = []
         originals: dict[Path, bytes] = {}
         for source in paths:
@@ -106,7 +116,18 @@ def run(path: Path, operation: Literal['check', 'format'], verify: bool = False)
             if isinstance(parsed, Diagnostic):
                 messages.append(str(parsed))
             else:
-                documents.append(parsed)
+                if builtin and children(parsed.tree, 'namespace_decl'):
+                    messages.append(
+                        f'{source}:1:1: error: built-in models cannot declare a namespace'
+                    )
+                documents.append(
+                    replace(
+                        parsed,
+                        prefix=prefix,
+                        repository=str(root) if root is not None and not builtin else '',
+                        builtin=builtin,
+                    )
+                )
         if messages:
             return Report(False, messages)
         if operation == 'check':

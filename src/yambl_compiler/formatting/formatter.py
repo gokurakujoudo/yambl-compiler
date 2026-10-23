@@ -56,7 +56,7 @@ def format_document(document: Document) -> str:
     # The start and field rules contain only subtrees, as specified by grammar.lark.
     for declaration in cast(list[Tree[Token]], document.tree.children):
         items = tokens(declaration)
-        if declaration.data in ('entity', 'decodes', 'extension'):
+        if declaration.data in ('entity', 'decodes', 'extension', 'value'):
             for metadata in children(declaration, 'metadata'):
                 pieces.append(line_piece(tokens(metadata), 0))
             header_tokens = tokens(children(declaration, f'{declaration.data}_header')[0])
@@ -72,7 +72,11 @@ def format_document(document: Document) -> str:
                 pieces.append(line_piece(tokens(entry), 1))
         else:
             pieces.append(line_piece(items, 0))
-    for match in re.finditer(r"'([^'\\\r\n]|\\[^\r\n])*'|#[^\r\n]*", document.text):
+    masked = document.text
+    for start, end in reversed(document.blocks):
+        pieces.append(Piece(start, end, 0, document.text[start:end].replace('\r\n', '\n')))
+        masked = masked[:start] + ' ' * (end - start) + masked[end:]
+    for match in re.finditer(r"'([^'\\\r\n]|\\[^\r\n])*'|#[^\r\n]*", masked):
         if match.group().startswith('#'):
             indent = int(any(start <= match.start() < end for start, end in blocks))
             pieces.append(

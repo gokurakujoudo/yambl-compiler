@@ -2,20 +2,22 @@ start: namespace_decl? import_decl* declaration*
 namespace_decl: NAMESPACE qualified_name
 qualified_name: NAME ("." NAME)*
 import_decl: FROM qualified_name IMPORT NAME
-?declaration: entity | decodes | extension
+?declaration: entity | decodes | extension | value
 entity: metadata* entity_header "{" field* "}"
 entity_header: FINAL? ENTITY NAME inheritance?
+value: metadata* value_header "{" field* "}"
+value_header: VALUE NAME
 inheritance: INHERITS NAME
 extension: extension_header "{" field* "}"
 extension_header: EXTEND NAME
 field: annotation* field_body
 field_body: (ID | ATTR | STATIC ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) NAME ":" type_expr default_value?
 default_value: "=" (INT | NUMBER | STRING | BOOLEAN)
-?annotation: metadata | temporal | dimensions | field_marker
+?annotation: metadata | temporal | dimension_annotation | field_marker
 field_marker: "@" FIELD_MARKER
 metadata: "@" METADATA "(" STRING ")"
 temporal: "@" TEMPORAL "(" dimension ("," dimension)* ")"
-dimensions: "@" DIMENSIONS "(" dimension ("," dimension)* ")"
+dimension_annotation: "@" DIMENSION "(" dimension ("," dimension)* ")"
 dimension: NAME ":" type_expr
 decodes: metadata* decodes_header "{" entry* "}"
 decodes_header: DECODES NAME
@@ -45,7 +47,8 @@ CONFIG: /config\b/
 EXTEND: /extend\b/
 INHERITS: /inherits\b/
 METADATA: /(?:title|description)\b/
-DIMENSIONS: /dimensions\b/
+DIMENSION: /dimension\b/
+VALUE: /value\b/
 TEMPORAL: /temporal\b/
 DECODES: /decodes\b/
 INT: /-?[0-9]+/

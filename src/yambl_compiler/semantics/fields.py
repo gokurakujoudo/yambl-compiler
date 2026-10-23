@@ -90,9 +90,22 @@ def check_field(
             )
     if len(children(field, 'temporal')) > 1:
         diagnostics.append(diagnostic(unit.document, field, 'duplicate temporal annotation'))
-    dimensions_seen: set[str] = set()
-    for annotation in children(field, 'dimensions'):
-        for dimension in children(annotation, 'dimension'):
+    dimensions_seen = {
+        str(tokens(parameter)[0])
+        for annotation in children(field, 'temporal')
+        for parameter in children(annotation, 'dimension')
+    }
+    for annotation in children(field, 'dimension_annotation'):
+        parameters = children(annotation, 'dimension')
+        if mode not in ('attr', 'snapshot', 'scd'):
+            diagnostics.append(
+                diagnostic(unit.document, annotation, 'dimension requires attr, snapshot or scd')
+            )
+        if len(parameters) not in (1, 2):
+            diagnostics.append(
+                diagnostic(unit.document, annotation, 'dimension requires one or two parameters')
+            )
+        for position, dimension in enumerate(parameters):
             dimension_name = str(tokens(dimension)[0])
             if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', dimension_name):
                 diagnostics.append(
@@ -103,7 +116,17 @@ def check_field(
                     diagnostic(unit.document, dimension, f'duplicate dimension: {dimension_name}')
                 )
             dimensions_seen.add(dimension_name)
-            check_type(children(dimension, 'type_expr')[0], unit, diagnostics, self_fields)
+            dimension_type = children(dimension, 'type_expr')[0]
+            check_type(dimension_type, unit, diagnostics, self_fields)
+            type_name = str(tokens(dimension_type)[0])
+            if position == 0 and type_name not in ('string', 'code'):
+                diagnostics.append(
+                    diagnostic(unit.document, dimension, 'dimension value must be string or code')
+                )
+            if position == 1 and (type_name != 'Hierarchy' or len(tokens(dimension_type)) != 1):
+                diagnostics.append(
+                    diagnostic(unit.document, dimension, 'dimension selector must be Hierarchy')
+                )
     for default in children(body, 'default_value'):
         if mode != 'config':
             diagnostics.append(

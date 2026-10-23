@@ -1,0 +1,43 @@
+"""Read the model resources distributed with the compiler."""
+
+from dataclasses import replace
+from pathlib import Path
+
+from yambl_compiler.syntax.parser import Diagnostic, Document, children, parse, tokens
+
+MODEL_ROOT = Path(__file__).parents[1] / 'models'
+AUTHOR_ROOT = Path(__file__).parents[4] / 'yambl' / 'models'
+
+
+def load_models(root: Path = MODEL_ROOT) -> tuple[Document, ...]:
+    """Parse supplied model files without registering user declarations.
+
+    :param root: Model resource directory.
+    :returns: Built-in source documents.
+    :raises ValueError: If a model has invalid syntax or a namespace.
+    """
+    result: list[Document] = []
+    for path in sorted(root.glob('*.yambl')):
+        doc = parse(path.read_text(encoding='utf-8'), path)
+        if isinstance(doc, Diagnostic):
+            raise ValueError(str(doc))
+        if children(doc.tree, 'namespace_decl'):
+            raise ValueError(f'{path}: built-in models cannot declare a namespace')
+        result.append(replace(doc, builtin=True))
+    return tuple(result)
+
+
+DOCUMENTS = load_models()
+DECLARATIONS = {
+    str(next(t for t in tokens(children(node, f'{node.data}_header')[0]) if t.type == 'NAME')): node
+    for doc in DOCUMENTS
+    for kind in ('entity', 'value')
+    for node in children(doc.tree, kind)
+}
+ENTITIES = {name for name, node in DECLARATIONS.items() if node.data == 'entity'}
+STRUCTURES = {name for name, node in DECLARATIONS.items() if node.data == 'value'}
+FINALS = {
+    name
+    for name, node in DECLARATIONS.items()
+    if node.data == 'entity' and tokens(children(node, 'entity_header')[0])[0].type == 'FINAL'
+}

@@ -54,16 +54,21 @@ Overload groups need at least two independent implementations. Both markers comp
 resolved types, attribute modes and metadata; config defaults may differ.
 A `final entity` cannot be inherited or extended.
 Extensions add attributes, not identifiers. Inheritance and extensions currently
-target user-defined entity types; `Decodes` is sealed and `ConfigGroup` is final.
+target user-defined entity types; `Decodes`, `ConfigGroup`, and `Hierarchy` are final.
 
 Both `code<Currencies>` and `code<'Currencies'>` name a Decodes instance. Undefined
 dictionaries are allowed: each occurrence produces an `undefined Decodes: NAME`
 warning with its path, line, and column. This includes uses inside generics and
-`@dimensions`. Missing explicit imports and unknown entity types remain errors.
+`@dimension`. Missing explicit imports and unknown entity types remain errors.
 
 `@title('...')` and `@description('...')` attach metadata to entities, Decodes
-declarations, or fields. `@dimensions(source: Type, ...)` describes additional
-attribute dimensions. `@temporal(as_of_date: date)` applies to `snapshot` or `scd`.
+declarations, values, or fields. Each `@dimension(source: string, preference: Hierarchy)`
+defines one independent dimension and an optional alternative lookup parameter.
+The first parameter accepts string or code types; the second accepts Hierarchy.
+Dimensions apply only to ordinary, snapshot, and scd attributes. Parameter names,
+including temporal names, must be distinct within a field. Direct values take
+precedence over Hierarchy references. Hierarchy tries existing data in ascending
+ordering; priorities must be unique. Lookup execution is not implemented. `@temporal(as_of_date: date)` applies to `snapshot` or `scd`.
 `config` attributes are time-independent and may declare a default with `= literal`.
 Supported defaults are integer literals for `integer` and `snowflake_id`, numeric
 literals for `float` and `decimal`, single-quoted strings for `string`, and
@@ -84,26 +89,44 @@ The checker retains effective fields, overload identities and declaration locati
 It does not accept configuration-group instance syntax or evaluate mappings,
 conditions, configuration precedence, or computed fields.
 
-Checking a single file searches its parents for the nearest `yambl-root.lclcfg`.
-If found, all YAMBL sources beneath that root form the compilation unit, and
-diagnostics can include other files in that unit. Without a marker, only the
-selected file is checked. A directory input checks the subtree explicitly given.
-Hidden directories, virtual environments, `build`, `dist`, `__pycache__`, and
-symbolic links encountered during directory scans are excluded. Root marker
-contents are not executed; `prefix` has no implemented semantics yet.
+Checking a file or subdirectory searches upward for the nearest `yambl-root.lclcfg`
+and checks the whole repository. Nested roots fail the parent check. Without a root,
+the selected file or directory is checked independently; a standalone directory
+containing repositories must be checked by selecting each repository separately.
+Hidden directories, virtual environments, build output and symlinks are excluded.
+
+The root configuration requires one literal `prefix: 'fmc'` declaration. Empty
+prefixes, comments and blank lines are supported. Expressions, other keys and
+configuration loading are rejected. A file's full namespace joins the prefix with
+its namespace declaration. Imports are repository-relative: `from core import Item`
+uses `fmc.core.Item`. Cross-repository dependencies are not supported.
+
+Built-in model declarations are read from bundled `.yambl` resources. Their source
+is the `yambl/models` repository, which has an empty prefix and no namespaces.
+Ordinary empty-prefix repositories do not become builtins. Run
+`./tools/sync-models.ps1` to refresh Python package resources from the adjacent
+language repository; `-Source` accepts its model directory in another checkout.
+The compiler runs without that checkout. Tests compare the resources when it is present.
+
+Structured `value` types use snake_case names and have static fields without IDs.
+They are final, with no inheritance or extensions. Fields accept non-collection
+values and entity references; references store the target ID. Recursive value
+containment, collection fields, defaults and annotations other than title/description
+are rejected. `attr` and `static attr` are equivalent in a value. Same-type equality
+uses all fields, comparing referenced IDs; ordering is not defined by default.
+The checker validates declarations and does not evaluate values.
 
 Current implementation limits:
 
 - A file has at most one namespace, before imports and declarations. Omitting it
-  places declarations in the compilation unit's unnamed namespace.
+  places declarations in the repository prefix namespace.
 - Imports accept one name, without aliases or wildcards. Import collisions fail.
 - Identifiers use ASCII letters, digits, and underscores. Strings use single
   quotes; `\'` represents a quote and `\\` a backslash. Other escape sequences
   retain their spelling. Formatting preserves the original string spelling and
   does not choose a regular-expression dialect.
 - `snowflake_id` is a built-in value type. Its bit layout and generation policy
-  are not specified. Unresolved types fail; custom value-type declarations are
-  not defined yet.
+  are not specified. Unresolved types fail; value aliases are not defined.
 - Decodes names are expected to be plural; the checker validates PascalCase but
   does not attempt linguistic plural detection.
 - Static checks describe model declarations. They do not validate business data
@@ -124,7 +147,11 @@ punctuation spacing, two spaces before inline comments, and one space after `#`.
 It preserves string spelling, comment text, declaration order, and at most one
 existing blank separator. Every file ends with exactly one LF character (`\n`),
 so an editor shows one empty final line. Extra trailing blank lines are removed.
-Empty files also normalize to a single LF.
+Empty files also normalize to a single LF. Input accepts LF or CRLF, with or without
+a terminal newline. Standalone `---` lines delimit opaque Markdown blocks at the
+top level or inside declarations. Their body whitespace is preserved, including
+blank lines and trailing spaces; only CRLF is normalized. Unclosed blocks fail
+parsing. Blocks do not bind to declarations or participate in name resolution.
 
 Each changed file is written through a temporary file in the same directory and
 atomically replaced. A syntax or decoding failure prevents all writes. An I/O

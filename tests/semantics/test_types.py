@@ -102,7 +102,7 @@ class TypeTests(unittest.TestCase):
     def test_all_external_code_occurrences_are_reported(self):
         source = """entity Security {
     attr market: code<'TradingMarkets'>
-    @dimensions(source: code<PriceSources>)
+    @dimension(source: code<PriceSources>)
     snapshot attr price: decimal
     attr markets: values<code<TradingMarkets>>
     attr by_name: map<string, code<'OtherSources'>>
@@ -119,7 +119,7 @@ class TypeTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [(item.line, item.column) for item in diagnostics], [(2, 18), (3, 25), (5, 26), (6, 31)]
+            [(item.line, item.column) for item in diagnostics], [(2, 18), (3, 24), (5, 26), (6, 31)]
         )
         self.assertTrue(all(item.severity == 'warning' for item in diagnostics))
         self.assertTrue(all(item.path == Path('security.yambl') for item in diagnostics))

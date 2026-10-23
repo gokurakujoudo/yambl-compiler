@@ -5,6 +5,7 @@ from collections.abc import Sequence
 from yambl_compiler.semantics.entities import check_entities
 from yambl_compiler.semantics.fields import check_field, check_metadata
 from yambl_compiler.semantics.symbols import declaration_name, resolve_scopes
+from yambl_compiler.semantics.values import check_values
 from yambl_compiler.syntax.parser import Diagnostic, Document, children, diagnostic, tokens
 
 
@@ -17,6 +18,7 @@ def check(documents: Sequence[Document]) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     units = resolve_scopes(documents, diagnostics)
     entities = check_entities(units, diagnostics)
+    check_values(units, diagnostics)
     for unit in units:
         for node in [
             *children(unit.document.tree, 'entity'),
@@ -40,9 +42,7 @@ def check(documents: Sequence[Document]) -> list[Diagnostic]:
                 code = str(tokens(entry)[2])
                 if code in codes:
                     diagnostics.append(
-                        diagnostic(
-                            unit.document, entry, f'duplicate code in Decodes identity: {code}'
-                        )
+                        diagnostic(unit.document, entry, f'duplicate code in Decodes: {code}')
                     )
                 codes.add(code)
     return sorted(

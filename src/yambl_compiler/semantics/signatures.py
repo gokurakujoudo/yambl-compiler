@@ -65,15 +65,16 @@ def field_signature(field: Tree[Token], unit: Unit, self_fields: FieldTypes) -> 
     for annotation in children(field, 'metadata'):
         items = tokens(annotation)
         annotations.append((str(items[1]), string_value(items[-2])))
-    for kind in ('temporal', 'dimensions'):
+    for kind in ('temporal', 'dimension_annotation'):
         for annotation in children(field, kind):
-            for dimension in children(annotation, 'dimension'):
-                annotations.append(
-                    (
-                        kind + ':' + str(tokens(dimension)[0]),
-                        type_signature(children(dimension, 'type_expr')[0], unit, self_fields),
-                    )
+            parameters = [
+                (
+                    str(tokens(parameter)[0]),
+                    type_signature(children(parameter, 'type_expr')[0], unit, self_fields),
                 )
+                for parameter in children(annotation, 'dimension')
+            ]
+            annotations.append((kind, repr(parameters)))
     return repr(
         (
             str(tokens(body)[0]),

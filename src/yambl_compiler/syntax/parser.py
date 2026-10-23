@@ -1,5 +1,6 @@
 """Parse source text and retain token positions for diagnostics and formatting."""
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, cast
@@ -59,11 +60,19 @@ class Document:
     :param path: Source identity.
     :param text: Original source text.
     :param tree: Concrete syntax tree including punctuation.
+    :param blocks: Markdown source spans.
+    :param prefix: Repository namespace prefix.
+    :param repository: Repository identity.
+    :param builtin: Whether this is a supplied built-in source.
     """
 
     path: Path
     text: str
     tree: Tree[Token]
+    blocks: tuple[tuple[int, int], ...] = ()
+    prefix: str = ''
+    repository: str = ''
+    builtin: bool = False
 
 
 def tokens(node: Tree[Token]) -> list[Token]:
@@ -98,9 +107,17 @@ def parse(text: str, path: Path = Path('<input>')) -> Document | Diagnostic:
     :param path: File name used in diagnostics.
     :returns: Parsed document or the first syntax diagnostic.
     """
+    delimiters = list(re.finditer(r'(?m)^[ \t]*---[ \t]*(?=\r?$)', text))
+    if len(delimiters) % 2:
+        start = delimiters[-1].start()
+        return Diagnostic(path, text.count('\n', 0, start) + 1, 1, 'unclosed Markdown block')
+    blocks = tuple((a.start(), b.end()) for a, b in zip(delimiters[::2], delimiters[1::2]))
+    masked = text
+    for start, end in reversed(blocks):
+        masked = masked[:start] + re.sub(r'[^\r\n]', ' ', masked[start:end]) + masked[end:]
     try:
         # Lark's custom-lexer input is untyped; this parser only accepts text and returns trees.
-        return Document(path, text, cast(TextParser, PARSER).parse(text))
+        return Document(path, text, cast(TextParser, PARSER).parse(masked), blocks)
     except UnexpectedInput as error:
         return Diagnostic(path, max(1, error.line), max(1, error.column), 'invalid YAMBL syntax')
 

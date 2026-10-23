@@ -1,0 +1,23 @@
+---
+# Hierarchy
+
+Hierarchy 为一个维度提供候选值的优先级。hierarchy_entries 是无序值集合，
+按 ordering 升序尝试候选，ordering 在同一 Hierarchy 内必须唯一。
+entry_value 保存维度字符串或字典代码值。优先级唯一性是实例数据约束。
+
+@dimension(source: code<'PriceSources'>, price_dimension: Hierarchy) 允许用
+source 直接定位，或以 price_dimension 指定 Hierarchy 引用；显式 source 优先。
+在实体、时间及其他维度固定时，选择存在字段数据的第一个候选。
+不进行跨日回退或额外有效性判断。多个 Hierarchy 的组合、空值及全部缺失的
+结果表示尚未定义；当前工具不执行取数或校验 Hierarchy 实例数据。
+---
+
+final entity Hierarchy {
+    id hierarchy_id: string
+    static attr hierarchy_entries: values<hierarchy_entry>
+}
+
+value hierarchy_entry {
+    attr entry_value: string
+    attr ordering: integer
+}

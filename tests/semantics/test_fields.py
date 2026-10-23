@@ -7,6 +7,57 @@ from yambl_compiler.semantics.validation import check
 
 
 class FieldTests(unittest.TestCase):
+    def test_dimension_selectors_and_parameter_namespace(self):
+        self.assertEqual(
+            check(
+                [
+                    document(
+                        "entity A { @temporal(as_of_date: date) @dimension(source: string['x'], preference: Hierarchy) @dimension(kind: string) snapshot attr x: decimal }"
+                    )
+                ]
+            ),
+            [],
+        )
+        for field, message in [
+            (
+                '@dimension(source: integer) attr x: string',
+                'dimension value must be string or code',
+            ),
+            (
+                '@dimension(source: string, selector: string) attr x: string',
+                'dimension selector must be Hierarchy',
+            ),
+            (
+                '@dimension(source: string, selector: Hierarchy<string>) attr x: string',
+                'dimension selector must be Hierarchy',
+            ),
+            (
+                '@dimension(source: string, selector: Hierarchy, extra: string) attr x: string',
+                'dimension requires one or two parameters',
+            ),
+            (
+                '@dimension(source: string) static attr x: string',
+                'dimension requires attr, snapshot or scd',
+            ),
+            (
+                '@dimension(source: string) config attr x: string',
+                'dimension requires attr, snapshot or scd',
+            ),
+            ('@dimension(source: string) id x: string', 'dimension requires attr, snapshot or scd'),
+            (
+                '@temporal(as_of_date: date) @dimension(as_of_date: string) snapshot attr x: string',
+                'duplicate dimension: as_of_date',
+            ),
+            (
+                '@dimension(source: string, h: Hierarchy) @dimension(other: string, h: Hierarchy) attr x: string',
+                'duplicate dimension: h',
+            ),
+        ]:
+            with self.subTest(field=field):
+                self.assertIn(
+                    message, [d.message for d in check([document('entity A { ' + field + ' }')])]
+                )
+
     def test_metadata_modes_and_defaults(self):
         source = r"""@title('Security')
 @description('Security\'s fields')
@@ -14,7 +65,7 @@ entity Security {
     id security_id: string
     @title('Price')
     @description('A # in a string')
-    @dimensions(source: code<Sources>, market: string)
+    @dimension(source: code<Sources>) @dimension(market: string)
     @temporal(as_of_date: date)
     snapshot attr price: decimal
     @temporal(as_of_date: date)
@@ -48,13 +99,13 @@ decodes Sources { - 1 PRIMARY: 'Main' }
                 'duplicate temporal',
             ),
             ('@temporal(as_of_date: date) config attr x: decimal', 'supported annotation'),
-            ('@dimensions(Bad: string) attr x: string', 'dimension names must use snake_case'),
+            ('@dimension(Bad: string) attr x: string', 'dimension names must use snake_case'),
             (
-                '@dimensions(source: string, source: string) attr x: string',
+                '@dimension(source: string, source: string) attr x: string',
                 'duplicate dimension: source',
             ),
             (
-                '@dimensions(source: string) @dimensions(source: string) attr x: string',
+                '@dimension(source: string) @dimension(source: string) attr x: string',
                 'duplicate dimension: source',
             ),
             ('attr x: integer = 1', 'only on config attr'),

@@ -10,6 +10,19 @@ from yambl_compiler.syntax.parser import children
 
 
 class SignatureTests(unittest.TestCase):
+    def test_dimension_selector_association_is_part_of_signature(self):
+        from yambl_compiler.semantics.validation import check
+
+        shared = 'entity Base {} entity A inherits Base { @overload @dimension(x: string, a: Hierarchy) @dimension(y: string, b: Hierarchy) attr z: string } '
+        same = 'entity B inherits Base { @overload @dimension(y: string, b: Hierarchy) @dimension(x: string, a: Hierarchy) attr z: string }'
+        different = same.replace('y: string, b:', 'y: string, a:').replace(
+            'x: string, a:', 'x: string, b:'
+        )
+        self.assertEqual(check([document(shared + same)]), [])
+        self.assertTrue(
+            any('identical signatures' in d.message for d in check([document(shared + different)]))
+        )
+
     def test_unbounded_integer_parameters_and_signed_zero(self):
         large = '9' * 5000
         for left, right in [
@@ -26,14 +39,17 @@ class SignatureTests(unittest.TestCase):
     def test_equivalent_parameter_spelling_metadata_order_and_default(self):
         source = document("""entity A {
             @title('Price') @description('Daily')
-            @dimensions(source: string, unit: integer)
-            config attr x: decimal[18, 4] = 1
-            @dimensions(unit: integer) @dimensions(source: string)
+            @dimension(source: string) @dimension(unit: string)
+            attr x: decimal[18, 4]
+            @dimension(unit: string) @dimension(source: string)
             @description('Daily') @title('Price')
-            config attr y: decimal[scale: 4, precision: 18] = 2.0
+            attr y: decimal[scale: 4, precision: 18]
             attr z: string['a\\\\b']
             attr w: string[regex: 'a\\\\b']
         }""")
+        from yambl_compiler.semantics.validation import check
+
+        self.assertEqual(check([source]), [])
         units = resolve_scopes([source], [])
         fields = children(children(source.tree, 'entity')[0], 'field')
         self.assertEqual(
@@ -42,6 +58,12 @@ class SignatureTests(unittest.TestCase):
         self.assertEqual(
             field_signature(fields[2], units[0], {}), field_signature(fields[3], units[0], {})
         )
+
+    def test_configuration_defaults_do_not_change_signatures(self):
+        source = document('entity A { config attr x: decimal = 1 config attr y: decimal = 2.0 }')
+        unit = resolve_scopes([source], [])[0]
+        fields = children(children(source.tree, 'entity')[0], 'field')
+        self.assertEqual(field_signature(fields[0], unit, {}), field_signature(fields[1], unit, {}))
 
     def test_scope_and_dependent_constraints_are_part_of_signature(self):
         sources = [

@@ -4,7 +4,7 @@ from typing import Literal
 
 from lark import Token, Tree
 
-from yambl_compiler.semantics.symbols import ENTITIES, GENERICS, RESERVED, VALUES, Unit
+from yambl_compiler.semantics.symbols import ENTITIES, GENERICS, RESERVED, STRUCTURES, VALUES, Unit
 from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, string_value, tokens
 
 type Kind = Literal['value', 'string', 'reference', 'collection', 'unknown']
@@ -163,6 +163,8 @@ def check_type(
     if name in VALUES:
         return 'string' if name == 'string' else 'value'
     symbol = unit.scope.get(name)
+    if name in STRUCTURES or (symbol is not None and symbol.kind == 'value'):
+        return 'value'
     if name in ENTITIES or (symbol is not None and symbol.kind == 'entity'):
         return 'reference'
     if symbol is not None:

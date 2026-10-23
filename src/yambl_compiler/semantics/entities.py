@@ -2,23 +2,21 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import cast
 
 from lark import Token, Tree
 
+from yambl_compiler.semantics.builtins import DOCUMENTS, FINALS
 from yambl_compiler.semantics.fields import field_name
 from yambl_compiler.semantics.signatures import field_signature
 from yambl_compiler.semantics.symbols import (
-    ENTITIES,
     EntityKey,
     Unit,
     declaration_name,
     header,
-    namespace,
+    symbol_key,
 )
 from yambl_compiler.semantics.types import FieldTypes
-from yambl_compiler.syntax.parser import Diagnostic, Document, children, diagnostic, parse, tokens
+from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, tokens
 
 
 @dataclass(frozen=True)
@@ -31,24 +29,6 @@ class FieldSite:
 
     unit: Unit
     declaration: Tree[Token]
-
-
-BUILTIN_SOURCE = '''entity Decodes {
-    id decodes_id: string
-    attr entries: collection<DecodesEntry>
-}
-entity DecodesEntry {
-    attr code: string
-    attr decode: string
-    attr ordering: integer
-}
-final entity ConfigGroup {
-    id config_group_id: string
-    static attr entity_type: type<Entity>
-    attr when: field_mapping<static, self.entity_type>
-    attr then_set: field_mapping<config, self.entity_type>
-}
-'''
 
 
 @dataclass
@@ -119,22 +99,20 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
     finals: set[EntityKey] = set()
     for unit in units:
         for entity in children(unit.document.tree, 'entity'):
-            key = (namespace(unit.document), declaration_name(entity))
+            key = symbol_key(unit.document, declaration_name(entity))
             locations[key] = (unit, header(entity))
             fields.setdefault(key, {})
             if tokens(header(entity))[0].type == 'FINAL':
                 finals.add(key)
     for unit in units:
         for entity in children(unit.document.tree, 'entity'):
-            key = (namespace(unit.document), declaration_name(entity))
+            key = symbol_key(unit.document, declaration_name(entity))
             for inheritance in children(header(entity), 'inheritance'):
                 name = str(tokens(inheritance)[1])
                 symbol = unit.scope.get(name)
                 message = ''
-                if name == 'ConfigGroup' or (symbol is not None and symbol.key in finals):
+                if name in FINALS or (symbol is not None and symbol.key in finals):
                     message = f'cannot inherit final entity: {name}'
-                elif name in ENTITIES:
-                    message = 'built-in inheritance is unsupported; Decodes is sealed'
                 elif symbol is None or symbol.kind != 'entity':
                     message = f'inherits requires a visible entity type: {name}'
                 else:
@@ -148,7 +126,7 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
             name = declaration_name(node)
             symbol = unit.scope.get(name)
             if node.data == 'extension' and (
-                name == 'ConfigGroup' or (symbol is not None and symbol.key in finals)
+                name in FINALS or (symbol is not None and symbol.key in finals)
             ):
                 diagnostics.append(
                     diagnostic(unit.document, header(node), f'cannot extend final entity: {name}')
@@ -189,12 +167,16 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
             merged.update(fields[ancestor])
         merged.update(local)
         effective[key] = merged
-    builtin = Unit(cast(Document, parse(BUILTIN_SOURCE, Path('<builtins>'))), {})
-    for entity in children(builtin.document.tree, 'entity'):
-        effective[('', declaration_name(entity))] = {
-            field_name(children(field, 'field_body')[0]): FieldSite(builtin, field)
-            for field in children(entity, 'field')
-        }
+    for document in DOCUMENTS:
+        builtin = Unit(document, {})
+        for entity in children(document.tree, 'entity'):
+            effective.setdefault(
+                ('', declaration_name(entity)),
+                {
+                    field_name(children(field, 'field_body')[0]): FieldSite(builtin, field)
+                    for field in children(entity, 'field')
+                },
+            )
     index = EntityIndex(fields, ancestors, effective, {})
     groups: dict[tuple[EntityKey, str], list[tuple[EntityKey, FieldSite]]] = {}
     for key in sorted(fields, key=lambda item: len(ancestors[item])):

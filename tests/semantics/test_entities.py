@@ -88,14 +88,17 @@ class EntityTests(unittest.TestCase):
             index.identities[(('stock', 'Stock'), 'days')], (('root', 'Security'), 'days')
         )
         self.assertEqual(set(index.candidates(('root', 'Security'), 'static')), {'currency'})
-        self.assertEqual(set(index.candidates(('', 'ConfigGroup'), 'static')), {'entity_type'})
+        self.assertEqual(
+            set(index.candidates(('', 'ConfigGroup'), 'static')),
+            {'entity_type', 'when', 'then_set'},
+        )
         self.assertEqual(index.field_types(('absent', 'Absent')), {})
         self.assertEqual(check(list(reversed(sources))), [])
 
     def test_builtin_source_and_reserved_names(self):
-        from yambl_compiler.semantics.entities import BUILTIN_SOURCE
+        from yambl_compiler.semantics.builtins import DOCUMENTS
 
-        source = document(BUILTIN_SOURCE)
+        source = document('\n'.join(d.text for d in DOCUMENTS))
         entities = children(source.tree, 'entity')
         self.assertEqual(len(entities), 3)
         self.assertEqual(str(tokens(entities[-1])[0]), 'final')
@@ -135,11 +138,11 @@ class EntityTests(unittest.TestCase):
         cases = [
             ('entity A inherits Missing {}', 'inherits requires a visible entity'),
             ('decodes Names {} entity A inherits Names {}', 'inherits requires a visible entity'),
-            ('entity A inherits Decodes {}', 'Decodes is sealed'),
-            ('entity A inherits DecodesEntry {}', 'built-in inheritance is unsupported'),
+            ('entity A inherits Decodes {}', 'cannot inherit final entity'),
+            ('entity A inherits DecodesEntry {}', 'inherits requires a visible entity'),
             ('extend Missing { attr x: string }', 'extend requires a visible'),
             ('decodes Names {} extend Names { attr x: string }', 'extend requires a visible'),
-            ('extend Decodes { attr x: string }', 'extend requires a visible'),
+            ('extend Decodes { attr x: string }', 'cannot extend final entity'),
             ('entity A inherits A {}', 'inheritance cycle'),
             (
                 'entity A inherits B {} entity B inherits C {} entity C inherits A {}',
