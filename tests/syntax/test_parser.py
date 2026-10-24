@@ -21,7 +21,6 @@ class SyntaxTests(unittest.TestCase):
         for text in [
             'final value a {}',
             'value a inherits b {}',
-            'entity A { @dimensions(x: string) attr x: string }',
         ]:
             self.assertIsInstance(parse(text), Diagnostic)
 

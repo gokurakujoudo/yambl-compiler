@@ -6,7 +6,7 @@ from typing import cast
 
 from lark import Token, Tree
 
-from yambl_compiler.syntax.parser import Document, children, tokens
+from yambl_compiler.syntax.parser import Document, annotations, children, tokens
 
 
 @dataclass(frozen=True)
@@ -36,13 +36,24 @@ def line_piece(items: list[Token], indent: int) -> Piece:
     """
     result = ''
     previous = ''
+    prior_equals = False
+    keyword_equals = {
+        items[i + 1].start_pos
+        for i, item in enumerate(items[:-1])
+        if item.type == 'NAME' and str(items[i + 1]) == '=' and str(items[0]) == '@'
+    }
     for item in items:
         value = str(item)
         space = (
             result
-            and value not in ('.', '::', ':', ',', ')', '>', ']', '(', '[', '<')
-            and previous not in ('.', '::', '@', '(', '<', '[')
+            and value not in ('?', '.', '::', ':', ',', ')', '>', ']', '(', '[', '<')
+            and previous not in ('*', '.', '::', '@', '(', '<', '[')
         )
+        if item.start_pos in keyword_equals:
+            space = False
+        if previous == '=' and prior_equals:
+            space = False
+        prior_equals = item.start_pos in keyword_equals
         result += (' ' if space else '') + value
         previous = value
     # Lark assigns positions to every token because propagate_positions is enabled.
@@ -61,10 +72,7 @@ def format_document(document: Document) -> str:
     for declaration in cast(list[Tree[Token]], document.tree.children):
         items = tokens(declaration)
         if declaration.data in ('entity', 'decodes', 'extension', 'value'):
-            for metadata in [
-                *children(declaration, 'metadata'),
-                *children(declaration, 'flags_marker'),
-            ]:
+            for metadata in annotations(declaration):
                 pieces.append(line_piece(tokens(metadata), 0))
             header_tokens = tokens(children(declaration, f'{declaration.data}_header')[0])
             brace = next(item for item in items if item.type == 'LBRACE')
@@ -78,6 +86,12 @@ def format_document(document: Document) -> str:
             for entry in children(declaration, 'entry'):
                 pieces.append(line_piece(tokens(entry), 1))
         else:
+            annotation_offsets: set[int | None] = set()
+            for call in annotations(declaration):
+                call_tokens = tokens(call)
+                pieces.append(line_piece(call_tokens, 0))
+                annotation_offsets.update(token.start_pos for token in call_tokens)
+            items = [item for item in items if item.start_pos not in annotation_offsets]
             pieces.append(line_piece(items, 0))
     masked = document.text
     for start, end in reversed(document.blocks):

@@ -5,7 +5,7 @@ from collections.abc import Sequence
 from lark import Token, Tree
 
 from yambl_compiler.semantics.expressions import Resolver
-from yambl_compiler.semantics.fields import check_field, check_metadata, field_name
+from yambl_compiler.semantics.fields import check_field, field_name
 from yambl_compiler.semantics.symbols import EntityKey, Unit, declaration_name, symbol_key
 from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, tokens
 
@@ -24,7 +24,6 @@ def check_values(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> None:
             key = symbol_key(unit.document, declaration_name(value))
             sites[key] = (unit, value)
             edges[key] = set()
-            check_metadata(value, unit, diagnostics)
             names: set[str] = set()
             for field in children(value, 'field'):
                 check_field(field, unit, diagnostics, False)
@@ -37,15 +36,6 @@ def check_values(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> None:
                     diagnostics.append(
                         diagnostic(unit.document, body, 'value fields must be attr or static attr')
                     )
-                for kind in ('temporal', 'dimension_annotation', 'field_marker'):
-                    for annotation in children(field, kind):
-                        diagnostics.append(
-                            diagnostic(
-                                unit.document,
-                                annotation,
-                                'value fields allow only title and description annotations',
-                            )
-                        )
                 node = children(body, 'type_expr')[0]
                 resolved = Resolver(unit, [], {}, False).resolve(node)
                 if resolved.kind == 'collection':

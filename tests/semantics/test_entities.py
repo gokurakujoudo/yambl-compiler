@@ -129,7 +129,7 @@ class EntityTests(unittest.TestCase):
         self.assertEqual(price.unit.document.path, Path('extras.yambl'))
         body = children(price.declaration, 'field_body')[0]
         self.assertEqual((tokens(body)[0].line, tokens(body)[0].column), (4, 5))
-        self.assertEqual(str(tokens(children(price.declaration, 'metadata')[0])[-2]), "'Price'")
+        self.assertEqual(str(tokens(children(price.declaration, 'annotation')[0])[-2]), "'Price'")
         self.assertEqual(check(sources), [])
         self.assertEqual(check(list(reversed(sources))), [])
 

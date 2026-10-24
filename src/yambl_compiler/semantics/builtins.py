@@ -32,7 +32,7 @@ DOCUMENTS = load_models()
 DECLARATIONS = {
     str(next(t for t in tokens(children(node, f'{node.data}_header')[0]) if t.type == 'NAME')): node
     for doc in DOCUMENTS
-    for kind in ('entity', 'value', 'decodes', 'type_alias')
+    for kind in ('entity', 'value', 'decodes', 'type_alias', 'decorator')
     for node in children(doc.tree, kind)
 }
 ENTITIES = {name for name, node in DECLARATIONS.items() if node.data == 'entity'}

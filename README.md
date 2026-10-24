@@ -76,7 +76,7 @@ The combination keeps its dictionary's code type and can be passed to aliases,
 The checker validates these expressions without executing model instances.
 
 `@title('...')` and `@description('...')` attach metadata to entities, Decodes
-declarations, values, or fields. Each `@dimension(source: string, preference: Hierarchy)`
+declarations, values, fields, type aliases, or decorator declarations. Each `@dimension(source: string, preference: Hierarchy)`
 defines one independent dimension and an optional alternative lookup parameter.
 The first parameter accepts string or code types; the second accepts Hierarchy.
 Dimensions apply only to ordinary, snapshot, and scd attributes. Parameter names,
@@ -140,8 +140,8 @@ The compiler runs without that checkout. Tests compare the resources when it is 
 Structured `value` types use snake_case names and have static fields without IDs.
 They are final, with no inheritance or extensions. Fields accept non-collection
 values and entity references; references store the target ID. Recursive value
-containment, collection fields, defaults and annotations other than title/description
-are rejected. `attr` and `static attr` are equivalent in a value. Same-type equality
+containment, collection fields, defaults and field relationship markers are rejected.
+Values accept title/description and custom decorators. `attr` and `static attr` are equivalent in a value. Same-type equality
 uses all fields, comparing referenced IDs; ordering is not defined by default.
 The checker validates declarations and does not evaluate values.
 
@@ -256,3 +256,35 @@ supplied dynamically; unresolved bare names remain errors. This CLI reports each
 external dictionary use. Missing explicit imports and unknown entity types remain
 errors in both implementations. Parity tests compare the shared validation rules
 before the editor applies that diagnostic filter.
+
+## Decorator declarations
+
+`decorator @note(text: string = 'Note', *source?: string)` declares typed metadata.
+Calls accept positional values, then named values such as `text='Name'`, followed
+by caller-defined pairs such as `source: code<'PriceSources'>`. Each starred
+parameter receives one pair. Optional pairs come last. Missing ordinary arguments
+use their declared defaults. Unknown names, duplicate assignments, missing required
+arguments and incompatible types are errors. Parameters cannot be collections.
+
+Decorators use the existing namespace and import rules. They can annotate entities,
+values, dictionaries, fields, type aliases and decorator declarations. A decorator
+can appear once on a definition unless its declaration has `@allow_multiple`.
+That built-in marker applies only to decorator declarations. The compiler retains
+metadata and checks parameters without executing user-defined decorators.
+
+Inside a field decorator, `self` captures the field definition. `self::type` selects
+its declared type and `self::entity` selects its declaring entity. For
+`Holding.security: Security`, these are Security and Holding respectively.
+`type<self::entity>` accepts Holding or a subtype. Fields from extensions belong to
+the extended entity; inherited fields retain their original declaration context.
+A captured field has no runtime instance value. Ordinary entity-reference parameters
+accept string IDs when the target has one identifiable ID field of a supported
+string or snowflake type; instance existence and regex matching are not checked.
+
+Built-in signatures are distributed in `lang/builtins/decorators.yambl`.
+Their placement restrictions and special behavior remain compiler checks.
+`@temporal(effective_date: date)` accepts a caller-chosen parameter name.
+`@title(text='Name')` and `@title('Name')` are equivalent. Empty calls may omit
+parentheses. Custom metadata participates in override/overload signatures after
+argument binding and default substitution. Call order is ignored; repetition counts
+and pair names/types are retained. Relationship markers remain outside signatures.

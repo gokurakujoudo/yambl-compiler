@@ -32,7 +32,7 @@ class ValueTests(unittest.TestCase):
             ),
             (
                 'value a { @dimension(x: string) attr x: string }',
-                'value fields allow only title and description annotations',
+                'dimension requires attr, snapshot or scd',
             ),
             (
                 'value a { @temporal(as_of_date: date) snapshot attr x: string }',
@@ -40,7 +40,7 @@ class ValueTests(unittest.TestCase):
             ),
             (
                 'value a { @override attr x: string }',
-                'value fields allow only title and description annotations',
+                'field markers require an entity attr',
             ),
             ('value a { attr x: string attr x: integer }', 'duplicate field: x'),
             ('value a { attr x: values<string> }', 'value fields cannot be collections'),

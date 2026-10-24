@@ -2,9 +2,10 @@
 
 from lark import Token, Tree
 
+from yambl_compiler.semantics.decorators import bind_call
 from yambl_compiler.semantics.symbols import Unit
 from yambl_compiler.semantics.types import FieldTypes
-from yambl_compiler.syntax.parser import children, string_value, tokens
+from yambl_compiler.syntax.parser import annotations, children, tokens
 
 
 def type_signature(node: Tree[Token], unit: Unit, self_fields: FieldTypes) -> str:
@@ -32,20 +33,11 @@ def field_signature(
     :returns: Signature suitable for overload and override comparisons.
     """
     body = children(field, 'field_body')[0]
-    annotations: list[tuple[str, str]] = []
-    for annotation in children(field, 'metadata'):
-        items = tokens(annotation)
-        annotations.append((str(items[1]), string_value(items[-2])))
-    for kind in ('temporal', 'dimension_annotation'):
-        for annotation in children(field, kind):
-            parameters = [
-                (
-                    str(tokens(parameter)[0]),
-                    type_signature(children(parameter, 'type_expr')[0], unit, self_fields),
-                )
-                for parameter in children(annotation, 'dimension')
-            ]
-            annotations.append((kind, repr(parameters)))
+    metadata = [
+        bind_call(call, field, unit, [])
+        for call in annotations(field)
+        if str(tokens(call)[1]) not in ('override', 'overload')
+    ]
     return repr(
         (
             str(tokens(body)[0]),
@@ -54,6 +46,6 @@ def field_signature(
                 if include_type
                 else ''
             ),
-            sorted(annotations),
+            sorted(metadata),
         )
     )

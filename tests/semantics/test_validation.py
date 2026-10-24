@@ -88,8 +88,10 @@ class ValidationTests(unittest.TestCase):
             ('namespace a from a import A entity A {}', 'conflicts'),
             ('entity A { attr X: string }', 'snake_case'),
             ('entity A { id x: string attr x: decimal }', 'duplicate field'),
-            ('entity A { @temporal(as_of_date: date) attr x: decimal }', 'supported annotation'),
-            ('entity A { @temporal(day: date) snapshot attr x: decimal }', 'supported annotation'),
+            (
+                'entity A { @temporal(as_of_date: date) attr x: decimal }',
+                'temporal requires snapshot or scd attr',
+            ),
             ("decodes Currencies { - 1 CNY: 'A' - 2 CNY: 'B' }", 'duplicate code'),
         ]
         for source, expected in cases:

@@ -100,6 +100,18 @@ def children(node: Tree[Token], rule: str) -> list[Tree[Token]]:
     return [child for child in node.children if isinstance(child, Tree) and child.data == rule]
 
 
+def annotations(node: Tree[Token], *names: str) -> list[Tree[Token]]:
+    """Select decorator calls, optionally filtered by name.
+
+    :param node: Decorated declaration or field.
+    :param names: Names to select, or none for every call.
+    :returns: Calls in source order.
+    """
+    return [
+        call for call in children(node, 'annotation') if not names or str(tokens(call)[1]) in names
+    ]
+
+
 def parse(text: str, path: Path = Path('<input>')) -> Document | Diagnostic:
     """Parse one file without requiring referenced files.
 

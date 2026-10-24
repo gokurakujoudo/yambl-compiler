@@ -133,7 +133,8 @@ class ExpressionTests(unittest.TestCase):
             [],
         )
         self.assertEqual(
-            check([document('type title<s: string> = string entity A { attr a: title<A> }')]), []
+            check([document('type caption<s: string> = string entity A { attr a: caption<A> }')]),
+            [],
         )
         self.assertTrue(
             check([document("type chosen<t: type<Entity>> = t entity A { attr a: chosen<'A'> }")])

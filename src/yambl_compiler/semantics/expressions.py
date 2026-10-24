@@ -7,7 +7,15 @@ from typing import Literal
 from lark import Token, Tree
 
 from yambl_compiler.semantics.decodes import is_flags
-from yambl_compiler.semantics.symbols import GENERICS, RESERVED, VALUES, Unit, header, symbol_key
+from yambl_compiler.semantics.symbols import (
+    GENERICS,
+    RESERVED,
+    VALUES,
+    Unit,
+    field_owner,
+    header,
+    symbol_key,
+)
 from yambl_compiler.semantics.types import (
     ENTITY,
     UNKNOWN,
@@ -168,7 +176,7 @@ class Resolver:
                     if params:
                         self.issue(node, 'invalid parameters for Entity')
                     result = Term(ENTITY)
-                elif symbol is not None:
+                elif symbol is not None and symbol.kind != 'decorator':
                     if params:
                         self.issue(
                             node,
@@ -323,6 +331,12 @@ class Resolver:
         operator, member = map(str, tokens(node))
         path = term.path + operator + member
         if operator == '::':
+            if term.sort == 'field' and member == 'entity':
+                owner = field_owner(*term.source) if term.source else None
+                if owner is None or owner.kind != 'entity':
+                    self.issue(node, 'field description has no owning entity')
+                    return Term(UNKNOWN)
+                return Term(Resolved(owner.key[1], 'reference', key=owner.key))
             if term.sort != 'field' or member not in ('type', 'value'):
                 self.issue(node, ':: requires a field description and type or value')
                 return Term(UNKNOWN)

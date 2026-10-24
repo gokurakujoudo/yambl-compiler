@@ -1,0 +1,24 @@
+namespace builtins
+
+---
+# Decorators
+
+普通参数接收值；* 参数接收调用处新定义的 key: Type。
+可选 pair 位于末尾，未提供的普通参数使用声明的默认值。
+@allow_multiple 仅修饰 decorator，允许同一对象重复使用该 decorator。
+内置的适用位置和特殊行为由语言检查器验证；自定义 decorator 不执行代码。
+---
+
+decorator @allow_multiple()
+
+decorator @title(text: string)
+decorator @description(text: string)
+
+decorator @temporal(*time: date)
+
+@allow_multiple
+decorator @dimension(*variation: string, *selector?: Hierarchy)
+
+decorator @flags()
+decorator @override()
+decorator @overload()

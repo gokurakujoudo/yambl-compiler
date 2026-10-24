@@ -6,7 +6,7 @@ from decimal import Decimal
 from lark import Token, Tree
 
 from yambl_compiler.semantics.symbols import Unit
-from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, tokens
+from yambl_compiler.syntax.parser import Diagnostic, annotations, children, diagnostic, tokens
 
 
 def is_flags(declaration: Tree[Token]) -> bool:
@@ -15,7 +15,7 @@ def is_flags(declaration: Tree[Token]) -> bool:
     :param declaration: Dictionary declaration.
     :returns: Whether the flags marker is present.
     """
-    return bool(children(declaration, 'flags_marker'))
+    return bool(annotations(declaration, 'flags'))
 
 
 def check_decodes(node: Tree[Token], unit: Unit, diagnostics: list[Diagnostic]) -> None:
@@ -26,7 +26,7 @@ def check_decodes(node: Tree[Token], unit: Unit, diagnostics: list[Diagnostic]) 
     :param diagnostics: Destination for located errors.
     :returns: None.
     """
-    markers = children(node, 'flags_marker')
+    markers = annotations(node, 'flags')
     if len(markers) > 1:
         diagnostics.append(diagnostic(unit.document, markers[-1], 'duplicate flags annotation'))
     codes: set[str] = set()

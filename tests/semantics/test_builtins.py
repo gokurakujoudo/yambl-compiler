@@ -22,6 +22,7 @@ class BuiltinTests(FilesystemCase):
                 'hierarchy.yambl',
                 'attr_cats.yambl',
                 'field_mapping.yambl',
+                'decorators.yambl',
             },
         )
         self.assertEqual((MODEL_ROOT / 'yambl-root.lclcfg').read_text(), "prefix: ''\n")

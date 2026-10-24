@@ -18,7 +18,7 @@ from yambl_compiler.semantics.symbols import (
     symbol_key,
 )
 from yambl_compiler.semantics.types import FieldTypes, Resolved, accepts, common_type
-from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, tokens
+from yambl_compiler.syntax.parser import Diagnostic, annotations, children, diagnostic, tokens
 
 
 @dataclass(frozen=True)
@@ -93,7 +93,7 @@ def marker(site: FieldSite) -> str:
     :param site: Field declaration site.
     :returns: Marker name, or an empty string.
     """
-    markers = children(site.declaration, 'field_marker')
+    markers = annotations(site.declaration, 'overload', 'override')
     return str(tokens(markers[0])[1]) if markers else ''
 
 

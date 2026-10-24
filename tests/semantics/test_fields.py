@@ -21,11 +21,11 @@ class FieldTests(unittest.TestCase):
         for field, message in [
             (
                 '@dimension(source: integer) attr x: string',
-                'dimension value must be string or code',
+                'incompatible decorator pair type',
             ),
             (
                 '@dimension(source: string, selector: string) attr x: string',
-                'dimension selector must be Hierarchy',
+                'incompatible decorator pair type',
             ),
             (
                 '@dimension(source: string, selector: Hierarchy<string>) attr x: string',
@@ -33,7 +33,7 @@ class FieldTests(unittest.TestCase):
             ),
             (
                 '@dimension(source: string, selector: Hierarchy, extra: string) attr x: string',
-                'dimension requires one or two parameters',
+                'unexpected argument for decorator: dimension',
             ),
             (
                 '@dimension(source: string) static attr x: string',
@@ -89,17 +89,20 @@ decodes Sources { - 1 PRIMARY: 'Main' }
 
     def test_invalid_field_annotations_and_defaults(self):
         cases = [
-            ('@title(\'A\') @title(\'B\') attr x: string', 'duplicate metadata: title'),
+            ('@title(\'A\') @title(\'B\') attr x: string', 'duplicate decorator: title'),
             (
                 '@description(\'A\') @description(\'B\') attr x: string',
-                'duplicate metadata: description',
+                'duplicate decorator: description',
             ),
             (
                 '@temporal(as_of_date: date) @temporal(as_of_date: date) scd attr x: decimal',
-                'duplicate temporal',
+                'duplicate decorator: temporal',
             ),
-            ('@temporal(as_of_date: date) config attr x: decimal', 'supported annotation'),
-            ('@dimension(Bad: string) attr x: string', 'dimension names must use snake_case'),
+            (
+                '@temporal(as_of_date: date) config attr x: decimal',
+                'temporal requires snapshot or scd attr',
+            ),
+            ('@dimension(Bad: string) attr x: string', 'pair keys must use snake_case'),
             (
                 '@dimension(source: string, source: string) attr x: string',
                 'duplicate dimension: source',
@@ -122,4 +125,4 @@ decodes Sources { - 1 PRIMARY: 'Main' }
         diagnostics = check([document('entity A {} extend A { id x: string }')])
         self.assertIn('extend may add attributes', diagnostics[0].message)
         diagnostics = check([document("@title('A') @title('B') entity A {}")])
-        self.assertIn('duplicate metadata', diagnostics[0].message)
+        self.assertIn('duplicate decorator', diagnostics[0].message)

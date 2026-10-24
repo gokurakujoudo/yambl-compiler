@@ -3,7 +3,7 @@
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, cast
 
 from lark import Token, Tree
 
@@ -16,6 +16,7 @@ VALUES = {'bool', 'string', 'integer', 'float', 'decimal', 'date', 'datetime', '
 GENERICS = {'collection', 'values', 'mapping', 'code', 'type', 'attrs', 'alias', 'exact'}
 RESERVED = VALUES | GENERICS | set(DECLARATIONS) | {'Entity'}
 type EntityKey = tuple[str, str]
+type DeclarationKind = Literal['entity', 'decodes', 'value', 'type_alias', 'decorator']
 
 
 @dataclass(frozen=True)
@@ -27,7 +28,7 @@ class Symbol:
     """
 
     key: EntityKey
-    kind: Literal['entity', 'decodes', 'value', 'type_alias']
+    kind: DeclarationKind
 
 
 @dataclass
@@ -107,6 +108,22 @@ def declaration_name(node: Tree[Token]) -> str:
     return str(next(token for token in tokens(header(node)) if token.type == 'NAME'))
 
 
+def field_owner(unit: Unit, syntax: Tree[Token]) -> Symbol | None:
+    """Find the declaration owning an original field type expression.
+
+    :param unit: Field's lexical scope.
+    :param syntax: Field type syntax.
+    :returns: Owning declaration, including the target of an extension.
+    """
+    for kind in ('entity', 'extension', 'value'):
+        for declaration in children(unit.document.tree, kind):
+            for field_node in children(declaration, 'field'):
+                body = children(field_node, 'field_body')[0]
+                if children(body, 'type_expr')[0] is syntax:
+                    return unit.scope.get(declaration_name(declaration))
+    return None
+
+
 def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic]) -> list[Unit]:
     """Resolve declarations before imports so file order does not affect visibility.
 
@@ -122,12 +139,13 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
             *children(document.tree, 'decodes'),
             *children(document.tree, 'value'),
             *children(document.tree, 'type_alias'),
+            *children(document.tree, 'decorator'),
         ]:
             name = declaration_name(declaration)
             key = symbol_key(document, name)
             pattern = (
                 r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*'
-                if declaration.data in ('value', 'type_alias')
+                if declaration.data in ('value', 'type_alias', 'decorator')
                 else r'[A-Z][a-zA-Z0-9]*'
             )
             if not re.fullmatch(pattern, name):
@@ -136,8 +154,12 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
                         document,
                         header(declaration),
                         (
-                            'value names must use snake_case'
-                            if declaration.data in ('value', 'type_alias')
+                            (
+                                'decorator names must use snake_case'
+                                if declaration.data == 'decorator'
+                                else 'value names must use snake_case'
+                            )
+                            if declaration.data in ('value', 'type_alias', 'decorator')
                             else 'declaration names must use PascalCase'
                         ),
                     )
@@ -149,15 +171,7 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
                         document, header(declaration), f'duplicate or reserved declaration: {name}'
                     )
                 )
-            kind: Literal['entity', 'decodes', 'value', 'type_alias'] = (
-                'type_alias'
-                if declaration.data == 'type_alias'
-                else (
-                    'value'
-                    if declaration.data == 'value'
-                    else ('entity' if declaration.data == 'entity' else 'decodes')
-                )
-            )
+            kind = cast(DeclarationKind, declaration.data)
             symbols[key] = Symbol(key, kind)
     units: list[Unit] = []
     for document in documents:
@@ -180,28 +194,29 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
                 scope[name] = target
         units.append(Unit(document, scope, world))
     builtin_scope = {
-        name: Symbol(
-            ('builtins', name),
-            (
-                'type_alias'
-                if node.data == 'type_alias'
-                else (
-                    'decodes'
-                    if node.data == 'decodes'
-                    else 'value' if node.data == 'value' else 'entity'
-                )
-            ),
-        )
+        name: Symbol(('builtins', name), cast(DeclarationKind, node.data))
         for name, node in DECLARATIONS.items()
     }
     for document in DOCUMENTS:
         builtin = Unit(document, builtin_scope, world)
         for node in document.tree.children:
-            if isinstance(node, Tree) and node.data in ('entity', 'value', 'decodes', 'type_alias'):
+            if isinstance(node, Tree) and node.data in (
+                'entity',
+                'value',
+                'decodes',
+                'type_alias',
+                'decorator',
+            ):
                 world.declarations[('builtins', declaration_name(node))] = (builtin, node)
     for unit in units:
         for node in unit.document.tree.children:
-            if isinstance(node, Tree) and node.data in ('entity', 'value', 'decodes', 'type_alias'):
+            if isinstance(node, Tree) and node.data in (
+                'entity',
+                'value',
+                'decodes',
+                'type_alias',
+                'decorator',
+            ):
                 world.declarations[symbol_key(unit.document, declaration_name(node))] = (unit, node)
         for name, symbol in builtin_scope.items():
             unit.scope.setdefault(name, symbol)

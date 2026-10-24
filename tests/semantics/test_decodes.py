@@ -126,9 +126,6 @@ INVALID = [
 ]
 
 SYNTAX_ERRORS = [
-    '@flags type flag = string',
-    'entity A { @flags attr x: string }',
-    '@flags() decodes Codes {}',
     "@flags decodes Codes { - 0b12 A: 'x' }",
     'type a = AttrCats.Attr +',
     'entity A { config attr x: integer = 0b1 }',
