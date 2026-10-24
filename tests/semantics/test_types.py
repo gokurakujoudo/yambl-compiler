@@ -12,11 +12,11 @@ class TypeTests(unittest.TestCase):
         for mode in ('attr', 'static attr', 'config attr', 'snapshot attr', 'scd attr', 'id'):
             source = f'''entity Security {{ static attr currency: string }}
                 entity Selection {{
-                    attr conditions: field_mapping<AttrCats.static, self.target_kind::value>
+                    attr conditions: field_mapping<AttrCats.Static, self.target_kind::value>
                     {mode} target_kind: type<Security>
                 }}
-                entity Narrow inherits Selection {{ attr copied: field_mapping<AttrCats.attr, self.target_kind::value> }}
-                extend Selection {{ attr extra: field_mapping<AttrCats.config, self.later::value> attr later: type<Entity> }}'''
+                entity Narrow inherits Selection {{ attr copied: field_mapping<AttrCats.Attr, self.target_kind::value> }}
+                extend Selection {{ attr extra: field_mapping<AttrCats.Config, self.later::value> attr later: type<Entity> }}'''
             with self.subTest(mode=mode):
                 self.assertEqual(check([document(source)]), [])
         self.assertEqual(
@@ -24,9 +24,9 @@ class TypeTests(unittest.TestCase):
             attr group: ConfigGroup
             attr types: values<type<Entity>>
             attr by_name: mapping<string, type<ConfigGroup>>
-            attr a: field_mapping<AttrCats.attr, Decodes>
-            attr b: field_mapping<AttrCats.snapshot, A>
-            attr c: field_mapping<AttrCats.scd, A>
+            attr a: field_mapping<AttrCats.Attr, Decodes>
+            attr b: field_mapping<AttrCats.Snapshot, A>
+            attr c: field_mapping<AttrCats.Scd, A>
         }''')]),
             [],
         )
@@ -47,22 +47,22 @@ class TypeTests(unittest.TestCase):
             ('field_mapping<static<A>, A>', 'static does not accept generic arguments'),
             ('field_mapping<self.target::value, A>', 'incompatible argument for field_mapping.a'),
             (
-                'field_mapping<AttrCats.static, Missing>',
+                'field_mapping<AttrCats.Static, Missing>',
                 'incompatible argument for field_mapping.b',
             ),
-            ('field_mapping<AttrCats.static, Codes>', 'incompatible argument for field_mapping.b'),
-            ('field_mapping<AttrCats.static, self.absent::value>', 'unknown field: absent'),
+            ('field_mapping<AttrCats.Static, Codes>', 'incompatible argument for field_mapping.b'),
+            ('field_mapping<AttrCats.Static, self.absent::value>', 'unknown field: absent'),
             (
-                'field_mapping<AttrCats.static, self.bad::value>',
+                'field_mapping<AttrCats.Static, self.bad::value>',
                 'incompatible argument for field_mapping.b',
             ),
             ('values<self.target::value>', 'values requires a value type'),
             ('code<self.target::value>', 'code requires a Decodes instance value'),
             ('code<Entity>', 'code requires a Decodes instance identifier'),
             ('collection<type<A>>', 'collection requires an entity reference'),
-            ('values<field_mapping<AttrCats.static, A>>', 'values requires a value type'),
+            ('values<field_mapping<AttrCats.Static, A>>', 'values requires a value type'),
             (
-                'mapping<string, field_mapping<AttrCats.static, A>>',
+                'mapping<string, field_mapping<AttrCats.Static, A>>',
                 'mapping values cannot be collections',
             ),
         ]
@@ -71,7 +71,7 @@ class TypeTests(unittest.TestCase):
                 source = f'decodes Codes {{}} entity A {{ attr target: type<Entity> attr bad: string attr item: {spelling} }}'
                 self.assertIn(message, [d.message for d in check([document(source)])])
         self.assertEqual(
-            check([document('entity A { attr x: field_mapping<AttrCats.static, Entity> }')]), []
+            check([document('entity A { attr x: field_mapping<AttrCats.Static, Entity> }')]), []
         )
 
     def test_all_external_code_occurrences_are_reported(self):

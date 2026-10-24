@@ -40,13 +40,13 @@ entity Selection {
     attr security: Security
     attr currency: self.security::value.currency::type
     attr same_currency: alias<self.security::value.currency::value>
-    attr fields: attrs<AttrCats.static, Security>
-    attr bond_fields: attrs<AttrCats.static, Bond>
-    attr mapping: mapping<attrs<AttrCats.static, Security> as Attr, Attr::type>
-    attr shortcut: field_mapping<AttrCats.static, Security>
+    attr fields: attrs<AttrCats.Static, Security>
+    attr bond_fields: attrs<AttrCats.Static, Bond>
+    attr mapping: mapping<attrs<AttrCats.Static, Security> as Attr, Attr::type>
+    attr shortcut: field_mapping<AttrCats.Static, Security>
     attr references: mapping<type<Entity>, Security>
     attr by_code: mapping<code<Currencies>, money>
-    attr by_field: mapping<attrs<AttrCats.attr, Security>, string>
+    attr by_field: mapping<attrs<AttrCats.Attr, Security>, string>
     attr id_map: mapping<snowflake_id, string>
     attr aliases: alias<self.mapping::value>
 }
@@ -69,7 +69,7 @@ INVALID = [
     ('entity A { attr a: string attr b: self.a.type }', 'field access requires an entity'),
     ('entity A { attr a: string attr b: A.a::value }', 'field value requires an instance origin'),
     (
-        'entity A { attr a: mapping<attrs<AttrCats.attr, A> as Attr, Attr::value> }',
+        'entity A { attr a: mapping<attrs<AttrCats.Attr, A> as Attr, Attr::value> }',
         'field value requires an instance origin',
     ),
     ('entity A { attr a: exact<true> }', 'exact requires override or overload'),
@@ -80,7 +80,7 @@ INVALID = [
     ('entity A { attr a: alias<string> }', 'alias requires an instance field value'),
     ('entity A { attr a: alias<1> }', 'alias requires an instance field value'),
     ('entity A { attr a: attrs<string, A> }', 'attrs requires an AttrCats code'),
-    ('entity A { attr a: attrs<AttrCats.attr, string> }', 'attrs requires an entity type value'),
+    ('entity A { attr a: attrs<AttrCats.Attr, string> }', 'attrs requires an entity type value'),
     ('entity A { attr a: attrs<AttrCats.absent, A> }', 'unknown Decodes code'),
     ('entity A {} entity B { attr a: A.absent::type }', 'unknown field: absent'),
     ('entity A { attr a: Entity[1] }', 'invalid parameters for Entity'),
@@ -171,7 +171,7 @@ class ExpressionTests(unittest.TestCase):
         entity Root {} entity Left inherits Root { @overload attr x: exact<First.X> }
         entity Right inherits Root { @overload attr x: code<Second> }
         entity Other { attr x: integer }
-        entity Selection { attr a: attrs<AttrCats.attr, Root> attr b: attrs<AttrCats.attr, Entity> }'''
+        entity Selection { attr a: attrs<AttrCats.Attr, Root> attr b: attrs<AttrCats.Attr, Entity> }'''
         self.assertEqual(check([document(source)]), [])
         resolver, fields, index = self.resolver(source)
         self.assertEqual(index.contracts[(('', 'Root'), 'x')].name, 'string')

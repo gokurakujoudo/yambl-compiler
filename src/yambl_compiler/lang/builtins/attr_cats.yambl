@@ -4,12 +4,18 @@ namespace builtins
 # AttrCats
 
 属性类别用于 attrs 筛选。普通 attr 不属于 static；ID 和集合字段不参与筛选。
+AttrCats 是 flags 字典，条目数值是独立位掩码。可以用
+`AttrCats.Attr + AttrCats.Config` 同时选择普通和 config 属性。
+自动提供 `AttrCats.None = 0`，表示不选择任何类别，无需在条目中声明。
+`AttrCats.All` 表示全选；`AttrCats.All - AttrCats.Snapshot - AttrCats.Scd` 排除两个类别。
+`+` 和 `-` 从左到右计算，重复添加或移除同一项不会产生额外影响。
 ---
 
+@flags
 decodes AttrCats {
-    - 100 attr: 'Attribute'
-    - 200 static: 'Static'
-    - 300 config: 'Configuration'
-    - 400 snapshot: 'Snapshot'
-    - 500 scd: 'SCD Type 2'
+    - 0b00001 Attr: 'Attribute'
+    - 0b00010 Static: 'Static'
+    - 0b00100 Config: 'Configuration'
+    - 0b01000 Snapshot: 'Snapshot'
+    - 0b10000 Scd: 'SCD Type 2'
 }

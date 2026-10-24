@@ -2,12 +2,13 @@
 
 from collections.abc import Sequence
 
+from yambl_compiler.semantics.decodes import check_decodes
 from yambl_compiler.semantics.entities import check_entities
 from yambl_compiler.semantics.expressions import check_aliases
 from yambl_compiler.semantics.fields import check_field, check_metadata
 from yambl_compiler.semantics.symbols import declaration_name, resolve_scopes
 from yambl_compiler.semantics.values import check_values
-from yambl_compiler.syntax.parser import Diagnostic, Document, children, diagnostic, tokens
+from yambl_compiler.syntax.parser import Diagnostic, Document, children
 
 
 def check(documents: Sequence[Document]) -> list[Diagnostic]:
@@ -39,14 +40,7 @@ def check(documents: Sequence[Document]) -> list[Diagnostic]:
                 )
         for decodes in children(unit.document.tree, 'decodes'):
             check_metadata(decodes, unit, diagnostics)
-            codes: set[str] = set()
-            for entry in children(decodes, 'entry'):
-                code = str(tokens(entry)[2])
-                if code in codes:
-                    diagnostics.append(
-                        diagnostic(unit.document, entry, f'duplicate code in Decodes: {code}')
-                    )
-                codes.add(code)
+            check_decodes(decodes, unit, diagnostics)
     return sorted(
         diagnostics, key=lambda item: (str(item.path), item.line, item.column, item.message)
     )

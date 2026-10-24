@@ -29,7 +29,7 @@ namespace builtins
 
 `Decodes` 是 final 实体，禁止继承及 extend。`decodes Currencies` 定义的是 `Decodes` 的单例实例，
 不创建名为 `Currencies` 的实体类型或 `Decodes` 子类。因此，`attr x: Currencies`
-不是合法的字段类型声明。
+与 `attr x: exact<Currencies>` 都表示固定字典引用；此常量约束只用于 override 或 overload。
 
 ## 代码值与字典引用
 
@@ -76,6 +76,9 @@ entity Security {
 - `'CNY'` 对应字符串内容 `decode`。
 
 `code` 与 `decode` 可以表达不同内容；例子中它们恰好相同。
+通过 YAMBL 数据仓库定义的 code 使用 PascalCase：以 ASCII 大写字母开头，
+后接字母或数字，不含下划线。`SomeValue`、`CNY` 和 `USD` 都是合法名称。
+此规则不约束外部动态字典的数据内容。
 值类型原语 `code<Currencies>` 的含义见 [code](../builtins/value-types.md#code)。
 
 当前实例采用 `Currencies` 这样的 PascalCase 复数名称。同 namespace 可直接
@@ -89,12 +92,40 @@ entity Security {
 
 ## 待确定
 
-- 条目裸 `code` 的完整字符集，以及包含空白或标点的代码如何书写。
 - `ordering` 相同时的次级排序规则。
 - 跨字典代码值的显式转换；不同字典的 code 可在 overload 中共同暴露为 string。
 
 模型描述和类型规则不意味着执行业务数据质量校验。当前编译器已支持这里描述的
 声明、引用及外部字典 warning。
+
+## Flags 字典
+
+`@flags` 只修饰 decodes，可与 title、description 组合。条目开头的整数在此
+表示位掩码，可用十进制或 `0b` 二进制书写。每个显式条目必须占用一个独立位：
+数值为正单比特，字典内不得重复。普通字典的 ordering 不受此单比特约束。
+
+```yambl
+@flags
+decodes Permissions {
+    - 0b0001 Read: 'Read'
+    - 0b0010 Write: 'Write'
+}
+```
+
+每个 flags 字典自动提供 `None`，代表零，以及 `All`，代表所有显式条目的并集。
+空字典的 All 与 None 相同；源文件不能再次声明这两个 code。
+`Permissions.Read + Permissions.Write` 是同一字典中标志的按位并集，类型仍是
+`code<Permissions>`。组合顺序无关，重复同一项不改变值，`None` 是并集的零元。
+`Permissions.All - Permissions.Write` 从选择中移除 Write，结果等于 Read。
+重复添加同一项只添加一次，重复移除同一项只移除一次，移除未选中的项没有影响。
+`+` 和 `-` 同优先级、从左到右计算；例如 `All - Read + Read` 恢复全选。
+不允许组合不同字典的 code，也不允许对普通字典 code 使用 `+` 或 `-`。
+
+组合可用于接受该 code 的泛型参数和 override/overload 的 exact 常量约束。
+`AttrCats` 的类别筛选使用同一规则，例如 `AttrCats.Attr + AttrCats.Config`；
+`AttrCats.None` 不选择任何字段，`AttrCats.All` 选择全部类别。格式化保留二进制拼写，
+在 `+`、`-` 两侧加空格。
+当前工具检查这些表达式及约束，尚不执行实例求值或保存组合值。
 ---
 
 final entity Decodes {

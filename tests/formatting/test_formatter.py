@@ -14,8 +14,8 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(format_document(document(expected)), expected)
 
     def test_dependent_types_and_relationship_markers(self):
-        source = "final entity Selection{attr selected:type<Entity> @overload config attr limit:integer=10 attr when:field_mapping<AttrCats.static,self.selected::value>}#end"
-        expected = 'final entity Selection {\n    attr selected: type<Entity>\n    @overload\n    config attr limit: integer = 10\n    attr when: field_mapping<AttrCats.static, self.selected::value>\n}  # end\n'
+        source = "final entity Selection{attr selected:type<Entity> @overload config attr limit:integer=10 attr when:field_mapping<AttrCats.Static,self.selected::value>}#end"
+        expected = 'final entity Selection {\n    attr selected: type<Entity>\n    @overload\n    config attr limit: integer = 10\n    attr when: field_mapping<AttrCats.Static, self.selected::value>\n}  # end\n'
         self.assertEqual(format_document(document(source)), expected)
         self.assertEqual(format_document(document(expected)), expected)
 

@@ -6,6 +6,7 @@ from typing import Literal
 
 from lark import Token, Tree
 
+from yambl_compiler.semantics.decodes import is_flags
 from yambl_compiler.semantics.symbols import GENERICS, RESERVED, VALUES, Unit, header, symbol_key
 from yambl_compiler.semantics.types import (
     ENTITY,
@@ -197,7 +198,40 @@ class Resolver:
                     result = Term(UNKNOWN)
         for access in children(node, 'access'):
             result = self.access(result, access)
+        for operation in children(node, 'flag_operation'):
+            result = self.combine(
+                result, self.evaluate(children(operation, 'flag_operand')[0]), operation
+            )
         return result
+
+    def combine(self, left: Term, right: Term, node: Tree[Token]) -> Term:
+        """Combine codes from one flags dictionary without executing instances.
+
+        :param left: Accumulated flags value.
+        :param right: Next flags value.
+        :param node: Union or difference site.
+        :returns: Canonical constant set or a symbolic flags value.
+        """
+        operator = str(tokens(node)[0])
+        if (
+            left.sort != 'value'
+            or right.sort != 'value'
+            or left.type.name != 'code'
+            or right.type.name != 'code'
+            or left.type.base() != right.type.base()
+        ):
+            self.issue(node, f'{operator} requires codes from the same flags Decodes')
+            return Term(UNKNOWN)
+        declaration = self.unit.world.declarations.get(left.type.args[0].key or ('', ''))
+        if declaration is None or not is_flags(declaration[1]):
+            self.issue(node, f'{operator} requires codes from the same flags Decodes')
+            return Term(UNKNOWN)
+        exact = None
+        if left.type.exact is not None and right.type.exact is not None:
+            first = set(filter(None, left.type.exact.split('+')))
+            second = set(filter(None, right.type.exact.split('+')))
+            exact = '+'.join(sorted(first | second if operator == '+' else first - second))
+        return Term(replace(left.type, exact=exact), 'value', left.path + operator + right.path)
 
     def parameters(self, node: Tree[Token], name: str) -> tuple[tuple[str, str], ...]:
         """Validate string and decimal descriptor parameters.
@@ -323,10 +357,21 @@ class Resolver:
             key = next(key for key in self.unit.world.declarations if repr(key) == term.type.exact)
             _, declaration = self.unit.world.declarations[key]
             codes = {str(tokens(entry)[2]) for entry in children(declaration, 'entry')}
+            exact = member
+            if is_flags(declaration):
+                if member == 'All':
+                    exact = '+'.join(sorted(codes))
+                elif member == 'None':
+                    exact = ''
+                codes.update(('None', 'All'))
             if member not in codes:
                 self.issue(node, f'unknown Decodes code: {term.path}.{member}')
             return Term(
-                Resolved('code', args=(Resolved(key[1], key=key),), exact=member),
+                Resolved(
+                    'code',
+                    args=(Resolved(key[1], key=key),),
+                    exact=exact,
+                ),
                 'value',
                 path,
             )
@@ -441,7 +486,8 @@ class Resolver:
                 body = children(field, 'field_body')[0]
                 mode = str(tokens(body)[0])
                 if mode == 'id' or (
-                    category.type.exact is not None and mode != category.type.exact
+                    category.type.exact is not None
+                    and mode.capitalize() not in category.type.exact.split('+')
                 ):
                     continue
                 syntax = children(body, 'type_expr')[0]

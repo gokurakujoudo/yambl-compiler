@@ -32,7 +32,7 @@ namespace builtins
 
 final entity ConfigGroup {
     id config_group_id: string
-    static attr entity_type: type<Entity>
-    static attr when: field_mapping<AttrCats.static, self.entity_type::value>
-    static attr then_set: field_mapping<AttrCats.config, self.entity_type::value>
+    attr entity_type: type<Entity>
+    attr when: field_mapping<AttrCats.Static, self.entity_type::value>
+    attr then_set: field_mapping<AttrCats.Config, self.entity_type::value>
 }

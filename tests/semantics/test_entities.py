@@ -89,7 +89,7 @@ class EntityTests(unittest.TestCase):
         )
         self.assertEqual(set(index.candidates(('root', 'Security'), 'static')), {'currency'})
         self.assertEqual(
-            set(index.candidates(('builtins', 'ConfigGroup'), 'static')),
+            set(index.candidates(('builtins', 'ConfigGroup'), 'attr')),
             {'entity_type'},
         )
         self.assertEqual(index.field_types(('absent', 'Absent')), {})

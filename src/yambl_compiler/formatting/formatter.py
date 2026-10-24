@@ -61,7 +61,10 @@ def format_document(document: Document) -> str:
     for declaration in cast(list[Tree[Token]], document.tree.children):
         items = tokens(declaration)
         if declaration.data in ('entity', 'decodes', 'extension', 'value'):
-            for metadata in children(declaration, 'metadata'):
+            for metadata in [
+                *children(declaration, 'metadata'),
+                *children(declaration, 'flags_marker'),
+            ]:
                 pieces.append(line_piece(tokens(metadata), 0))
             header_tokens = tokens(children(declaration, f'{declaration.data}_header')[0])
             brace = next(item for item in items if item.type == 'LBRACE')

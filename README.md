@@ -60,6 +60,20 @@ dictionaries are allowed: each occurrence produces an `undefined Decodes: NAME`
 warning with its path, line, and column. This includes uses inside generics and
 `@dimension`. Missing explicit imports and unknown entity types remain errors.
 
+Codes declared in YAMBL use PascalCase: an ASCII uppercase initial followed by
+letters or digits, including names such as `SomeValue` and `USD`. `@flags` marks a
+Decodes whose explicit entry numbers must be distinct positive single-bit masks.
+Decimal and `0b` binary notation are accepted. Each flags dictionary provides
+`None = 0` and `All` (all declared flags) automatically; declaring either name
+explicitly is an error. In an empty flags dictionary, All equals None.
+`AttrCats.Attr + AttrCats.Config` combines codes from the same flags dictionary by
+bitwise union. `AttrCats.All - AttrCats.Snapshot` removes Snapshot. Repeating an
+addition or removal has no further effect. Both operators have the same precedence
+and evaluate left to right, after member access.
+The combination keeps its dictionary's code type and can be passed to aliases,
+`attrs`, `field_mapping`, or an `exact` constraint. `AttrCats.None` selects no fields.
+The checker validates these expressions without executing model instances.
+
 `@title('...')` and `@description('...')` attach metadata to entities, Decodes
 declarations, values, or fields. Each `@dimension(source: string, preference: Hierarchy)`
 defines one independent dimension and an optional alternative lookup parameter.
@@ -74,13 +88,13 @@ literals for `float` and `decimal`, single-quoted strings for `string`, and
 `true` / `false` for `bool`. Other default types and expressions are not implemented.
 
 `Entity` is the abstract ultimate entity base. Each business root keeps its own field
-identities; `attrs<AttrCats.static, Entity>` does not collect every business field.
+identities; `attrs<AttrCats.Static, Entity>` does not collect every business field.
 `type<T>` stores T or a subtype's qualified name. `self.kind` selects a field
 descriptor; `self.kind::type` selects its declared type and `self.kind::value`
 selects its instance value. Multi-level instance paths are supported. `alias<...>`
 expresses equal values and type dependencies are checked for cycles.
 
-`attrs<AttrCats.static, Security>` selects qualified field identities across the
+`attrs<AttrCats.Static, Security>` selects qualified field identities across the
 target's inherited, own, extended and descendant attributes. IDs and collection
 fields are excluded. `mapping<attrs<...> as Attr, Attr::type>` associates each field
 with its declared type. The bound key has no instance value. `field_mapping` is a

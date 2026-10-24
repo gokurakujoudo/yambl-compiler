@@ -20,7 +20,7 @@ def field_name(body: Tree[Token]) -> str:
 
 
 def check_metadata(node: Tree[Token], unit: Unit, diagnostics: list[Diagnostic]) -> None:
-    """Reject repeated title or description annotations on the same declaration.
+    """Check descriptive metadata and restrict flags to dictionary declarations.
 
     :param node: Entity, Decodes, or field declaration.
     :param unit: Owning source and scope.
@@ -28,6 +28,11 @@ def check_metadata(node: Tree[Token], unit: Unit, diagnostics: list[Diagnostic])
     :returns: None; appends diagnostics.
     """
     seen: set[str] = set()
+    if node.data != 'decodes':
+        for marker in children(node, 'flags_marker'):
+            diagnostics.append(
+                diagnostic(unit.document, marker, 'flags requires a Decodes declaration')
+            )
     for metadata in children(node, 'metadata'):
         name = str(tokens(metadata)[1])
         if name in seen:

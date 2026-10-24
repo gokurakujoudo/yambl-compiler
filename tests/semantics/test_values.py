@@ -53,7 +53,7 @@ class ValueTests(unittest.TestCase):
                 'type requires Entity or a visible entity type',
             ),
             (
-                'value a {} entity A { attr x: field_mapping<AttrCats.static, a> }',
+                'value a {} entity A { attr x: field_mapping<AttrCats.Static, a> }',
                 'incompatible argument for field_mapping.b',
             ),
             ('value a {} extend a {}', 'extend requires a visible user-defined entity: a'),

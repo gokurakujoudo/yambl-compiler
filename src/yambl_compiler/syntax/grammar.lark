@@ -7,9 +7,10 @@ type_alias: type_alias_header "=" type_expr
 type_alias_header: TYPE NAME type_parameters?
 type_parameters: "<" type_parameter ("," type_parameter)* ">"
 type_parameter: NAME ":" type_expr
-entity: metadata* entity_header "{" field* "}"
+_declaration_annotation: metadata | flags_marker
+entity: _declaration_annotation* entity_header "{" field* "}"
 entity_header: FINAL? ENTITY NAME inheritance?
-value: metadata* value_header "{" field* "}"
+value: _declaration_annotation* value_header "{" field* "}"
 value_header: VALUE NAME
 inheritance: INHERITS NAME
 extension: extension_header "{" field* "}"
@@ -23,10 +24,14 @@ metadata: "@" METADATA "(" STRING ")"
 temporal: "@" TEMPORAL "(" dimension ("," dimension)* ")"
 dimension_annotation: "@" DIMENSION "(" dimension ("," dimension)* ")"
 dimension: NAME ":" type_expr
-decodes: metadata* decodes_header "{" entry* "}"
+decodes: _declaration_annotation* decodes_header "{" entry* "}"
+flags_marker: "@" "flags"
 decodes_header: DECODES NAME
-entry: "-" INT NAME ":" STRING
-type_expr: (NAME | SELF | STRING | INT | NUMBER | BOOLEAN) (parameters | arguments)? access* binding?
+entry: "-" (INT | BINARY) NAME ":" STRING
+type_expr: _type_term flag_operation* binding?
+_type_term: (NAME | SELF | STRING | INT | NUMBER | BOOLEAN) (parameters | arguments)? access*
+flag_operation: ("+" | "-") flag_operand
+flag_operand: _type_term
 arguments: "<" type_expr ("," type_expr)* ">"
 access: ("." | "::") NAME
 binding: AS NAME
@@ -58,6 +63,7 @@ VALUE: /value\b/
 TEMPORAL: /temporal\b/
 DECODES: /decodes\b/
 INT: /-?[0-9]+/
+BINARY.2: /-?0b[01]+/
 NUMBER.1: /-?(?:[0-9]+\.[0-9]+(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)/
 BOOLEAN.2: /(?:true|false)\b/
 STRING: /'([^'\\\r\n]|\\[^\r\n])*'/
