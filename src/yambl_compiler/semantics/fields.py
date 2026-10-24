@@ -62,8 +62,6 @@ def check_field(
                 unit.document, markers[-1], 'only one overload or override marker is allowed'
             )
         )
-    if markers and mode == 'id':
-        diagnostics.append(diagnostic(unit.document, markers[0], 'field markers require an attr'))
     for default in children(body, 'default_value'):
         if mode != 'config':
             diagnostics.append(

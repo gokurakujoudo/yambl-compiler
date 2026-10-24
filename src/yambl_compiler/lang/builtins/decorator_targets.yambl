@@ -1,0 +1,23 @@
+namespace builtins
+
+---
+# DecoratorTargets
+
+@targets 使用此 flags 字典声明 decorator 的适用对象。
+EntityAttr 包括实体声明和 extend 中的属性；ValueAttr 为 value 的 static 属性。
+Id 单独选择实体 ID；Type 选择类型别名声明。
+自动生成 None 和 All，支持用 + 合并范围、用 - 排除范围。
+All 只包含语言已经开放修饰的对象，不开放 extend 块、字典条目或形式参数。
+---
+
+@flags
+decodes DecoratorTargets {
+    - 0b00000001 Entity: 'Entity'
+    - 0b00000010 Value: 'Value'
+    - 0b00000100 Decodes: 'Decodes'
+    - 0b00001000 Type: 'Type alias'
+    - 0b00010000 Decorator: 'Decorator declaration'
+    - 0b00100000 Id: 'Entity ID'
+    - 0b01000000 EntityAttr: 'Entity attribute'
+    - 0b10000000 ValueAttr: 'Value attribute'
+}

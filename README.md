@@ -259,7 +259,13 @@ before the editor applies that diagnostic filter.
 
 ## Decorator declarations
 
-`decorator @note(text: string = 'Note', *source?: string)` declares typed metadata.
+A decorator declares typed metadata and must state its allowed targets:
+
+```text
+@targets(DecoratorTargets.All)
+decorator @note(text: string = 'Note', *source?: string)
+```
+
 Calls accept positional values, then named values such as `text='Name'`, followed
 by caller-defined pairs such as `source: code<'PriceSources'>`. Each starred
 parameter receives one pair. Optional pairs come last. Missing ordinary arguments
@@ -282,7 +288,16 @@ accept string IDs when the target has one identifiable ID field of a supported
 string or snowflake type; instance existence and regex matching are not checked.
 
 Built-in signatures are distributed in `lang/builtins/decorators.yambl`.
-Their placement restrictions and special behavior remain compiler checks.
+Every signature, including `targets` itself, explicitly declares `@targets`.
+`DecoratorTargets` is a language-defined flags dictionary with Entity, Value,
+Decodes, Type, Decorator, Id, EntityAttr and ValueAttr codes, plus generated None
+and All. Missing scope declarations are errors even on unused decorators.
+The checker matches calls against these declarations; built-in special behavior
+remains in the compiler. `categories: code<AttrCats>` defaults to AttrCats.All and
+filters only attributes. Value attributes are Static, including implicit `attr`.
+For example, temporal declares EntityAttr with Snapshot + Scd categories.
+Target expressions use the decorator declaration scope, and support flags union
+and subtraction. Collection attributes follow the same target/category rules.
 `@temporal(effective_date: date)` accepts a caller-chosen parameter name.
 `@title(text='Name')` and `@title('Name')` are equivalent. Empty calls may omit
 parentheses. Custom metadata participates in override/overload signatures after

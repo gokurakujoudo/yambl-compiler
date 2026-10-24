@@ -37,13 +37,16 @@ class FieldTests(unittest.TestCase):
             ),
             (
                 '@dimension(source: string) static attr x: string',
-                'dimension requires attr, snapshot or scd',
+                'decorator dimension does not allow this target',
             ),
             (
                 '@dimension(source: string) config attr x: string',
-                'dimension requires attr, snapshot or scd',
+                'decorator dimension does not allow this target',
             ),
-            ('@dimension(source: string) id x: string', 'dimension requires attr, snapshot or scd'),
+            (
+                '@dimension(source: string) id x: string',
+                'decorator dimension does not allow this target',
+            ),
             (
                 '@temporal(as_of_date: date) @dimension(as_of_date: string) snapshot attr x: string',
                 'duplicate dimension: as_of_date',
@@ -100,7 +103,7 @@ decodes Sources { - 1 PRIMARY: 'Main' }
             ),
             (
                 '@temporal(as_of_date: date) config attr x: decimal',
-                'temporal requires snapshot or scd attr',
+                'decorator temporal does not allow this target',
             ),
             ('@dimension(Bad: string) attr x: string', 'pair keys must use snake_case'),
             (

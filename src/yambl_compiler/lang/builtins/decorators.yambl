@@ -6,19 +6,32 @@ namespace builtins
 普通参数接收值；* 参数接收调用处新定义的 key: Type。
 可选 pair 位于末尾，未提供的普通参数使用声明的默认值。
 @allow_multiple 仅修饰 decorator，允许同一对象重复使用该 decorator。
-内置的适用位置和特殊行为由语言检查器验证；自定义 decorator 不执行代码。
+每个 decorator 必须通过 @targets 显式声明适用范围，包括 @targets 自身。
+categories 只筛选属性类别，默认包含全部类别；value 的属性天然为 static。
+检查器读取这些声明验证适用位置，另行检查内置特殊行为；自定义 decorator 不执行代码。
 ---
 
+@targets(DecoratorTargets.Decorator)
+decorator @targets(targets: code<DecoratorTargets>, categories: code<AttrCats> = AttrCats.All)
+
+@targets(DecoratorTargets.Decorator)
 decorator @allow_multiple()
 
+@targets(DecoratorTargets.All)
 decorator @title(text: string)
+@targets(DecoratorTargets.All)
 decorator @description(text: string)
 
+@targets(DecoratorTargets.EntityAttr, categories=AttrCats.Snapshot + AttrCats.Scd)
 decorator @temporal(*time: date)
 
+@targets(DecoratorTargets.EntityAttr, categories=AttrCats.Attr + AttrCats.Snapshot + AttrCats.Scd)
 @allow_multiple
 decorator @dimension(*variation: string, *selector?: Hierarchy)
 
+@targets(DecoratorTargets.Decodes)
 decorator @flags()
+@targets(DecoratorTargets.EntityAttr)
 decorator @override()
+@targets(DecoratorTargets.EntityAttr)
 decorator @overload()

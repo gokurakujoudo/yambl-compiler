@@ -8,7 +8,7 @@ from lark import Token, Tree
 
 from yambl_compiler.semantics.expressions import Resolver, Term
 from yambl_compiler.semantics.symbols import Unit, header
-from yambl_compiler.semantics.types import Resolved, accepts
+from yambl_compiler.semantics.types import UNKNOWN, Resolved, accepts
 from yambl_compiler.syntax.parser import Diagnostic, annotations, children, diagnostic, tokens
 
 
@@ -120,6 +120,10 @@ def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Dia
     :param diagnostics: Destination for errors.
     :returns: None.
     """
+    if not annotations(declaration, 'targets'):
+        diagnostics.append(
+            diagnostic(unit.document, header(declaration), 'decorator requires explicit @targets')
+        )
     seen: set[str] = set()
     pair_seen = optional_seen = False
     resolver = Resolver(unit, diagnostics, {})
@@ -146,7 +150,11 @@ def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Dia
 
 
 def bind_call(
-    call: Tree[Token], node: Tree[Token], unit: Unit, diagnostics: list[Diagnostic]
+    call: Tree[Token],
+    node: Tree[Token],
+    unit: Unit,
+    diagnostics: list[Diagnostic],
+    values: dict[str, Resolved] | None = None,
 ) -> str:
     """Bind one call and return its canonical signature.
 
@@ -154,6 +162,7 @@ def bind_call(
     :param node: Decorated definition.
     :param unit: Invocation scope.
     :param diagnostics: Destination for errors.
+    :param values: Optional destination for bound argument types and constant values.
     :returns: Identity and normalized arguments, or an empty string on lookup failure.
     """
     name = str(tokens(call)[1])
@@ -221,11 +230,63 @@ def bind_call(
             bound.append((formal.name, str(tokens(provided)[0]), actual))
         else:
             bound.append((formal.name, '', argument_type(actual_resolver, syntax, expected)))
+    if values is not None:
+        values.update((name, actual) for name, _, actual in bound)
     return repr((symbol.key, bound))
 
 
+def check_target(
+    call: Tree[Token],
+    node: Tree[Token],
+    declaration: Tree[Token],
+    unit: Unit,
+    diagnostics: list[Diagnostic],
+) -> None:
+    """Match an invocation against its language-defined target contract.
+
+    :param call: Decorator invocation with a resolved declaration.
+    :param node: Decorated declaration or field.
+    :param declaration: Enclosing declaration, including extend blocks.
+    :param unit: Invocation scope.
+    :param diagnostics: Destination for errors.
+    :returns: None.
+    """
+    name = str(tokens(call)[1])
+    scope, definition = unit.world.declarations[unit.scope[name].key]
+    targets = annotations(definition, 'targets')
+    if not targets:
+        return
+    values: dict[str, Resolved] = {}
+    errors: list[Diagnostic] = []
+    bind_call(targets[0], definition, scope, errors, values)
+    if errors:
+        return
+    body = children(node, 'field_body')
+    mode = str(tokens(body[0])[0]) if body else ''
+    kind = {
+        'entity': 'Entity',
+        'value': 'Value',
+        'decodes': 'Decodes',
+        'type_alias': 'Type',
+        'decorator': 'Decorator',
+    }.get(str(node.data), '')
+    if body:
+        kind = (
+            'Id' if mode == 'id' else 'ValueAttr' if declaration.data == 'value' else 'EntityAttr'
+        )
+        if kind == 'ValueAttr':
+            mode = 'static'
+    allowed = kind in (values.get('targets', UNKNOWN).exact or '').split('+')
+    if kind in ('EntityAttr', 'ValueAttr'):
+        allowed &= mode.capitalize() in (values.get('categories', UNKNOWN).exact or '').split('+')
+    if not allowed:
+        diagnostics.append(
+            diagnostic(unit.document, call, f'decorator {name} does not allow this target')
+        )
+
+
 def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> None:
-    """Validate calls, multiplicity and built-in placement rules.
+    """Validate calls, multiplicity and declarative target contracts.
 
     :param units: Complete resolved compilation unit.
     :param diagnostics: Destination for errors.
@@ -242,13 +303,12 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
             for node in [declaration, *children(declaration, 'field')]:
                 seen: set[str] = set()
                 dimensions: set[str] = set()
-                body = children(node, 'field_body')
-                mode = str(tokens(body[0])[0]) if body else ''
                 for call in annotations(node):
                     name = str(tokens(call)[1])
                     bind_call(call, node, unit, diagnostics)
                     symbol = unit.scope.get(name)
                     if symbol is not None and symbol.kind == 'decorator':
+                        check_target(call, node, declaration, unit, diagnostics)
                         definition = unit.world.declarations[symbol.key][1]
                         if name in seen and (
                             name == 'allow_multiple'
@@ -258,23 +318,6 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
                                 diagnostic(unit.document, call, f'duplicate decorator: {name}')
                             )
                     seen.add(name)
-                    message = ''
-                    if name == 'allow_multiple' and node.data != 'decorator':
-                        message = 'allow_multiple requires a decorator declaration'
-                    elif name == 'flags' and node.data != 'decodes':
-                        message = 'flags requires a Decodes declaration'
-                    elif name in ('override', 'overload') and (
-                        not body or mode == 'id' or declaration.data == 'value'
-                    ):
-                        message = 'field markers require an entity attr'
-                    elif name == 'temporal' and mode not in ('snapshot', 'scd'):
-                        message = 'temporal requires snapshot or scd attr'
-                    elif name == 'dimension' and (
-                        mode not in ('attr', 'snapshot', 'scd') or declaration.data == 'value'
-                    ):
-                        message = 'dimension requires attr, snapshot or scd'
-                    if message:
-                        diagnostics.append(diagnostic(unit.document, call, message))
                     if name in ('temporal', 'dimension'):
                         pairs = children(call, 'pair_argument')
                         if name == 'dimension' and pairs:

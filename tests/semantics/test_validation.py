@@ -90,7 +90,7 @@ class ValidationTests(unittest.TestCase):
             ('entity A { id x: string attr x: decimal }', 'duplicate field'),
             (
                 'entity A { @temporal(as_of_date: date) attr x: decimal }',
-                'temporal requires snapshot or scd attr',
+                'decorator temporal does not allow this target',
             ),
             ("decodes Currencies { - 1 CNY: 'A' - 2 CNY: 'B' }", 'duplicate code'),
         ]

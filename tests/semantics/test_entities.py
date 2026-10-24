@@ -22,7 +22,10 @@ class EntityTests(unittest.TestCase):
                 'entity A { @overload attr x: string }',
                 'overload requires another branch implementation: x',
             ),
-            ('entity A { @override id x: string }', 'field markers require an attr'),
+            (
+                'entity A { @override id x: string }',
+                'decorator override does not allow this target',
+            ),
             (
                 'entity A { @overload @override attr x: string }',
                 'only one overload or override marker is allowed',
