@@ -7,14 +7,10 @@ from typing import Literal, cast
 
 from lark import Token, Tree
 
-from yambl_compiler.semantics.builtins import DECLARATIONS, DOCUMENTS, RESULT_CONSTANTS
-from yambl_compiler.semantics.builtins import ENTITIES as ENTITIES
-from yambl_compiler.semantics.builtins import STRUCTURES as STRUCTURES
 from yambl_compiler.syntax.parser import Diagnostic, Document, children, diagnostic, tokens
 
 VALUES = {'bool', 'string', 'integer', 'float', 'decimal', 'date', 'datetime', 'snowflake_id'}
 GENERICS = {'collection', 'values', 'mapping', 'code', 'type', 'attrs', 'alias', 'exact'}
-RESERVED = VALUES | GENERICS | set(DECLARATIONS) | set(RESULT_CONSTANTS) | {'Entity'}
 type EntityKey = tuple[str, str]
 type DeclarationKind = Literal['entity', 'decodes', 'value', 'type_alias', 'decorator']
 
@@ -38,6 +34,8 @@ class World:
     :param declarations: Resolved declaration sites.
     :param fields: Effective field declarations by entity or value identity.
     :param parents: Nearest-first business ancestors, excluding Entity.
+    :param reserved: Names provided by the selected language definitions.
+    :param constants: Result constant meanings from the selected definitions.
     """
 
     declarations: dict[EntityKey, tuple[Unit, Tree[Token]]] = field(
@@ -49,6 +47,8 @@ class World:
     parents: dict[EntityKey, list[EntityKey]] = field(
         default_factory=dict[EntityKey, list[EntityKey]]
     )
+    reserved: set[str] = field(default_factory=set[str])
+    constants: dict[str, str] = field(default_factory=dict[str, str])
 
 
 @dataclass(frozen=True)
@@ -124,15 +124,33 @@ def field_owner(unit: Unit, syntax: Tree[Token]) -> Symbol | None:
     return None
 
 
-def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic]) -> list[Unit]:
+def resolve_scopes(
+    documents: Sequence[Document],
+    diagnostics: list[Diagnostic],
+    builtin_documents: Sequence[Document] | None = None,
+    constants: dict[str, str] | None = None,
+) -> list[Unit]:
     """Resolve declarations before imports so file order does not affect visibility.
 
     :param documents: Complete compilation unit.
     :param diagnostics: Destination for name errors.
+    :param builtin_documents: Embedded definitions, or None for installed resources.
+    :param constants: Embedded constant meanings, required with embedded definitions.
     :returns: Sources with independent lexical scopes.
     """
+    if builtin_documents is None:
+        from yambl_compiler.semantics.builtins import DOCUMENTS, RESULT_CONSTANTS
+
+        builtin_documents, constants = DOCUMENTS, RESULT_CONSTANTS
+    declarations = {
+        declaration_name(node): node
+        for doc in builtin_documents
+        for kind in ('entity', 'value', 'decodes', 'type_alias', 'decorator')
+        for node in children(doc.tree, kind)
+    }
+    reserved = VALUES | GENERICS | set(declarations) | set(constants or {}) | {'Entity'}
     symbols: dict[EntityKey, Symbol] = {}
-    world = World()
+    world = World(reserved=reserved, constants=dict(constants or {}))
     for document in documents:
         for declaration in [
             *children(document.tree, 'entity'),
@@ -164,8 +182,8 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
                         ),
                     )
                 )
-            model_definition = namespace(document) == 'builtins' and name in DECLARATIONS
-            if (name in RESERVED and not model_definition) or key in symbols:
+            model_definition = namespace(document) == 'builtins' and name in declarations
+            if (name in reserved and not model_definition) or key in symbols:
                 diagnostics.append(
                     diagnostic(
                         document, header(declaration), f'duplicate or reserved declaration: {name}'
@@ -186,7 +204,7 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
             target = symbols.get(symbol_key(document, name, ns))
             if target is None:
                 diagnostics.append(diagnostic(document, imported, f'unknown import: {ns}.{name}'))
-            elif name in scope or name in RESERVED:
+            elif name in scope or name in reserved:
                 diagnostics.append(
                     diagnostic(document, imported, f'import conflicts with visible name: {name}')
                 )
@@ -195,9 +213,9 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
         units.append(Unit(document, scope, world))
     builtin_scope = {
         name: Symbol(('builtins', name), cast(DeclarationKind, node.data))
-        for name, node in DECLARATIONS.items()
+        for name, node in declarations.items()
     }
-    for document in DOCUMENTS:
+    for document in builtin_documents:
         builtin = Unit(document, builtin_scope, world)
         for node in document.tree.children:
             if isinstance(node, Tree) and node.data in (

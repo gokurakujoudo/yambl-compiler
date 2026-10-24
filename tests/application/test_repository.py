@@ -82,7 +82,7 @@ class RepositoryTests(FilesystemCase):
     def test_builtin_repository_constraints(self):
         self.write('yambl-root.lclcfg', "prefix: 'wrong'")
         source = self.write('model.yambl', 'entity A {}')
-        with patch('yambl_compiler.application.project.AUTHOR_ROOT', self.root):
+        with patch('yambl_compiler.semantics.builtins.AUTHOR_ROOT', self.root):
             self.assertIn(
                 'built-in prefix must be empty', ' '.join(run(self.root, 'check').messages)
             )

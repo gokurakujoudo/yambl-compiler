@@ -26,11 +26,13 @@ class Arguments:
     :param path: Source file or directory.
     :param operation: Selected CLI command.
     :param verify: Whether formatting only checks for drift.
+    :param output: Required JSON destination for compile.
     """
 
     path: str
-    operation: Literal['check', 'format']
+    operation: Literal['check', 'format', 'compile', 'check-ir']
     verify: bool = False
+    output: str = ''
 
 
 async def execute(
@@ -43,11 +45,47 @@ async def execute(
     :param status_mgr: Owning task status manager.
     :returns: Operation report; also prints diagnostics and updates task status.
     """
-    report = run(Path(args.path), args.operation, args.verify or context.is_dryrun)
+    if args.operation == 'compile' or args.operation == 'check-ir':
+        report = run_ir(Path(args.path), args.operation, Path(args.output), context.is_dryrun)
+    else:
+        report = run(Path(args.path), args.operation, args.verify or context.is_dryrun)
     for message in report.messages:
         print(message)
     status_mgr.update(ExecutionStatus.SUCCESS if report.ok else ExecutionStatus.FAILURE)
     return report
+
+
+def run_ir(path: Path, operation: str, output: Path, dry_run: bool) -> Report:
+    """Run IR commands without treating output artifacts as source repositories.
+
+    :param path: Source repository or input JSON file.
+    :param operation: Compile or check-ir.
+    :param output: Compile destination.
+    :param dry_run: Whether compilation must avoid all publication writes.
+    :returns: Command diagnostics and success state.
+    """
+    from yambl_compiler.ir.application import compile_repository, load_ir, write_ir
+
+    try:
+        if operation == 'check-ir':
+            model = load_ir(path)
+            return Report(True, [f'checked IR: {path} ({len(model.definitions)} definitions)'])
+        if output.suffix.lower() != '.json':
+            raise ValueError('compile requires -o output PATH ending in .json')
+        model = compile_repository(path)
+        messages = [
+            f'{site.path}:{site.line}:{site.column}: warning: external Decodes: {external.name}'
+            for external in model.external_dictionaries
+            for site in external.sites
+        ]
+        if not dry_run:
+            write_ir(model, output)
+        messages.append(
+            f'{"would write" if dry_run else "compiled"} IR: {output} ({len(model.definitions)} definitions)'
+        )
+        return Report(True, messages)
+    except (OSError, UnicodeError, ValueError, RecursionError) as error:
+        return Report(False, [str(error)])
 
 
 path_variable = define_variable[str](
@@ -57,6 +95,9 @@ verify_variable = define_variable[bool](
     'check',
     'Report formatting drift without writing; default: False. Enable with -o check.',
     default=False,
+)
+output_variable = define_variable[str](
+    'output', 'Required compile destination ending in .json; replaced only after validation.'
 )
 
 check_command = define_workflow(
@@ -81,6 +122,27 @@ format_command = define_workflow(
     ),
 ).to_cli('format', 'Format sources in place; -o check or --dryrun checks drift without writing.')
 
+compile_task = define_task(
+    'compile_model',
+    'Compile and validate a complete repository',
+    task_action=execute,
+    args_mapping=Arguments(
+        path=path_variable.quote, operation='compile', output=output_variable.quote
+    ),
+)
+compile_command = define_workflow('Compile a standalone JSON model', compile_task).to_cli(
+    'compile', 'Compile a rooted repository to JSON IR; --dryrun validates without writing.'
+)
+check_ir_task = define_task(
+    'check_ir',
+    'Validate embedded IR definitions independently',
+    task_action=execute,
+    args_mapping=Arguments(path=path_variable.quote, operation='check-ir'),
+)
+check_ir_command = define_workflow('Validate a JSON model', check_ir_task).to_cli(
+    'check_ir', 'check-ir: validate one JSON IR file without consulting its source repository.'
+)
+
 
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI in a new event loop.
@@ -95,4 +157,7 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         # lclang 1.1.2 expects a Python script path, including for console-script launchers.
         argv = [sys.executable, str(Path(__file__).parents[1] / '__main__.py'), *sys.argv[1:]]
+    # lclang command declarations require snake_case; keep the public hyphenated spelling.
+    if len(argv) > 2 and argv[2] == 'check-ir':
+        argv = [*argv[:2], 'check_ir', *argv[3:]]
     return asyncio.run(application.run(argv))

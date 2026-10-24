@@ -155,6 +155,7 @@ def bind_call(
     unit: Unit,
     diagnostics: list[Diagnostic],
     values: dict[str, Resolved] | None = None,
+    bound_arguments: list[tuple[str, str, Resolved]] | None = None,
 ) -> str:
     """Bind one call and return its canonical signature.
 
@@ -163,6 +164,7 @@ def bind_call(
     :param unit: Invocation scope.
     :param diagnostics: Destination for errors.
     :param values: Optional destination for bound argument types and constant values.
+    :param bound_arguments: Optional ordered binding output, including pair keys.
     :returns: Identity and normalized arguments, or an empty string on lookup failure.
     """
     name = str(tokens(call)[1])
@@ -232,6 +234,8 @@ def bind_call(
             bound.append((formal.name, '', argument_type(actual_resolver, syntax, expected)))
     if values is not None:
         values.update((name, actual) for name, _, actual in bound)
+    if bound_arguments is not None:
+        bound_arguments.extend(bound)
     return repr((symbol.key, bound))
 
 

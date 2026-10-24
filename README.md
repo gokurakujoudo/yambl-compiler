@@ -1,6 +1,6 @@
 # YAMBL compiler
 
-Static checks and formatting for [YAMBL](https://github.com/gokurakujoudo/yambl),
+Static checks, formatting, and JSON model compilation for [YAMBL](https://github.com/gokurakujoudo/yambl),
 using Python 3.14+, Lark 1.3.1, and lclang 1.1.2.
 
 ## Install and run
@@ -24,10 +24,63 @@ drift without writing. `format --dryrun` has the same read-only behavior. Put a
 valueless override last, or before another option. lclang configuration files and
 typed `LCL[...]` overrides are also supported; only load configuration you trust.
 
-Exit status is 0 for success, 1 for invalid sources, I/O failures, or formatting
+Exit status is 0 for success, 1 for invalid sources or output destinations, I/O failures, or formatting
 drift, and 2 for CLI usage or unexpected runtime errors. Source diagnostics and
 summaries go to stdout; lclang workflow logs go to stderr. A dry run that finds
 formatting drift returns 1. Warnings alone return 0.
+
+## JSON intermediate model
+
+Compile a rooted repository to a standalone artifact, then validate it independently:
+
+```powershell
+.\venv\Scripts\yambl.exe compile -o path ..\fmc-data-model -o output .\build\model.yambl-ir.json
+.\venv\Scripts\yambl.exe check-ir -o path .\build\model.yambl-ir.json
+```
+
+`compile` requires `yambl-root.lclcfg`. A member file or subdirectory selects the
+whole repository. `output` is required and must end in `.json`; `--dryrun` completes
+analysis and validation without creating output files or directories. Failed
+analysis or publication preserves an existing artifact. `check-ir` is read-only.
+The CLI adapts the public `check-ir` spelling to lclang's internal `check_ir` command;
+both spellings are accepted, and help lists the internal name with its public alias.
+
+The artifact embeds the selected built-in definitions, resolved declarations,
+logical field identities, effective implementations, expanded aliases, dependent
+expressions, bound decorators, flags, external dictionaries, and original source
+spans. Paths are relative. Comments, Markdown blocks, and source text are omitted.
+Unresolved quoted dictionaries remain explicit dependencies and warnings; they
+do not prevent compilation. No external dictionary data is fetched.
+
+```python
+from pathlib import Path
+from yambl_compiler.ir import compile_repository, load_ir, validate_ir, write_ir
+
+model = compile_repository(Path('../fmc-data-model'))
+assert validate_ir(model) == ()
+write_ir(model, Path('build/model.yambl-ir.json'))
+loaded = load_ir(Path('build/model.yambl-ir.json'))
+assert loaded == model
+```
+
+`compile_repository` and `load_ir` return an immutable `ir.model.Model`.
+`validate_ir` returns a tuple of diagnostic strings, empty on success. The other
+functions raise `ValueError` for invalid input or models and `OSError` for filesystem
+failures. `load_ir` uses embedded definitions and the supported checking algorithms;
+it does not read YAMBL sources or installed language resources. Validation rejects
+duplicate JSON keys, unsupported nodes or revisions, broken references, invalid
+cycles and constraints, and inconsistent derived views, even if hashes were recomputed.
+
+The current `format_revision` is `1`. Compatibility is not promised until the
+format is frozen; unsupported revisions require recompilation. Output is deterministic
+UTF-8 JSON with four-space indentation, LF, and one final newline. Semantic SHA-256
+digests exclude source positions and compiler version. Integer and decimal payloads
+are strings to preserve precision. The full contract is documented in
+[JSON IR](https://github.com/gokurakujoudo/yambl/blob/feat/language-foundations/lang/syntex/ir.md).
+
+This stage provides compilation and independent static validation. Storage targets,
+Python type generation, retrieval APIs, and runtime evaluation remain unimplemented.
+The seven non-normal result constants retain their definitions only.
 
 ## Checks
 
@@ -237,7 +290,7 @@ endings, publication failures, and the real lclang entrance. Documentation tests
 check rST syntax and parameter descriptions. CI requires zero missing statements
 and branches in every application module.
 
-A stable intermediate representation and target generation are future work.
+Freezing the experimental IR contract and implementing target generation are future work.
 Planned targets include database schemas, data interfaces, and Python libraries.
 The current business example lives in
 [fmc-data-model](https://github.com/gokurakujoudo/fmc-data-model).

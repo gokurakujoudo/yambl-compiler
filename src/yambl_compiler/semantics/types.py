@@ -25,6 +25,7 @@ class Resolved:
     :param exact: Required constant, if constrained to one value.
     :param dependency: Instance-dependent selection or alias path.
     :param members: Non-collection types available through an attrs key.
+    :param exact_key: Structured declaration identity of a type or dictionary constant.
     """
 
     name: str
@@ -35,13 +36,14 @@ class Resolved:
     exact: str | None = None
     dependency: str = ''
     members: tuple[Resolved, ...] = field(default=(), compare=False, repr=False)
+    exact_key: EntityKey | None = field(default=None, compare=False, repr=False)
 
     def base(self) -> Resolved:
         """Remove a singleton constraint.
 
         :returns: The underlying type, preserving other constraints.
         """
-        return replace(self, exact=None)
+        return replace(self, exact=None, exact_key=None)
 
     def string_like(self) -> bool:
         """Recognize defined one-way string conversions.

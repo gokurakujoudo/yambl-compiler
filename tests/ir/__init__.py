@@ -1,0 +1,1 @@
+"""Standalone semantic artifact contracts."""

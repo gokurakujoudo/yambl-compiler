@@ -6,11 +6,9 @@ from typing import Literal
 
 from lark import Token, Tree
 
-from yambl_compiler.semantics.builtins import RESULT_CONSTANTS
 from yambl_compiler.semantics.decodes import is_flags
 from yambl_compiler.semantics.symbols import (
     GENERICS,
-    RESERVED,
     VALUES,
     Unit,
     field_owner,
@@ -117,7 +115,9 @@ class Resolver:
         :returns: Value contract used for parameter checking.
         """
         if term.sort == 'type' and term.type.kind == 'reference':
-            return Resolved('type', args=(term.type,), exact=repr(term.type.key))
+            return Resolved(
+                'type', args=(term.type,), exact=repr(term.type.key), exact_key=term.type.key
+            )
         return term.type if term.sort == 'value' else UNKNOWN
 
     def evaluate(self, node: Tree[Token], allow_binding: bool = False) -> Term:
@@ -131,7 +131,7 @@ class Resolver:
             self.issue(node, 'as binding is only allowed on a mapping key')
         first = tokens(node)[0]
         name = str(first)
-        if first.type == 'NAME' and name in RESULT_CONSTANTS:
+        if first.type == 'NAME' and name in self.unit.world.constants:
             self.issue(node, f'result constant {name} cannot be used in model expressions')
             return Term(UNKNOWN)
         groups = children(node, 'arguments')
@@ -193,6 +193,7 @@ class Resolver:
                                 'reference',
                                 key=self.unit.scope['Decodes'].key,
                                 exact=repr(symbol.key),
+                                exact_key=symbol.key,
                             ),
                             'value',
                             name,
@@ -542,7 +543,7 @@ class Resolver:
             if name not in self.bindings:
                 symbol = self.unit.scope.get(name)
                 if (symbol is not None and symbol.kind != 'decodes') or (
-                    symbol is None and name in RESERVED
+                    symbol is None and name in self.unit.world.reserved
                 ):
                     self.issue(node, 'code requires a Decodes instance identifier')
                 elif symbol is None:

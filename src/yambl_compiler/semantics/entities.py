@@ -6,7 +6,6 @@ from dataclasses import field as data_field
 
 from lark import Token, Tree
 
-from yambl_compiler.semantics.builtins import FINALS
 from yambl_compiler.semantics.expressions import Resolver
 from yambl_compiler.semantics.fields import field_name
 from yambl_compiler.semantics.signatures import field_signature
@@ -107,7 +106,12 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
     parents: dict[EntityKey, EntityKey] = {}
     locations: dict[EntityKey, tuple[Unit, Tree[Token]]] = {}
     fields: dict[EntityKey, dict[str, FieldSite]] = {}
-    finals: set[EntityKey] = set()
+    finals = {
+        key
+        for unit in units
+        for key, (_, node) in unit.world.declarations.items()
+        if node.data == 'entity' and tokens(header(node))[0].type == 'FINAL'
+    }
     for unit in units:
         for entity in children(unit.document.tree, 'entity'):
             key = symbol_key(unit.document, declaration_name(entity))
@@ -124,7 +128,7 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
                 message = ''
                 if name == 'Entity':
                     continue
-                if name in FINALS or (symbol is not None and symbol.key in finals):
+                if symbol is not None and symbol.key in finals:
                     message = f'cannot inherit final entity: {name}'
                 elif symbol is None or symbol.kind != 'entity':
                     message = f'inherits requires a visible entity type: {name}'
@@ -138,9 +142,7 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
         ]:
             name = declaration_name(node)
             symbol = unit.scope.get(name)
-            if node.data == 'extension' and (
-                name in FINALS or (symbol is not None and symbol.key in finals)
-            ):
+            if node.data == 'extension' and symbol is not None and symbol.key in finals:
                 diagnostics.append(
                     diagnostic(unit.document, header(node), f'cannot extend final entity: {name}')
                 )
