@@ -88,4 +88,6 @@ class RepositoryTests(FilesystemCase):
             )
             (self.root / 'yambl-root.lclcfg').write_text("prefix: ''", encoding='utf-8')
             source.write_text('namespace bad entity A {}', encoding='utf-8')
-            self.assertIn('cannot declare a namespace', ' '.join(run(self.root, 'check').messages))
+            self.assertIn(
+                'must declare namespace builtins', ' '.join(run(self.root, 'check').messages)
+            )

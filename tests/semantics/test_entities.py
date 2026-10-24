@@ -98,8 +98,7 @@ class EntityTests(unittest.TestCase):
     def test_builtin_source_and_reserved_names(self):
         from yambl_compiler.semantics.builtins import DOCUMENTS
 
-        source = document('\n'.join(d.text for d in DOCUMENTS))
-        entities = children(source.tree, 'entity')
+        entities = [entity for doc in DOCUMENTS for entity in children(doc.tree, 'entity')]
         self.assertEqual(len(entities), 3)
         self.assertEqual(str(tokens(entities[-1])[0]), 'final')
         for name in ('Entity', 'ConfigGroup'):

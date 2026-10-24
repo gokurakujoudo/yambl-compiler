@@ -14,15 +14,16 @@ def load_models(root: Path = MODEL_ROOT) -> tuple[Document, ...]:
 
     :param root: Model resource directory.
     :returns: Built-in source documents.
-    :raises ValueError: If a model has invalid syntax or a namespace.
+    :raises ValueError: If a model has invalid syntax or lacks namespace builtins.
     """
     result: list[Document] = []
     for path in sorted(root.glob('*.yambl')):
         doc = parse(path.read_text(encoding='utf-8'), path)
         if isinstance(doc, Diagnostic):
             raise ValueError(str(doc))
-        if children(doc.tree, 'namespace_decl'):
-            raise ValueError(f'{path}: built-in models cannot declare a namespace')
+        namespaces = children(doc.tree, 'namespace_decl')
+        if not namespaces or ''.join(tokens(namespaces[0])[1:]) != 'builtins':
+            raise ValueError(f'{path}: built-in models must declare namespace builtins')
         result.append(replace(doc, builtin=True))
     return tuple(result)
 

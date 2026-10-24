@@ -9,8 +9,9 @@ from typing import Literal, Never
 from yambl_compiler.application.repository import ROOT_NAME, find_root, read_prefix
 from yambl_compiler.formatting.formatter import format_document
 from yambl_compiler.semantics.builtins import AUTHOR_ROOT, MODEL_ROOT
+from yambl_compiler.semantics.symbols import namespace
 from yambl_compiler.semantics.validation import check
-from yambl_compiler.syntax.parser import Diagnostic, Document, children, parse
+from yambl_compiler.syntax.parser import Diagnostic, Document, parse
 
 
 @dataclass(frozen=True)
@@ -116,9 +117,9 @@ def run(path: Path, operation: Literal['check', 'format'], verify: bool = False)
             if isinstance(parsed, Diagnostic):
                 messages.append(str(parsed))
             else:
-                if builtin and children(parsed.tree, 'namespace_decl'):
+                if builtin and namespace(parsed) != 'builtins':
                     messages.append(
-                        f'{source}:1:1: error: built-in models cannot declare a namespace'
+                        f'{source}:1:1: error: built-in models must declare namespace builtins'
                     )
                 documents.append(
                     replace(

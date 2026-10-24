@@ -117,7 +117,8 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
                         ),
                     )
                 )
-            if (name in RESERVED and not document.builtin) or key in symbols:
+            model_definition = namespace(document) == 'builtins' and name in ENTITIES | STRUCTURES
+            if (name in RESERVED and not model_definition) or key in symbols:
                 diagnostics.append(
                     diagnostic(
                         document, header(declaration), f'duplicate or reserved declaration: {name}'

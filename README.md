@@ -102,8 +102,11 @@ its namespace declaration. Imports are repository-relative: `from core import It
 uses `fmc.core.Item`. Cross-repository dependencies are not supported.
 
 Built-in model declarations are read from bundled `.yambl` resources. Their source
-is the `yambl/models` repository, which has an empty prefix and no namespaces.
-Ordinary empty-prefix repositories do not become builtins. Run
+is the `yambl/models` repository, with an empty prefix and `namespace builtins`.
+The complete namespace `builtins` allows authoring the bundled model names in any
+checkout. Duplicate declarations within that repository still fail. Other namespaces,
+including `fmc.builtins`, cannot redeclare those names. Only bundled resources are
+globally visible; local additions to `builtins` follow ordinary scope rules. Run
 `./tools/sync-models.ps1` to refresh Python package resources from the adjacent
 language repository; `-Source` accepts its model directory in another checkout.
 The compiler runs without that checkout. Tests compare the resources when it is present.
