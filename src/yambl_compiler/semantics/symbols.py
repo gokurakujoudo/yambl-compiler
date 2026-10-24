@@ -7,14 +7,14 @@ from typing import Literal, cast
 
 from lark import Token, Tree
 
-from yambl_compiler.semantics.builtins import DECLARATIONS, DOCUMENTS
+from yambl_compiler.semantics.builtins import DECLARATIONS, DOCUMENTS, RESULT_CONSTANTS
 from yambl_compiler.semantics.builtins import ENTITIES as ENTITIES
 from yambl_compiler.semantics.builtins import STRUCTURES as STRUCTURES
 from yambl_compiler.syntax.parser import Diagnostic, Document, children, diagnostic, tokens
 
 VALUES = {'bool', 'string', 'integer', 'float', 'decimal', 'date', 'datetime', 'snowflake_id'}
 GENERICS = {'collection', 'values', 'mapping', 'code', 'type', 'attrs', 'alias', 'exact'}
-RESERVED = VALUES | GENERICS | set(DECLARATIONS) | {'Entity'}
+RESERVED = VALUES | GENERICS | set(DECLARATIONS) | set(RESULT_CONSTANTS) | {'Entity'}
 type EntityKey = tuple[str, str]
 type DeclarationKind = Literal['entity', 'decodes', 'value', 'type_alias', 'decorator']
 

@@ -6,6 +6,7 @@ from typing import Literal
 
 from lark import Token, Tree
 
+from yambl_compiler.semantics.builtins import RESULT_CONSTANTS
 from yambl_compiler.semantics.decodes import is_flags
 from yambl_compiler.semantics.symbols import (
     GENERICS,
@@ -130,6 +131,9 @@ class Resolver:
             self.issue(node, 'as binding is only allowed on a mapping key')
         first = tokens(node)[0]
         name = str(first)
+        if first.type == 'NAME' and name in RESULT_CONSTANTS:
+            self.issue(node, f'result constant {name} cannot be used in model expressions')
+            return Term(UNKNOWN)
         groups = children(node, 'arguments')
         args = children(groups[0], 'type_expr') if groups else []
         params = children(node, 'parameters')

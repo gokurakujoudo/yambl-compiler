@@ -160,10 +160,15 @@ Current implementation limits:
   does not attempt linguistic plural detection.
 - Static checks describe model declarations. They do not validate business data
   completeness, snapshot consistency, regex matches, or stored collection values.
-- The language specifies `NOT_DEFINED` when a subtype field does not apply to an
-  instance's actual type. Instance evaluation, SCD history storage, and configuration
-  overrides are future runtime or backend work. The checker does not execute them;
-  `NOT_DEFINED` is not currently accepted as a configuration default literal.
+- The language defines seven result constants: `NOT_DEFINED`, `NOT_APPLICABLE`,
+  `EMPTY`, `NO_ENTRY`, `NO_DATA`, `ENTITY_NOT_FOUND`, and `ERROR`.
+  Their names and meanings come from `lang/builtins/result-constants.json`.
+  The checker reserves these declaration names and diagnoses their use in model
+  expressions. They are not types or accepted configuration default literals;
+  quoted strings with the same spelling remain strings. Explicit assignment,
+  fallback, comparison, and operation propagation rules are not defined.
+  Instance evaluation, SCD history storage, and configuration overrides remain
+  runtime or backend work; the checker does not execute them.
 
 ## Formatting
 

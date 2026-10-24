@@ -4,12 +4,70 @@ from pathlib import Path
 
 from tests.support import FilesystemCase, document
 from yambl_compiler.application.project import run
-from yambl_compiler.semantics.builtins import AUTHOR_ROOT, DOCUMENTS, MODEL_ROOT, load_models
+from yambl_compiler.semantics.builtins import (
+    AUTHOR_ROOT,
+    DOCUMENTS,
+    MODEL_ROOT,
+    RESULT_CONSTANTS,
+    load_models,
+)
 from yambl_compiler.semantics.symbols import namespace
 from yambl_compiler.semantics.validation import check
 
 
 class BuiltinTests(FilesystemCase):
+    def test_result_constants_have_distinct_meanings_and_reserved_names(self):
+        expected = {
+            'NOT_DEFINED': 'actual type',
+            'NOT_APPLICABLE': 'business context',
+            'EMPTY': 'record exists',
+            'NO_ENTRY': 'does not exist in storage',
+            'NO_DATA': 'retrieval requirements',
+            'ENTITY_NOT_FOUND': 'Dereferencing',
+            'ERROR': 'error occurred',
+        }
+        self.assertEqual(set(RESULT_CONSTANTS), set(expected))
+        for name, meaning in expected.items():
+            with self.subTest(name=name):
+                self.assertIn(meaning, RESULT_CONSTANTS[name])
+                for prefix in ['', 'namespace builtins ', 'namespace business ']:
+                    messages = [d.message for d in check([document(f'{prefix}entity {name} {{}}')])]
+                    self.assertIn(f'duplicate or reserved declaration: {name}', messages)
+
+    def test_result_constants_are_not_types_or_assignable_literals(self):
+        for name in RESULT_CONSTANTS:
+            for source in [
+                f'entity A {{ attr x: {name} }}',
+                f'type label = {name}',
+                f'@title({name}) entity A {{}}',
+                f'entity A {{ attr x: exact<{name}> }}',
+                f'entity A {{ attr x: {name} + AttrCats.Attr }}',
+                f'@targets(DecoratorTargets.All) decorator @note(text: string = {name})',
+            ]:
+                with self.subTest(source=source):
+                    messages = [d.message for d in check([document(source)])]
+                    self.assertIn(
+                        f'result constant {name} cannot be used in model expressions', messages
+                    )
+                    self.assertNotIn(f'unknown type: {name}', messages)
+            self.assertEqual(
+                check(
+                    [
+                        document(
+                            f"@title('{name}') entity A {{ config attr text: string = '{name}' }}"
+                        )
+                    ]
+                ),
+                [],
+            )
+        self.assertEqual(
+            check(
+                [document("decodes Codes { - 1 ERROR: 'Error' } @title(Codes.ERROR) entity A {}")]
+            ),
+            [],
+        )
+        self.assertEqual(check([document('entity Empty {} entity A { attr x: Empty }')]), [])
+
     def test_models_validate_without_self_redeclaration(self):
         self.assertEqual(check(DOCUMENTS), [])
         self.assertEqual({namespace(doc) for doc in DOCUMENTS}, {'builtins'})

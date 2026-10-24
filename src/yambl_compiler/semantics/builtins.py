@@ -1,5 +1,6 @@
 """Read the model resources distributed with the compiler."""
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -7,6 +8,9 @@ from yambl_compiler.syntax.parser import Diagnostic, Document, children, parse, 
 
 MODEL_ROOT = Path(__file__).parents[1] / 'lang'
 AUTHOR_ROOT = Path(__file__).parents[4] / 'yambl' / 'lang'
+RESULT_CONSTANTS: dict[str, str] = json.loads(
+    (MODEL_ROOT / 'builtins' / 'result-constants.json').read_text(encoding='utf-8')
+)
 
 
 def load_models(root: Path = MODEL_ROOT) -> tuple[Document, ...]:
