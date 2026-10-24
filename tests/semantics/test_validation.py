@@ -38,6 +38,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(len(diagnostics), 1)
         self.assertEqual(diagnostics[0].path, Path('other/two.yambl'))
         self.assertIn('undefined Decodes: Currencies', diagnostics[0].message)
+        self.assertEqual(diagnostics[0].severity, 'error')
 
     def test_invalid_types(self):
         cases = {

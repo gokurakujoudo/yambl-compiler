@@ -10,6 +10,29 @@ from yambl_compiler.application.cli import main
 
 
 class CliTests(FilesystemCase):
+    def test_undefined_dictionary_name_fails_but_quoted_identifier_warns(self):
+        source = self.write('fund.yambl', '')
+        for spelling, status, severity in [
+            ('PortfolioGroupTypes', 1, 'error'),
+            ("'PortfolioGroupTypes'", 0, 'warning'),
+        ]:
+            source.write_text(
+                '\n' * 10
+                + 'entity PortfolioGroup {\n    attr category: code<'
+                + spelling
+                + '>\n}\n',
+                encoding='utf-8',
+            )
+            with (
+                self.subTest(spelling=spelling),
+                contextlib.redirect_stdout(io.StringIO()) as output,
+            ):
+                self.assertEqual(
+                    main(['python', 'yambl.py', 'check', '-o', 'path', str(source)]), status
+                )
+            self.assertIn(f'{severity}: undefined Decodes: PortfolioGroupTypes', output.getvalue())
+            self.assertIn('fund.yambl:12:', output.getvalue())
+
     def test_cli_real_entrance(self):
         source = self.write('a.yambl', 'entity A{}')
         for command, options, expected in [

@@ -74,7 +74,7 @@ class TypeTests(unittest.TestCase):
             check([document('entity A { attr x: field_mapping<AttrCats.Static, Entity> }')]), []
         )
 
-    def test_all_external_code_occurrences_are_reported(self):
+    def test_unresolved_codes_distinguish_names_from_external_identifiers(self):
         source = """entity Security {
     attr market: code<'TradingMarkets'>
     @dimension(source: code<PriceSources>)
@@ -94,9 +94,11 @@ class TypeTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [(item.line, item.column) for item in diagnostics], [(2, 18), (3, 24), (5, 26), (6, 35)]
+            [(item.line, item.column) for item in diagnostics], [(2, 18), (3, 29), (5, 31), (6, 35)]
         )
-        self.assertTrue(all(item.severity == 'warning' for item in diagnostics))
+        self.assertEqual(
+            [item.severity for item in diagnostics], ['warning', 'error', 'error', 'warning']
+        )
         self.assertTrue(all(item.path == Path('security.yambl') for item in diagnostics))
         self.assertIn(':2:18: warning: undefined Decodes: TradingMarkets', str(diagnostics[0]))
 

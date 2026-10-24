@@ -528,7 +528,8 @@ class Resolver:
                 ):
                     self.issue(node, 'code requires a Decodes instance identifier')
                 elif symbol is None:
-                    self.issue(node, f'undefined Decodes: {name}', True)
+                    quoted = items[0].type == 'STRING'
+                    self.issue(node if quoted else argument, f'undefined Decodes: {name}', quoted)
                 return Resolved(
                     'code',
                     args=(

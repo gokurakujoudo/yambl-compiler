@@ -55,9 +55,10 @@ A `final entity` cannot be inherited or extended.
 Extensions add attributes, not identifiers. Inheritance and extensions currently
 target user-defined entity types; `Decodes`, `ConfigGroup`, and `Hierarchy` are final.
 
-Both `code<Currencies>` and `code<'Currencies'>` name a Decodes instance. Undefined
-dictionaries are allowed: each occurrence produces an `undefined Decodes: NAME`
-warning with its path, line, and column. This includes uses inside generics and
+Both `code<Currencies>` and `code<'Currencies'>` look up a Decodes instance in the
+current file's scope. An unresolved bare name is an `undefined Decodes: NAME` error.
+An unresolved quoted name is allowed as an external dictionary and produces a CLI
+warning with its path, line, and column. These rules also apply inside generics and
 `@dimension`. Missing explicit imports and unknown entity types remain errors.
 
 Codes declared in YAMBL use PascalCase: an ASCII uppercase initial followed by
@@ -250,8 +251,8 @@ core diagnostics, and formatting against the editor regression corpus and FMC so
 That development check uses this repository's venv; installed editor users do not
 need Python. The server's implementation limits are documented with its source.
 
-The editor intentionally suppresses `undefined Decodes` warnings because those
-dictionaries may be supplied dynamically. This CLI continues to report each
+The editor suppresses `undefined Decodes` warnings for quoted names that may be
+supplied dynamically; unresolved bare names remain errors. This CLI reports each
 external dictionary use. Missing explicit imports and unknown entity types remain
 errors in both implementations. Parity tests compare the shared validation rules
 before the editor applies that diagnostic filter.
