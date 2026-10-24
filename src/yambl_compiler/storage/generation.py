@@ -351,10 +351,10 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
     contents = {
         "schema.sql": ddl(layout),
         "schema.md": reference(layout)
-        + "\n## Table relationships\n\n```mermaid\n"
+        + "\n## Table relationships\n\n[PlantUML source](schema-relations.puml)\n\n```plantuml\n"
         + relations(layout)
         + "```\n",
-        "schema-relations.mmd": relations(layout),
+        "schema-relations.puml": relations(layout),
         "python-schema.md": python_reference(source, package),
         "storage-manifest.json": manifest(layout),
         package + "/__init__.py": source,

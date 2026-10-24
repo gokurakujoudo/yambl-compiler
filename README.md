@@ -443,10 +443,15 @@ date boundaries, batch ordering and config default behavior. Model prose is kept
 in literal blocks and quoted safely in Python. Generated docstrings are tested as
 rST and checked against the actual Python signatures.
 
-The output also includes `schema-relations.mmd` (physical foreign keys as solid
-edges, logical references as dashed edges), `python-schema.md`, and a `repository/`
-JSONL template seeded with built-in dictionaries. The graph is embedded in
-`schema.md`. All use the same physical model.
+The output also includes `schema-relations.puml`, `python-schema.md`, and a
+`repository/` JSONL template seeded with built-in dictionaries. The PlantUML graph
+lists every table and column with its SQL type, nullability and primary-key
+position. Arrows connect specific columns: solid arrows are enforced foreign keys;
+dashed arrows are logical ownership or entity references. Repeated FK labels group
+the columns of a composite constraint. Reference labels identify the logical field
+and any discriminator used by shared payload columns. `schema.md` embeds the same
+PlantUML source; displaying it as a diagram requires a PlantUML renderer. All these
+outputs use the same physical model.
 
 JSONL repositories contain `repository.json` and `tables/<table>.jsonl` for every
 table. Metadata pins format revision 1, layout revision 4, the model digest and

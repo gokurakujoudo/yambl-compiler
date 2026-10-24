@@ -9,22 +9,63 @@ def relations(layout: Layout) -> str:
     """Describe physical and logical links from the shared layout.
 
     :param layout: Checked table and field mappings.
-    :returns: Mermaid flowchart including every table.
+    :returns: PlantUML entities with columns and column-level relationships.
     """
     nodes = {t.name: "t" + str(i) for i, t in enumerate(layout.tables)}
-    lines = ["flowchart LR"]
-    lines.extend(f'    {node}["{name}"]' for name, node in nodes.items())
-    links: set[tuple[str, str, str]] = set()
+    tables = {table.name: table for table in layout.tables}
+    lines = [
+        "@startuml",
+        "left to right direction",
+        "hide circle",
+        "skinparam backgroundColor white",
+        "skinparam classAttributeIconSize 0",
+    ]
+    links: set[tuple[str, str, str, str, str, str]] = set()
     for table in layout.tables:
-        links.update((table.name, parent, "-->") for parent in table.parents)
+        lines.append(f'entity "{table.name}" as {nodes[table.name]} {{')
+        for column in table.columns:
+            primary = (
+                f" <<PK {table.primary.index(column.name) + 1}>>"
+                if column.name in table.primary
+                else ""
+            )
+            nullable = "NULL" if column.nullable else "NOT NULL"
+            lines.append(f"    {column.name} : {column.sql_type} {nullable}{primary}")
+        lines.append("}")
+        for parent in table.parents:
+            # Layout foreign keys share the parent's ordered primary-key columns.
+            keys = tables[parent].primary
+            for key in keys:
+                links.add((table.name, key, parent, key, "-->", "FK (" + ", ".join(keys) + ")"))
     for stored in layout.fields.values():
+        owner = table_name(stored.root)
+        if stored.table != owner:
+            links.add((stored.table, "id", owner, "id", "..>", "owner"))
         type_ = stored.field.type
         if type_.name == "collection":
             type_ = type_.arguments[0]
         if type_.kind == "reference":
             target = table_name(layout.roots.get(type_.target, type_.target))
-            links.add((stored.members or stored.table, target, "-.->"))
-    lines.extend(f"    {nodes[a]} {arrow} {nodes[b]}" for a, b, arrow in sorted(links))
+            source = stored.members or stored.table
+            column_name = "member_id" if stored.members else stored.value
+            label = stored.field.identity
+            if stored.key_values:
+                label += " [" + ", ".join(f"{k}={v}" for k, v in stored.key_values) + "]"
+            links.add((source, column_name, target, tables[target].primary[0], "..>", label))
+    lines.extend(
+        f"{nodes[a]}::{ac} {arrow} {nodes[b]}::{bc} : {label}"
+        for a, ac, b, bc, arrow, label in sorted(links)
+    )
+    lines.extend(
+        [
+            "legend bottom",
+            "PK n: position in the composite primary key",
+            "Solid arrow: enforced foreign key; repeated FK labels form one composite constraint",
+            "Dashed arrow: logical owner or entity reference (not enforced by SQLite)",
+            "endlegend",
+            "@enduml",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 

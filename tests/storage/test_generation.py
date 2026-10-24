@@ -30,12 +30,15 @@ class GenerationTests(FilesystemCase):
         schema = (output / "schema.sql").read_text(encoding="utf-8")
         reference = (output / "schema.md").read_text(encoding="utf-8")
         manifest = json.loads((output / "storage-manifest.json").read_text(encoding="utf-8"))
-        diagram = (output / 'schema-relations.mmd').read_text(encoding='utf-8')
+        diagram = (output / 'schema-relations.puml').read_text(encoding='utf-8')
         self.assertIn(diagram, reference)
+        self.assertIn('```plantuml\n', reference)
+        self.assertFalse((output / 'schema-relations.mmd').exists())
+        nodes = {t.name: 't' + str(i) for i, t in enumerate(layout.tables)}
         for table in layout.tables:
-            self.assertIn('["' + table.name + '"]', diagram)
+            self.assertIn('entity "' + table.name + '" as ' + nodes[table.name], diagram)
         self.assertIn(' --> ', diagram)
-        self.assertIn(' -.-> ', diagram)
+        self.assertIn(' ..> ', diagram)
         self.assertIn('Reader.open_sqlite(path)', (output / 'python-schema.md').read_text())
         self.assertIn('## APriceRecord', (output / 'python-schema.md').read_text())
         with closing(sqlite3.connect(":memory:")) as db:
@@ -66,6 +69,18 @@ class GenerationTests(FilesystemCase):
                     },
                     set(table.parents),
                 )
+                for _, _, parent, child_col, parent_col, *_ in db.execute(
+                    'PRAGMA foreign_key_list(' + quote(table.name) + ')'
+                ):
+                    self.assertIn(
+                        f'{nodes[table.name]}::{child_col} --> {nodes[parent]}::{parent_col} : FK (',
+                        diagram,
+                    )
+                block = diagram.split(' as ' + nodes[table.name] + ' {\n')[1].split('\n}')[0]
+                for _, name, sql_type, required, _, pk in columns:
+                    nullable = 'NOT NULL' if required else 'NULL'
+                    primary = f' <<PK {pk}>>' if pk else ''
+                    self.assertIn(f'    {name} : {sql_type} {nullable}{primary}', block)
                 for column in table.columns:
                     self.assertIn("| " + column.name + " |", reference)
                 for check in table.checks:
