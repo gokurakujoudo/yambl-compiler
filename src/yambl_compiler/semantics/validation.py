@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 
 from yambl_compiler.semantics.entities import check_entities
+from yambl_compiler.semantics.expressions import check_aliases
 from yambl_compiler.semantics.fields import check_field, check_metadata
 from yambl_compiler.semantics.symbols import declaration_name, resolve_scopes
 from yambl_compiler.semantics.values import check_values
@@ -18,6 +19,7 @@ def check(documents: Sequence[Document]) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     units = resolve_scopes(documents, diagnostics)
     entities = check_entities(units, diagnostics)
+    check_aliases(units, diagnostics)
     check_values(units, diagnostics)
     for unit in units:
         for node in [

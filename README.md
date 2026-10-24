@@ -48,10 +48,9 @@ no separate entity or namespace symbol. Each merged attribute retains its metada
 and source file, line, and column; its references resolve in the declaring file's
 scope. Inheritance checks use the complete merged fields, independent of file
 order. Duplicate local names are errors. An inherited attribute may be redeclared
-with `@override` when its signature matches. Independent branches sharing an
-ancestor must mark same-name attributes with `@overload` and use matching signatures.
-Overload groups need at least two independent implementations. Both markers compare
-resolved types, attribute modes and metadata; config defaults may differ.
+with `@override` when its type matches or exact narrows it to a compatible constant. Independent branches sharing an
+ancestor must mark same-name attributes with `@overload` and use compatible types with matching modes and metadata.
+Overload groups need at least two independent implementations. Types are compared after transparent aliases expand; config defaults may differ.
 A `final entity` cannot be inherited or extended.
 Extensions add attributes, not identifiers. Inheritance and extensions currently
 target user-defined entity types; `Decodes`, `ConfigGroup`, and `Hierarchy` are final.
@@ -74,16 +73,28 @@ Supported defaults are integer literals for `integer` and `snowflake_id`, numeri
 literals for `float` and `decimal`, single-quoted strings for `string`, and
 `true` / `false` for `bool`. Other default types and expressions are not implemented.
 
-`ConfigGroup` is a built-in entity reference. `type<Entity>` accepts any entity
-type; `type<T>` restricts the value to T and its descendants. Entity is a constraint,
-not a common root entity. `field_mapping<mode, Target>` selects attributes by mode
-across the target, inherited fields, extensions and descendants. Target can be an
-entity name or `self.field`, where any declared field of type `type<...>` is valid,
-regardless of its name or mode. Forward references and inherited or extended fields
-are supported; their types resolve in their original file scopes. Self paths have
-one field segment. Modes are `attr`, `static`, `config`, `snapshot`, and `scd`.
-Mapping values follow each selected field's complete type. Type values are value
-types; field mappings are collections and follow the existing outer-container rules.
+`Entity` is the abstract ultimate entity base. Each business root keeps its own field
+identities; `attrs<AttrCats.static, Entity>` does not collect every business field.
+`type<T>` stores T or a subtype's qualified name. `self.kind` selects a field
+descriptor; `self.kind::type` selects its declared type and `self.kind::value`
+selects its instance value. Multi-level instance paths are supported. `alias<...>`
+expresses equal values and type dependencies are checked for cycles.
+
+`attrs<AttrCats.static, Security>` selects qualified field identities across the
+target's inherited, own, extended and descendant attributes. IDs and collection
+fields are excluded. `mapping<attrs<...> as Attr, Attr::type>` associates each field
+with its declared type. The bound key has no instance value. `field_mapping` is a
+transparent alias defined in `lang/builtins/field_mapping.yambl`.
+Mappings accept string-compatible or entity-reference keys and non-collection
+values. Codes, IDs, type names and field identities are string-compatible in one
+direction; a plain string cannot implicitly become a code or type value.
+
+`type money = decimal[18, 4]` and parameterized definitions such as
+`type selected<t: type<Entity>> = t` work in user repositories. Parameters use
+positional arguments with lexical scope and explicit instance dependencies.
+Aliases preserve their spelling during formatting. `exact<value>` is restricted
+to override/overload contracts. An inherited singleton cannot change or widen.
+Overloads retain branch constraints and expose their compatible common type.
 
 The checker retains effective fields, overload identities and declaration locations.
 It does not accept configuration-group instance syntax or evaluate mappings,
@@ -102,13 +113,13 @@ its namespace declaration. Imports are repository-relative: `from core import It
 uses `fmc.core.Item`. Cross-repository dependencies are not supported.
 
 Built-in model declarations are read from bundled `.yambl` resources. Their source
-is the `yambl/models` repository, with an empty prefix and `namespace builtins`.
+is the `yambl/lang` repository, with an empty prefix and `namespace builtins`.
 The complete namespace `builtins` allows authoring the bundled model names in any
 checkout. Duplicate declarations within that repository still fail. Other namespaces,
 including `fmc.builtins`, cannot redeclare those names. Only bundled resources are
 globally visible; local additions to `builtins` follow ordinary scope rules. Run
 `./tools/sync-models.ps1` to refresh Python package resources from the adjacent
-language repository; `-Source` accepts its model directory in another checkout.
+language repository; `-Source` accepts its lang directory in another checkout.
 The compiler runs without that checkout. Tests compare the resources when it is present.
 
 Structured `value` types use snake_case names and have static fields without IDs.
@@ -129,7 +140,7 @@ Current implementation limits:
   retain their spelling. Formatting preserves the original string spelling and
   does not choose a regular-expression dialect.
 - `snowflake_id` is a built-in value type. Its bit layout and generation policy
-  are not specified. Unresolved types fail; value aliases are not defined.
+  are not specified. Unresolved types fail. Transparent type aliases are supported.
 - Decodes names are expected to be plural; the checker validates PascalCase but
   does not attempt linguistic plural detection.
 - Static checks describe model declarations. They do not validate business data
@@ -176,6 +187,7 @@ Source and unit tests use the same functional package structure:
 | `syntax/parser.py`, `syntax/grammar.lark` | `tests/syntax/test_parser.py` | Tokens, parse trees, source diagnostics |
 | `semantics/validation.py` | `tests/semantics/test_validation.py` | Compilation-unit validation |
 | `semantics/symbols.py` | `tests/semantics/test_symbols.py` | Namespace symbols and file-local imports |
+| `semantics/expressions.py` | `tests/semantics/test_expressions.py` | Transparent aliases and dependent type expressions |
 | `semantics/types.py` | `tests/semantics/test_types.py` | Type constraints and external Decodes |
 | `semantics/fields.py` | `tests/semantics/test_fields.py` | Metadata, modes, dimensions, and defaults |
 | `semantics/signatures.py` | `tests/semantics/test_signatures.py` | Resolved field contract comparisons |

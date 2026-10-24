@@ -6,21 +6,19 @@ namespace builtins
 `ConfigGroup` 是内置条件配置组，通过 `config_group_id` 唯一标识，无需声明或导入。
 它是 final 实体，不能被继承或 extend。
 
-
-
 这是内置模型的定义，不应复制到用户模型中重新声明。用户可直接使用
 `attr configuration: ConfigGroup` 或 `collection<ConfigGroup>`。
 
 每个组的 `entity_type` 值确定该组适用的实体类型。例如某组选择 `Security`，
 另一个组可以选择 `Fund`。`when` 的 key 只能来自目标实体及其子类的 static 属性，
 `then_set` 的 key 只能来自 config 属性。继承和 extend 的属性也参与筛选。
-每个 key 的值类型与属性定义一致，包括类型参数、实体引用和集合类型。
+每个 key 的值类型与属性定义一致，包括类型参数和实体引用；集合属性不进入候选。
 
 `when` 对每个字段进行等值比较，全部条件满足时生效。空 when 匹配目标类型及其
 子类的全部实例；子类特有字段不适用于某实例时，对应条件不匹配。
 `then_set` 描述匹配后要设置的配置项，可只填写部分属性。
 
-例如，FMC 的 `Security.currency`、`Security.market`、`Bond.coupon` 是 static
+例如，FMC 的 `core.Security.currency`、`core.Security.market`、`core.Security.coupon` 是 static
 候选字段，`price_fallback_days` 是 config 候选字段，其值须为 integer。
 各组配置的目标类型与内容属于实例数据，本轮没有引入实例声明语法或实例检查器。
 
@@ -35,6 +33,6 @@ namespace builtins
 final entity ConfigGroup {
     id config_group_id: string
     static attr entity_type: type<Entity>
-    static attr when: field_mapping<static, self.entity_type>
-    static attr then_set: field_mapping<config, self.entity_type>
+    static attr when: field_mapping<AttrCats.static, self.entity_type::value>
+    static attr then_set: field_mapping<AttrCats.config, self.entity_type::value>
 }

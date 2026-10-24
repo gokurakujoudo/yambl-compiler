@@ -15,49 +15,20 @@ def type_signature(node: Tree[Token], unit: Unit, self_fields: FieldTypes) -> st
     :param self_fields: Effective fields for dependent references.
     :returns: Comparable structural representation.
     """
-    items = tokens(node)
-    name = string_value(items[0]) if items[0].type == 'STRING' else str(items[0])
-    if node.data == 'self_field':
-        field_name = str(items[-1])
-        field = self_fields.get(field_name)
-        return repr(('self', field_name, type_signature(field[1], field[0], {}) if field else None))
-    symbol = unit.scope.get(name)
-    identity = repr(symbol.key) if symbol else name
-    args = [
-        type_signature(arg, unit, self_fields)
-        for group in children(node, 'arguments')
-        for arg in group.children
-        if isinstance(arg, Tree)
-    ]
-    params: list[tuple[str, str]] = []
-    for group in children(node, 'parameters'):
-        position = 0
-        for child in group.children:
-            if isinstance(child, Tree):
-                parameter = tokens(child)
-                key, value = str(parameter[0]), parameter[-1]
-            elif child.type in ('INT', 'STRING'):
-                key = ('precision', 'scale')[min(position, 1)] if name == 'decimal' else 'regex'
-                value = child
-                position += 1
-            else:
-                continue
-            if value.type == 'INT':
-                normalized = str(value).lstrip('-0') or '0'
-                if str(value).startswith('-') and normalized != '0':
-                    normalized = '-' + normalized
-            else:
-                normalized = string_value(value)
-            params.append((key, normalized))
-    return repr((identity, args, sorted(params)))
+    from yambl_compiler.semantics.expressions import Resolver
+
+    return repr(Resolver(unit, [], self_fields, True).resolve(node))
 
 
-def field_signature(field: Tree[Token], unit: Unit, self_fields: FieldTypes) -> str:
+def field_signature(
+    field: Tree[Token], unit: Unit, self_fields: FieldTypes, include_type: bool = True
+) -> str:
     """Normalize a field contract, excluding its default and relationship marker.
 
     :param field: Field declaration.
     :param unit: Declaring scope.
     :param self_fields: Effective fields of its enclosing entity.
+    :param include_type: Whether to include the resolved type contract.
     :returns: Signature suitable for overload and override comparisons.
     """
     body = children(field, 'field_body')[0]
@@ -78,7 +49,11 @@ def field_signature(field: Tree[Token], unit: Unit, self_fields: FieldTypes) -> 
     return repr(
         (
             str(tokens(body)[0]),
-            type_signature(children(body, 'type_expr')[0], unit, self_fields),
+            (
+                type_signature(children(body, 'type_expr')[0], unit, self_fields)
+                if include_type
+                else ''
+            ),
             sorted(annotations),
         )
     )

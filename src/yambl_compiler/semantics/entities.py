@@ -2,10 +2,12 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import field as data_field
 
 from lark import Token, Tree
 
-from yambl_compiler.semantics.builtins import DOCUMENTS, FINALS
+from yambl_compiler.semantics.builtins import FINALS
+from yambl_compiler.semantics.expressions import Resolver
 from yambl_compiler.semantics.fields import field_name
 from yambl_compiler.semantics.signatures import field_signature
 from yambl_compiler.semantics.symbols import (
@@ -15,7 +17,7 @@ from yambl_compiler.semantics.symbols import (
     header,
     symbol_key,
 )
-from yambl_compiler.semantics.types import FieldTypes
+from yambl_compiler.semantics.types import FieldTypes, Resolved, accepts, common_type
 from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, tokens
 
 
@@ -39,12 +41,17 @@ class EntityIndex:
     :param ancestors: Ordered nearest-first ancestor keys.
     :param effective: Effective fields, including built-in models.
     :param identities: Logical field identity for each local declaration.
+    :param contracts: Public overload contracts by logical identity.
     """
 
     fields: dict[EntityKey, dict[str, FieldSite]]
     ancestors: dict[EntityKey, list[EntityKey]]
     effective: dict[EntityKey, dict[str, FieldSite]]
     identities: dict[tuple[EntityKey, str], tuple[EntityKey, str]]
+
+    contracts: dict[tuple[EntityKey, str], Resolved] = data_field(
+        default_factory=dict[tuple[EntityKey, str], Resolved]
+    )
 
     def field_types(self, key: EntityKey) -> FieldTypes:
         """Collect types in their original lexical scopes.
@@ -69,7 +76,11 @@ class EntityIndex:
             if target != key and key not in self.ancestors.get(target, []):
                 continue
             for name, site in fields.items():
-                if str(tokens(children(site.declaration, 'field_body')[0])[0]) == mode:
+                syntax = children(children(site.declaration, 'field_body')[0], 'type_expr')[0]
+                resolved = Resolver(site.unit, [], self.field_types(target), True).resolve(syntax)
+                if str(
+                    tokens(children(site.declaration, 'field_body')[0])[0]
+                ) == mode and resolved.kind not in ('collection', 'unknown'):
                     implementations = result.setdefault(name, [])
                     if site not in implementations:
                         implementations.append(site)
@@ -111,6 +122,8 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
                 name = str(tokens(inheritance)[1])
                 symbol = unit.scope.get(name)
                 message = ''
+                if name == 'Entity':
+                    continue
                 if name in FINALS or (symbol is not None and symbol.key in finals):
                     message = f'cannot inherit final entity: {name}'
                 elif symbol is None or symbol.kind != 'entity':
@@ -167,16 +180,21 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
             merged.update(fields[ancestor])
         merged.update(local)
         effective[key] = merged
-    for document in DOCUMENTS:
-        builtin = Unit(document, {})
-        for entity in children(document.tree, 'entity'):
-            effective.setdefault(
-                ('', declaration_name(entity)),
-                {
-                    field_name(children(field, 'field_body')[0]): FieldSite(builtin, field)
-                    for field in children(entity, 'field')
-                },
-            )
+    for unit in units:
+        unit.world.parents.update(ancestors)
+        for key, (scope, declaration) in unit.world.declarations.items():
+            if declaration.data in ('entity', 'value'):
+                builtin_fields = {
+                    field_name(children(f, 'field_body')[0]): FieldSite(scope, f)
+                    for f in children(declaration, 'field')
+                }
+                effective.setdefault(key, builtin_fields)
+        unit.world.fields.update(
+            {
+                key: {name: (site.unit, site.declaration) for name, site in members.items()}
+                for key, members in effective.items()
+            }
+        )
     index = EntityIndex(fields, ancestors, effective, {})
     groups: dict[tuple[EntityKey, str], list[tuple[EntityKey, FieldSite]]] = {}
     for key in sorted(fields, key=lambda item: len(ancestors[item])):
@@ -185,8 +203,12 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
             inherited = next(
                 (ancestor for ancestor in ancestors[key] if name in fields[ancestor]), None
             )
-            identity = (key, name)
-            signature = field_signature(site.declaration, site.unit, index.field_types(key))
+            root = ancestors[key][-1] if ancestors[key] else key
+            identity = (root, name)
+            signature = field_signature(site.declaration, site.unit, index.field_types(key), False)
+            actual = Resolver(site.unit, [], index.field_types(key), True).resolve(
+                children(body, 'type_expr')[0]
+            )
             if inherited is not None:
                 prior = fields[inherited][name]
                 if marker(site) != 'override':
@@ -198,8 +220,8 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
                         )
                     )
                 elif signature != field_signature(
-                    prior.declaration, prior.unit, index.field_types(inherited)
-                ):
+                    prior.declaration, prior.unit, index.field_types(inherited), False
+                ) or not override_type(actual, prior, index.field_types(inherited)):
                     diagnostics.append(
                         diagnostic(site.unit.document, body, f'override signature mismatch: {name}')
                     )
@@ -216,7 +238,7 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
                 groups.setdefault((root, name), []).append((key, site))
             index.identities[(key, name)] = identity
     replacements: dict[tuple[EntityKey, str], tuple[EntityKey, str]] = {}
-    for (_, name), sites in groups.items():
+    for (root, name), sites in groups.items():
         if len(sites) == 1:
             _, site = sites[0]
             if marker(site) == 'overload':
@@ -229,12 +251,20 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
                 )
             continue
         signatures = {
-            field_signature(site.declaration, site.unit, index.field_types(key))
+            field_signature(site.declaration, site.unit, index.field_types(key), False)
             for key, site in sites
         }
+        types = [
+            Resolver(site.unit, [], index.field_types(key), True).resolve(
+                children(children(site.declaration, 'field_body')[0], 'type_expr')[0]
+            )
+            for key, site in sites
+        ]
+        common = common_type(types, sites[0][1].unit.world)
         valid = all(marker(site) == 'overload' for _, site in sites) and len(signatures) == 1
-        if valid:
-            identity = (min(key for key, _ in sites), name)
+        if valid and common is not None:
+            identity = (root, name)
+            index.contracts[identity] = common
             for key, _ in sites:
                 replacements[(key, name)] = identity
         else:
@@ -249,3 +279,19 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
     for field_key, identity in index.identities.items():
         index.identities[field_key] = replacements.get(identity, identity)
     return index
+
+
+def override_type(actual: Resolved, prior: FieldSite, self_fields: FieldTypes) -> bool:
+    """Check an override against its nearest inherited declaration.
+
+    :param actual: Child field type.
+    :param prior: Nearest inherited field.
+    :param self_fields: Parent instance context.
+    :returns: Whether the type is unchanged or validly narrowed to an exact value.
+    """
+    expected = Resolver(prior.unit, [], self_fields, True).resolve(
+        children(children(prior.declaration, 'field_body')[0], 'type_expr')[0]
+    )
+    return actual == expected or (
+        actual.exact is not None and accepts(expected, actual, prior.unit.world)
+    )

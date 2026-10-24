@@ -4,6 +4,7 @@ from collections.abc import Sequence
 
 from lark import Token, Tree
 
+from yambl_compiler.semantics.expressions import Resolver
 from yambl_compiler.semantics.fields import check_field, check_metadata, field_name
 from yambl_compiler.semantics.symbols import EntityKey, Unit, declaration_name, symbol_key
 from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, tokens
@@ -46,14 +47,14 @@ def check_values(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> None:
                             )
                         )
                 node = children(body, 'type_expr')[0]
-                type_name = str(tokens(node)[0])
-                if type_name in ('collection', 'values', 'map', 'field_mapping'):
+                resolved = Resolver(unit, [], {}, False).resolve(node)
+                if resolved.kind == 'collection':
                     diagnostics.append(
                         diagnostic(unit.document, node, 'value fields cannot be collections')
                     )
-                target = unit.scope.get(type_name)
-                if target is not None and target.kind == 'value':
-                    edges[key].add(target.key)
+                target = unit.world.declarations.get(resolved.key or ('', ''))
+                if target is not None and target[1].data == 'value':
+                    edges[key].add(resolved.key or ('', ''))
     for key in edges:
         pending = list(edges[key])
         seen: set[EntityKey] = set()

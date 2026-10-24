@@ -4,9 +4,10 @@ import re
 
 from lark import Token, Tree
 
+from yambl_compiler.semantics.expressions import Resolver
 from yambl_compiler.semantics.symbols import Unit
 from yambl_compiler.semantics.types import FieldTypes, check_type
-from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, tokens
+from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, string_value, tokens
 
 
 def field_name(body: Tree[Token]) -> str:
@@ -60,7 +61,7 @@ def check_field(
             diagnostic(unit.document, body, 'extend may add attributes, not id fields')
         )
     type_node = children(body, 'type_expr')[0]
-    check_type(type_node, unit, diagnostics, self_fields)
+    check_type(type_node, unit, diagnostics, self_fields, bool(children(field, 'field_marker')))
     markers = children(field, 'field_marker')
     if len(markers) > 1:
         diagnostics.append(
@@ -118,12 +119,15 @@ def check_field(
             dimensions_seen.add(dimension_name)
             dimension_type = children(dimension, 'type_expr')[0]
             check_type(dimension_type, unit, diagnostics, self_fields)
-            type_name = str(tokens(dimension_type)[0])
+            resolved_dimension = Resolver(unit, [], self_fields or {}).resolve(dimension_type)
+            type_name = resolved_dimension.name
             if position == 0 and type_name not in ('string', 'code'):
                 diagnostics.append(
                     diagnostic(unit.document, dimension, 'dimension value must be string or code')
                 )
-            if position == 1 and (type_name != 'Hierarchy' or len(tokens(dimension_type)) != 1):
+            if position == 1 and (
+                type_name != 'Hierarchy' or resolved_dimension.kind != 'reference'
+            ):
                 diagnostics.append(
                     diagnostic(unit.document, dimension, 'dimension selector must be Hierarchy')
                 )
@@ -134,7 +138,8 @@ def check_field(
                     unit.document, default, 'defaults are currently supported only on config attr'
                 )
             )
-        type_name = str(tokens(type_node)[0])
+        resolved_default = Resolver(unit, [], self_fields or {}, bool(markers)).resolve(type_node)
+        type_name = resolved_default.name
         literal = tokens(default)[1]
         allowed = {
             'integer': {'INT'},
@@ -144,7 +149,10 @@ def check_field(
             'string': {'STRING'},
             'bool': {'BOOLEAN'},
         }
-        if literal.type not in allowed.get(type_name, set()):
+        value = string_value(literal) if literal.type == 'STRING' else str(literal)
+        if literal.type not in allowed.get(type_name, set()) or (
+            resolved_default.exact is not None and value != resolved_default.exact
+        ):
             diagnostics.append(
                 diagnostic(
                     unit.document,

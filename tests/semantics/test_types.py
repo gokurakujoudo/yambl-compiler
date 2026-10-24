@@ -12,21 +12,21 @@ class TypeTests(unittest.TestCase):
         for mode in ('attr', 'static attr', 'config attr', 'snapshot attr', 'scd attr', 'id'):
             source = f'''entity Security {{ static attr currency: string }}
                 entity Selection {{
-                    attr conditions: field_mapping<static, self.target_kind>
+                    attr conditions: field_mapping<AttrCats.static, self.target_kind::value>
                     {mode} target_kind: type<Security>
                 }}
-                entity Narrow inherits Selection {{ attr copied: field_mapping<attr, self.target_kind> }}
-                extend Selection {{ attr extra: field_mapping<config, self.later> attr later: type<Entity> }}'''
+                entity Narrow inherits Selection {{ attr copied: field_mapping<AttrCats.attr, self.target_kind::value> }}
+                extend Selection {{ attr extra: field_mapping<AttrCats.config, self.later::value> attr later: type<Entity> }}'''
             with self.subTest(mode=mode):
                 self.assertEqual(check([document(source)]), [])
         self.assertEqual(
             check([document('''entity A {
             attr group: ConfigGroup
             attr types: values<type<Entity>>
-            attr by_name: map<string, type<ConfigGroup>>
-            attr a: field_mapping<attr, Decodes>
-            attr b: field_mapping<snapshot, A>
-            attr c: field_mapping<scd, A>
+            attr by_name: mapping<string, type<ConfigGroup>>
+            attr a: field_mapping<AttrCats.attr, Decodes>
+            attr b: field_mapping<AttrCats.snapshot, A>
+            attr c: field_mapping<AttrCats.scd, A>
         }''')]),
             [],
         )
@@ -35,69 +35,44 @@ class TypeTests(unittest.TestCase):
         cases = [
             ('type', 'invalid type arguments for type'),
             ('type<string>', 'type requires Entity or a visible entity type'),
-            ('type<Missing>', 'type requires Entity or a visible entity type'),
-            ("type<'A'>", 'type requires Entity or a visible entity type'),
+            ('type<Missing>', 'unknown type: Missing'),
+            ("type<'A'>", 'type position requires a type or an entity type value'),
             ('type<A, A>', 'invalid type arguments for type'),
             ('type<type<A>>', 'type requires Entity or a visible entity type'),
-            ('type<Codes>', 'type requires Entity or a visible entity type'),
+            ('type<Codes>', 'type position requires a type or an entity type value'),
             ('field_mapping', 'invalid type arguments for field_mapping'),
             ('field_mapping[1]', 'invalid type arguments for field_mapping'),
+            ('field_mapping<id, A>', 'incompatible argument for field_mapping.a'),
+            ("field_mapping<'static', A>", 'incompatible argument for field_mapping.a'),
+            ('field_mapping<static<A>, A>', 'static does not accept generic arguments'),
+            ('field_mapping<self.target::value, A>', 'incompatible argument for field_mapping.a'),
             (
-                'field_mapping<id, A>',
-                'field_mapping requires an attr, static, config, snapshot or scd filter',
+                'field_mapping<AttrCats.static, Missing>',
+                'incompatible argument for field_mapping.b',
             ),
+            ('field_mapping<AttrCats.static, Codes>', 'incompatible argument for field_mapping.b'),
+            ('field_mapping<AttrCats.static, self.absent::value>', 'unknown field: absent'),
             (
-                "field_mapping<'static', A>",
-                'field_mapping requires an attr, static, config, snapshot or scd filter',
+                'field_mapping<AttrCats.static, self.bad::value>',
+                'incompatible argument for field_mapping.b',
             ),
-            (
-                'field_mapping<static<A>, A>',
-                'field_mapping requires an attr, static, config, snapshot or scd filter',
-            ),
-            (
-                'field_mapping<self.target, A>',
-                'field_mapping requires an attr, static, config, snapshot or scd filter',
-            ),
-            (
-                'field_mapping<static, Entity>',
-                'field_mapping requires a visible entity type or self field target',
-            ),
-            (
-                'field_mapping<static, Missing>',
-                'field_mapping requires a visible entity type or self field target',
-            ),
-            (
-                'field_mapping<static, Codes>',
-                'field_mapping requires a visible entity type or self field target',
-            ),
-            ('field_mapping<static, self.absent>', 'unknown self field: absent'),
-            ('field_mapping<static, self.bad>', 'self field must have a valid type<...> type: bad'),
-            (
-                'field_mapping<static, self.wrong>',
-                'self field must have a valid type<...> type: wrong',
-            ),
-            (
-                'field_mapping<static, self.many>',
-                'self field must have a valid type<...> type: many',
-            ),
-            (
-                'field_mapping<static, self.quoted>',
-                'self field must have a valid type<...> type: quoted',
-            ),
-            ('values<self.target>', 'self fields are only valid as field_mapping targets'),
-            ('code<self.target>', 'code requires a Decodes instance identifier'),
+            ('values<self.target::value>', 'values requires a value type'),
+            ('code<self.target::value>', 'code requires a Decodes instance value'),
             ('code<Entity>', 'code requires a Decodes instance identifier'),
             ('collection<type<A>>', 'collection requires an entity reference'),
-            ('values<field_mapping<static, A>>', 'values requires a value type'),
-            ('map<string, field_mapping<static, A>>', 'map values cannot be collections'),
+            ('values<field_mapping<AttrCats.static, A>>', 'values requires a value type'),
+            (
+                'mapping<string, field_mapping<AttrCats.static, A>>',
+                'mapping values cannot be collections',
+            ),
         ]
         for spelling, message in cases:
             with self.subTest(spelling=spelling):
-                source = f'''decodes Codes {{}} entity A {{
-                    attr target: type<Entity> attr bad: string attr wrong: type<Missing>
-                    attr many: type<A, A> attr quoted: type<'A'> attr value: {spelling}
-                }}'''
+                source = f'decodes Codes {{}} entity A {{ attr target: type<Entity> attr bad: string attr item: {spelling} }}'
                 self.assertIn(message, [d.message for d in check([document(source)])])
+        self.assertEqual(
+            check([document('entity A { attr x: field_mapping<AttrCats.static, Entity> }')]), []
+        )
 
     def test_all_external_code_occurrences_are_reported(self):
         source = """entity Security {
@@ -105,7 +80,7 @@ class TypeTests(unittest.TestCase):
     @dimension(source: code<PriceSources>)
     snapshot attr price: decimal
     attr markets: values<code<TradingMarkets>>
-    attr by_name: map<string, code<'OtherSources'>>
+    attr by_name: mapping<string, code<'OtherSources'>>
 }
 """
         diagnostics = check([document(source, 'security.yambl')])
@@ -119,7 +94,7 @@ class TypeTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [(item.line, item.column) for item in diagnostics], [(2, 18), (3, 24), (5, 26), (6, 31)]
+            [(item.line, item.column) for item in diagnostics], [(2, 18), (3, 24), (5, 26), (6, 35)]
         )
         self.assertTrue(all(item.severity == 'warning' for item in diagnostics))
         self.assertTrue(all(item.path == Path('security.yambl') for item in diagnostics))
@@ -135,5 +110,5 @@ class TypeTests(unittest.TestCase):
                 self.assertIn('Decodes instance identifier', diagnostics[0].message)
                 self.assertEqual(diagnostics[0].severity, 'error')
         diagnostics = check([document("entity A { attr x: collection<'A'> }")])
-        self.assertIn('only valid inside code', diagnostics[0].message)
+        self.assertIn('type position requires', diagnostics[0].message)
         self.assertEqual(diagnostics[0].severity, 'error')

@@ -5,8 +5,8 @@ from pathlib import Path
 
 from yambl_compiler.syntax.parser import Diagnostic, Document, children, parse, tokens
 
-MODEL_ROOT = Path(__file__).parents[1] / 'models'
-AUTHOR_ROOT = Path(__file__).parents[4] / 'yambl' / 'models'
+MODEL_ROOT = Path(__file__).parents[1] / 'lang'
+AUTHOR_ROOT = Path(__file__).parents[4] / 'yambl' / 'lang'
 
 
 def load_models(root: Path = MODEL_ROOT) -> tuple[Document, ...]:
@@ -17,7 +17,7 @@ def load_models(root: Path = MODEL_ROOT) -> tuple[Document, ...]:
     :raises ValueError: If a model has invalid syntax or lacks namespace builtins.
     """
     result: list[Document] = []
-    for path in sorted(root.glob('*.yambl')):
+    for path in sorted(root.rglob('*.yambl')):
         doc = parse(path.read_text(encoding='utf-8'), path)
         if isinstance(doc, Diagnostic):
             raise ValueError(str(doc))
@@ -32,7 +32,7 @@ DOCUMENTS = load_models()
 DECLARATIONS = {
     str(next(t for t in tokens(children(node, f'{node.data}_header')[0]) if t.type == 'NAME')): node
     for doc in DOCUMENTS
-    for kind in ('entity', 'value')
+    for kind in ('entity', 'value', 'decodes', 'type_alias')
     for node in children(doc.tree, kind)
 }
 ENTITIES = {name for name, node in DECLARATIONS.items() if node.data == 'entity'}

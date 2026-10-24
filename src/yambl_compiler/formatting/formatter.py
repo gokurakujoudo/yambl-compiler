@@ -38,7 +38,11 @@ def line_piece(items: list[Token], indent: int) -> Piece:
     previous = ''
     for item in items:
         value = str(item)
-        space = result and value not in '.:,)>]([' and value != '<' and previous not in '.@(<['
+        space = (
+            result
+            and value not in ('.', '::', ':', ',', ')', '>', ']', '(', '[', '<')
+            and previous not in ('.', '::', '@', '(', '<', '[')
+        )
         result += (' ' if space else '') + value
         previous = value
     # Lark assigns positions to every token because propagate_positions is enabled.

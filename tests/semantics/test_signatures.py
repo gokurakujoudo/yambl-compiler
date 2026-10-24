@@ -68,10 +68,10 @@ class SignatureTests(unittest.TestCase):
     def test_scope_and_dependent_constraints_are_part_of_signature(self):
         sources = [
             document(
-                'namespace a entity T {} entity A { attr selected: type<T> attr x: field_mapping<attr, self.selected> }'
+                'namespace a entity T {} entity A { attr selected: type<T> attr x: field_mapping<AttrCats.attr, self.selected::value> }'
             ),
             document(
-                'namespace b entity T {} entity B { attr selected: type<T> attr x: field_mapping<attr, self.selected> }'
+                'namespace b entity T {} entity B { attr selected: type<T> attr x: field_mapping<AttrCats.attr, self.selected::value> }'
             ),
         ]
         units = resolve_scopes(sources, [])

@@ -64,7 +64,7 @@ from decodes import Currencies
 entity Security {
     id security_id: string['[a-zA-Z0-9]{12}']
 
-    attr currency: code<Currencies>
+    static attr currency: code<Currencies>
 }
 ```
 
@@ -81,7 +81,7 @@ entity Security {
 当前实例采用 `Currencies` 这样的 PascalCase 复数名称。同 namespace 可直接
 引用，跨 namespace 使用文件内有效的显式导入；完整名称的写法及完整字符集仍
 待确定。拆分文件后的规则见
-[命名空间与跨文件引用](../language/namespaces.md)。
+[命名空间与跨文件引用](../syntex/namespaces.md)。
 
 `code<'TradingMarkets'>` 可以引用模型中尚未定义的字典。裸名称和带引号名称
 使用相同的解析规则；未解析到字典时逐处产生 warning，允许检查通过。它仍是
@@ -91,7 +91,7 @@ entity Security {
 
 - 条目裸 `code` 的完整字符集，以及包含空白或标点的代码如何书写。
 - `ordering` 相同时的次级排序规则。
-- 不同字典之间的代码值兼容规则。
+- 跨字典代码值的显式转换；不同字典的 code 可在 overload 中共同暴露为 string。
 
 模型描述和类型规则不意味着执行业务数据质量校验。当前编译器已支持这里描述的
 声明、引用及外部字典 warning。

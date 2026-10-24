@@ -15,14 +15,24 @@ class BuiltinTests(FilesystemCase):
         self.assertEqual({namespace(doc) for doc in DOCUMENTS}, {'builtins'})
         self.assertTrue(run(MODEL_ROOT, 'check').ok)
         self.assertEqual(
-            {p.name for p in MODEL_ROOT.glob('*.yambl')},
-            {'config_group.yambl', 'decodes.yambl', 'hierarchy.yambl'},
+            {p.name for p in MODEL_ROOT.rglob('*.yambl')},
+            {
+                'config_group.yambl',
+                'decodes.yambl',
+                'hierarchy.yambl',
+                'attr_cats.yambl',
+                'field_mapping.yambl',
+            },
         )
         self.assertEqual((MODEL_ROOT / 'yambl-root.lclcfg').read_text(), "prefix: ''\n")
         if AUTHOR_ROOT.is_dir():
             self.assertTrue(run(AUTHOR_ROOT, 'check').ok)
-            for file in MODEL_ROOT.iterdir():
-                self.assertEqual(file.read_bytes(), (AUTHOR_ROOT / file.name).read_bytes())
+            for file in MODEL_ROOT.rglob('*'):
+                if not file.is_file():
+                    continue
+                self.assertEqual(
+                    file.read_bytes(), (AUTHOR_ROOT / file.relative_to(MODEL_ROOT)).read_bytes()
+                )
 
     def test_invalid_resource_is_not_silently_accepted(self):
         file = self.write('a.yambl', 'bad syntax')
@@ -38,8 +48,9 @@ class BuiltinTests(FilesystemCase):
         self.assertEqual(load_models(self.root)[0].path, Path(file))
 
     def test_authoring_models_in_an_independent_checkout(self):
-        for file in MODEL_ROOT.iterdir():
-            self.write(file.name, file.read_text(encoding='utf-8'))
+        for file in MODEL_ROOT.rglob('*'):
+            if file.is_file():
+                self.write(str(file.relative_to(MODEL_ROOT)), file.read_text(encoding='utf-8'))
         self.assertTrue(run(self.root, 'check').ok)
         self.assertEqual(check([document(doc.text) for doc in DOCUMENTS]), [])
         self.write('duplicate.yambl', 'namespace builtins final entity Hierarchy {}')

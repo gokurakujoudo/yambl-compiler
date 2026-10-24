@@ -21,4 +21,5 @@ class SymbolTests(unittest.TestCase):
         )
         self.assertEqual(diagnostics, [])
         self.assertEqual(units[0].scope['Security'].key, ('core', 'Security'))
-        self.assertEqual(units[2].scope, {})
+        self.assertNotIn('Security', units[2].scope)
+        self.assertIn('field_mapping', units[2].scope)

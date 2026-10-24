@@ -11,7 +11,7 @@ class ValueTests(unittest.TestCase):
     def test_imports_forward_references_and_generics(self):
         docs = [
             document(
-                'namespace a from b import record entity Item { attr x: record attr all: values<record> attr indexed: map<string, record> }'
+                'namespace a from b import record entity Item { attr x: record attr all: values<record> attr indexed: mapping<string, record> }'
             ),
             document(
                 "namespace b @title('Record') value record { @description('ref') attr item: Item static attr nested: leaf } value leaf { attr x: decimal[18, 4] } entity Item { id item_id: string }"
@@ -53,8 +53,8 @@ class ValueTests(unittest.TestCase):
                 'type requires Entity or a visible entity type',
             ),
             (
-                'value a {} entity A { attr x: field_mapping<static, a> }',
-                'field_mapping requires a visible entity type or self field target',
+                'value a {} entity A { attr x: field_mapping<AttrCats.static, a> }',
+                'incompatible argument for field_mapping.b',
             ),
             ('value a {} extend a {}', 'extend requires a visible user-defined entity: a'),
             ('value a {} entity A inherits a {}', 'inherits requires a visible entity type: a'),

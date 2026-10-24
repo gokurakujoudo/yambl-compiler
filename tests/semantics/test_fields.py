@@ -29,7 +29,7 @@ class FieldTests(unittest.TestCase):
             ),
             (
                 '@dimension(source: string, selector: Hierarchy<string>) attr x: string',
-                'dimension selector must be Hierarchy',
+                'Hierarchy does not accept generic arguments',
             ),
             (
                 '@dimension(source: string, selector: Hierarchy, extra: string) attr x: string',

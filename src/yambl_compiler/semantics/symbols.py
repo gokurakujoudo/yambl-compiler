@@ -2,18 +2,19 @@
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from lark import Token, Tree
 
+from yambl_compiler.semantics.builtins import DECLARATIONS, DOCUMENTS
 from yambl_compiler.semantics.builtins import ENTITIES as ENTITIES
 from yambl_compiler.semantics.builtins import STRUCTURES as STRUCTURES
 from yambl_compiler.syntax.parser import Diagnostic, Document, children, diagnostic, tokens
 
 VALUES = {'bool', 'string', 'integer', 'float', 'decimal', 'date', 'datetime', 'snowflake_id'}
-GENERICS = {'collection', 'values', 'map', 'code', 'type', 'field_mapping'}
-RESERVED = VALUES | GENERICS | ENTITIES | STRUCTURES | {'Entity'}
+GENERICS = {'collection', 'values', 'mapping', 'code', 'type', 'attrs', 'alias', 'exact'}
+RESERVED = VALUES | GENERICS | set(DECLARATIONS) | {'Entity'}
 type EntityKey = tuple[str, str]
 
 
@@ -26,7 +27,27 @@ class Symbol:
     """
 
     key: EntityKey
-    kind: Literal['entity', 'decodes', 'value']
+    kind: Literal['entity', 'decodes', 'value', 'type_alias']
+
+
+@dataclass
+class World:
+    """Share declarations and effective fields across lexical scopes.
+
+    :param declarations: Resolved declaration sites.
+    :param fields: Effective field declarations by entity or value identity.
+    :param parents: Nearest-first business ancestors, excluding Entity.
+    """
+
+    declarations: dict[EntityKey, tuple[Unit, Tree[Token]]] = field(
+        default_factory=lambda: dict[EntityKey, tuple[Unit, Tree[Token]]]()
+    )
+    fields: dict[EntityKey, dict[str, tuple[Unit, Tree[Token]]]] = field(
+        default_factory=lambda: dict[EntityKey, dict[str, tuple[Unit, Tree[Token]]]]()
+    )
+    parents: dict[EntityKey, list[EntityKey]] = field(
+        default_factory=dict[EntityKey, list[EntityKey]]
+    )
 
 
 @dataclass(frozen=True)
@@ -35,10 +56,12 @@ class Unit:
 
     :param document: Parsed source.
     :param scope: Own namespace declarations and file-local imports.
+    :param world: Shared resolved declaration and field index.
     """
 
     document: Document
     scope: dict[str, Symbol]
+    world: World = field(default_factory=World)
 
 
 def namespace(document: Document) -> str:
@@ -92,17 +115,19 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
     :returns: Sources with independent lexical scopes.
     """
     symbols: dict[EntityKey, Symbol] = {}
+    world = World()
     for document in documents:
         for declaration in [
             *children(document.tree, 'entity'),
             *children(document.tree, 'decodes'),
             *children(document.tree, 'value'),
+            *children(document.tree, 'type_alias'),
         ]:
             name = declaration_name(declaration)
             key = symbol_key(document, name)
             pattern = (
                 r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*'
-                if declaration.data == 'value'
+                if declaration.data in ('value', 'type_alias')
                 else r'[A-Z][a-zA-Z0-9]*'
             )
             if not re.fullmatch(pattern, name):
@@ -112,22 +137,26 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
                         header(declaration),
                         (
                             'value names must use snake_case'
-                            if declaration.data == 'value'
+                            if declaration.data in ('value', 'type_alias')
                             else 'declaration names must use PascalCase'
                         ),
                     )
                 )
-            model_definition = namespace(document) == 'builtins' and name in ENTITIES | STRUCTURES
+            model_definition = namespace(document) == 'builtins' and name in DECLARATIONS
             if (name in RESERVED and not model_definition) or key in symbols:
                 diagnostics.append(
                     diagnostic(
                         document, header(declaration), f'duplicate or reserved declaration: {name}'
                     )
                 )
-            kind: Literal['entity', 'decodes', 'value'] = (
-                'value'
-                if declaration.data == 'value'
-                else ('entity' if declaration.data == 'entity' else 'decodes')
+            kind: Literal['entity', 'decodes', 'value', 'type_alias'] = (
+                'type_alias'
+                if declaration.data == 'type_alias'
+                else (
+                    'value'
+                    if declaration.data == 'value'
+                    else ('entity' if declaration.data == 'entity' else 'decodes')
+                )
             )
             symbols[key] = Symbol(key, kind)
     units: list[Unit] = []
@@ -149,5 +178,31 @@ def resolve_scopes(documents: Sequence[Document], diagnostics: list[Diagnostic])
                 )
             else:
                 scope[name] = target
-        units.append(Unit(document, scope))
+        units.append(Unit(document, scope, world))
+    builtin_scope = {
+        name: Symbol(
+            ('builtins', name),
+            (
+                'type_alias'
+                if node.data == 'type_alias'
+                else (
+                    'decodes'
+                    if node.data == 'decodes'
+                    else 'value' if node.data == 'value' else 'entity'
+                )
+            ),
+        )
+        for name, node in DECLARATIONS.items()
+    }
+    for document in DOCUMENTS:
+        builtin = Unit(document, builtin_scope, world)
+        for node in document.tree.children:
+            if isinstance(node, Tree) and node.data in ('entity', 'value', 'decodes', 'type_alias'):
+                world.declarations[('builtins', declaration_name(node))] = (builtin, node)
+    for unit in units:
+        for node in unit.document.tree.children:
+            if isinstance(node, Tree) and node.data in ('entity', 'value', 'decodes', 'type_alias'):
+                world.declarations[symbol_key(unit.document, declaration_name(node))] = (unit, node)
+        for name, symbol in builtin_scope.items():
+            unit.scope.setdefault(name, symbol)
     return units

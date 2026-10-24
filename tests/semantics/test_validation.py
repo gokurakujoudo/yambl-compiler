@@ -17,7 +17,7 @@ class ValidationTests(unittest.TestCase):
             'namespace core entity HoldingEntry { attr fund: Fund attr security: Security }',
             'namespace core from dictionaries.money import Currencies entity Security { attr currency: code<Currencies> attr dictionary: Decodes attr entries: values<decodes_entry> }',
             "namespace dictionaries.money decodes Currencies { - 100 CNY: '人民币' - 200 USD: 'USD' }",
-            "entity Types { attr a: bool attr b: integer attr c: float attr d: decimal attr e: date attr f: datetime attr g: string['x#'] attr h: string[regex: 'x'] attr i: decimal[18, 4] attr j: decimal[scale: 4, precision: 18] attr k: values<string> attr m: map<Decodes, decimal> attr n: map<string, Decodes> @temporal(as_of_date: date) snapshot attr total: decimal }",
+            "entity Types { attr a: bool attr b: integer attr c: float attr d: decimal attr e: date attr f: datetime attr g: string['x#'] attr h: string[regex: 'x'] attr i: decimal[18, 4] attr j: decimal[scale: 4, precision: 18] attr k: values<string> attr m: mapping<Decodes, decimal> attr n: mapping<string, Decodes> @temporal(as_of_date: date) snapshot attr total: decimal }",
         ]
         self.assertEqual(self.messages(*sources), [])
         self.assertEqual(self.messages('entity Empty {}'), [])
@@ -44,15 +44,14 @@ class ValidationTests(unittest.TestCase):
             'collection<string>': 'entity reference',
             'values<Thing>': 'value type',
             'values<values<string>>': 'value type',
-            'map<integer, string>': 'map keys',
-            'map<string, values<string>>': 'cannot be collections',
-            'map<code<Currencies>, string>': 'map keys',
+            'mapping<integer, string>': 'mapping keys',
+            'mapping<string, values<string>>': 'cannot be collections',
             'collection': 'invalid type arguments',
             'collection[2]': 'invalid type arguments',
             'collection<Thing, Thing>': 'invalid type arguments',
-            'map<string>': 'invalid type arguments',
+            'mapping<string>': 'invalid type arguments',
             'code<Thing>': 'Decodes instance identifier',
-            'code<Currencies<string>>': 'Decodes instance identifier',
+            'code<Currencies<string>>': 'does not accept generic',
             'string<Thing>': 'does not accept generic',
             'decimal[18, scale: 4]': 'invalid parameters',
             'decimal[precision: 18, 4]': 'invalid parameters',
@@ -62,12 +61,12 @@ class ValidationTests(unittest.TestCase):
             'string[4]': 'invalid parameters',
             "string[wrong: 'x']": 'invalid parameters',
             'bool[1]': 'invalid parameters',
-            'Currencies': 'is an instance',
+            'Currencies': 'type position requires',
             'int': 'unknown type',
             'Missing': 'unknown type',
             'collection<Missing>': 'unknown type',
             'values<missing>': 'unknown type',
-            'map<Missing, Missing>': 'unknown type',
+            'mapping<Missing, Missing>': 'unknown type',
         }
         for type_source, expected in cases.items():
             with self.subTest(type_source=type_source):
@@ -97,7 +96,7 @@ class ValidationTests(unittest.TestCase):
                 self.assertTrue(any(expected in item.message for item in self.messages(source)))
         self.assertEqual(
             self.messages(
-                'entity A { id x: snowflake_id attr ids: values<snowflake_id> attr ids_by_name: map<string, snowflake_id> }'
+                'entity A { id x: snowflake_id attr ids: values<snowflake_id> attr ids_by_name: mapping<string, snowflake_id> }'
             ),
             [],
         )
@@ -105,6 +104,4 @@ class ValidationTests(unittest.TestCase):
             'entity reference',
             self.messages('entity A { attr ids: collection<snowflake_id> }')[0].message,
         )
-        self.assertIn(
-            'map keys', self.messages('entity A { attr ids: map<snowflake_id, string> }')[0].message
-        )
+        self.assertEqual(self.messages('entity A { attr ids: mapping<snowflake_id, string> }'), [])

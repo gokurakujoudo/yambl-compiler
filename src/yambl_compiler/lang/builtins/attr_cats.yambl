@@ -1,0 +1,15 @@
+namespace builtins
+
+---
+# AttrCats
+
+属性类别用于 attrs 筛选。普通 attr 不属于 static；ID 和集合字段不参与筛选。
+---
+
+decodes AttrCats {
+    - 100 attr: 'Attribute'
+    - 200 static: 'Static'
+    - 300 config: 'Configuration'
+    - 400 snapshot: 'Snapshot'
+    - 500 scd: 'SCD Type 2'
+}

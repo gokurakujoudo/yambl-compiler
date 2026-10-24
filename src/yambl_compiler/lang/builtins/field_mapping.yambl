@@ -1,0 +1,10 @@
+namespace builtins
+
+---
+# field_mapping
+
+按类别及实体类型选择非集合属性，映射值遵守对应属性的完整类型。
+此声明是透明类型别名，与右侧展开式完全等价。
+---
+
+type field_mapping<a: code<AttrCats>, b: type<Entity>> = mapping<attrs<a, b> as Attr, Attr::type>

@@ -1,37 +1,120 @@
-"""Validate value, reference, collection and external-code type expressions."""
+"""Represent resolved types and explicitly supported compatibility rules."""
 
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from lark import Token, Tree
 
-from yambl_compiler.semantics.symbols import ENTITIES, GENERICS, RESERVED, STRUCTURES, VALUES, Unit
-from yambl_compiler.syntax.parser import Diagnostic, children, diagnostic, string_value, tokens
+from yambl_compiler.semantics.symbols import EntityKey, Unit, World
+from yambl_compiler.syntax.parser import Diagnostic
 
 type Kind = Literal['value', 'string', 'reference', 'collection', 'unknown']
 type FieldTypes = dict[str, tuple[Unit, Tree[Token]]]
 MODES = {'attr', 'static', 'config', 'snapshot', 'scd'}
 
 
-def entity_argument(node: Tree[Token], unit: Unit, universal: bool = False) -> bool:
-    """Recognize a bare entity type constraint.
+@dataclass(frozen=True)
+class Resolved:
+    """Describe a type after transparent aliases have been expanded.
 
-    :param node: Generic argument.
-    :param unit: Argument's lexical scope.
-    :param universal: Whether the Entity constraint is permitted.
-    :returns: Whether the argument denotes an entity constraint.
+    :param name: Primitive or resolved declaration name.
+    :param kind: Storage category.
+    :param args: Generic constraints.
+    :param key: Resolved declaration identity.
+    :param params: Normalized descriptive parameters.
+    :param exact: Required constant, if constrained to one value.
+    :param dependency: Instance-dependent selection or alias path.
+    :param members: Non-collection types available through an attrs key.
     """
-    items = tokens(node)
-    name = str(items[0])
-    symbol = unit.scope.get(name)
-    return (
-        node.data == 'type_expr'
-        and len(items) == 1
-        and (
-            (universal and name == 'Entity')
-            or name in ENTITIES
-            or (symbol is not None and symbol.kind == 'entity')
+
+    name: str
+    kind: Kind = 'value'
+    args: tuple[Resolved, ...] = ()
+    key: EntityKey | None = None
+    params: tuple[tuple[str, str], ...] = ()
+    exact: str | None = None
+    dependency: str = ''
+    members: tuple[Resolved, ...] = field(default=(), compare=False, repr=False)
+
+    def base(self) -> Resolved:
+        """Remove a singleton constraint.
+
+        :returns: The underlying type, preserving other constraints.
+        """
+        return replace(self, exact=None)
+
+    def string_like(self) -> bool:
+        """Recognize defined one-way string conversions.
+
+        :returns: Whether the type can be used in a string position.
+        """
+        return self.kind == 'reference' or self.name in (
+            'string',
+            'snowflake_id',
+            'code',
+            'type',
+            'attrs',
         )
-    )
+
+
+UNKNOWN = Resolved('?', 'unknown')
+ENTITY = Resolved('Entity', 'reference', key=('', 'Entity'))
+
+
+def accepts(expected: Resolved, actual: Resolved, world: World) -> bool:
+    """Check a value against an existing contract without widening it.
+
+    :param expected: Required type.
+    :param actual: Supplied value's type, optionally carrying a singleton.
+    :param world: Entity ancestor index.
+    :returns: Whether the supplied value meets the contract.
+    """
+    if 'unknown' in (expected.kind, actual.kind):
+        return True
+    if expected.exact is not None:
+        return expected == actual
+    if expected == actual.base():
+        return True
+    if expected.name == 'string' and not expected.params and actual.string_like():
+        return True
+    if expected.kind == actual.kind == 'reference':
+        return expected == ENTITY or expected.key in world.parents.get(actual.key or ('', ''), [])
+    if expected.name == actual.name == 'type':
+        return accepts(expected.args[0], actual.args[0], world)
+    return False
+
+
+def common_type(types: list[Resolved], world: World) -> Resolved | None:
+    """Find a common overload contract using only confirmed conversions.
+
+    :param types: Independent branch types.
+    :param world: Entity ancestor index.
+    :returns: Common type, or None when no conversion is defined.
+    """
+    if not types:
+        return None
+    if all(item == types[0] for item in types):
+        return types[0]
+    result = types[0].base()
+    for original in types[1:]:
+        other = original.base()
+        if result == other:
+            continue
+        if result.kind == other.kind == 'reference':
+            candidates = [result.key, *world.parents.get(result.key or ('', ''), [])]
+            ancestors = [other.key, *world.parents.get(other.key or ('', ''), [])]
+            shared = next((key for key in candidates if key in ancestors), None)
+            result = Resolved(shared[1], 'reference', key=shared) if shared else ENTITY
+        elif result.name == other.name == 'type':
+            target = common_type([result.args[0], other.args[0]], world)
+            if target is None:
+                return None
+            result = Resolved('type', args=(target,))
+        elif result.string_like() and other.string_like():
+            result = Resolved('string', 'string')
+        else:
+            return None
+    return result
 
 
 def check_type(
@@ -39,136 +122,17 @@ def check_type(
     unit: Unit,
     diagnostics: list[Diagnostic],
     self_fields: FieldTypes | None = None,
+    allow_exact: bool = False,
 ) -> Kind:
-    """Check a type within its declaring file's scope.
+    """Resolve an expression and report invalid types.
 
-    :param node: Type syntax or generic argument.
-    :param unit: Source and lexical scope.
-    :param diagnostics: Destination for errors and unresolved Decodes warnings.
-    :param self_fields: Effective fields of the enclosing entity, with declaring scopes.
-    :returns: Type category, or unknown after an invalid reference.
+    :param node: Type expression.
+    :param unit: Lexical scope.
+    :param diagnostics: Destination for positioned diagnostics.
+    :param self_fields: Fields of the current instance.
+    :param allow_exact: Whether this is a marked field declaration.
+    :returns: The expanded type category.
     """
-    name = str(tokens(node)[0])
-    parameters = children(node, 'parameters')
-    arguments = children(node, 'arguments')
+    from yambl_compiler.semantics.expressions import Resolver
 
-    def issue(message: str, severity: Literal['error', 'warning'] = 'error') -> None:
-        """Report a problem at this type expression.
-
-        :param message: Explanation.
-        :param severity: Error or nonfatal warning.
-        :returns: None; appends the diagnostic.
-        """
-        diagnostics.append(diagnostic(unit.document, node, message, severity))
-
-    if node.data == 'string_argument':
-        issue('quoted dictionary identifiers are only valid inside code<...>')
-        return 'unknown'
-    if node.data == 'self_field':
-        issue('self fields are only valid as field_mapping targets')
-        return 'unknown'
-    if name in GENERICS:
-        args = (
-            [child for child in arguments[0].children if isinstance(child, Tree)]
-            if arguments
-            else []
-        )
-        if parameters or len(args) != (2 if name in ('map', 'field_mapping') else 1):
-            issue(f'invalid type arguments for {name}')
-            return 'unknown'
-        if name == 'type':
-            if not entity_argument(args[0], unit, universal=True):
-                issue('type requires Entity or a visible entity type')
-            return 'value'
-        if name == 'field_mapping':
-            if (
-                args[0].data != 'type_expr'
-                or len(tokens(args[0])) != 1
-                or str(tokens(args[0])[0]) not in MODES
-            ):
-                issue('field_mapping requires an attr, static, config, snapshot or scd filter')
-            target = args[1]
-            if target.data == 'self_field':
-                field_name = str(tokens(target)[-1])
-                field = (self_fields or {}).get(field_name)
-                if field is None:
-                    issue(f'unknown self field: {field_name}')
-                else:
-                    scope, field_type = field
-                    field_args = children(field_type, 'arguments')
-                    constraint = children(field_args[0], 'type_expr') if field_args else []
-                    if (
-                        str(tokens(field_type)[0]) != 'type'
-                        or len(constraint) != 1
-                        or len(tokens(field_type)) != 4
-                        or not entity_argument(constraint[0], scope, universal=True)
-                    ):
-                        issue(f'self field must have a valid type<...> type: {field_name}')
-            elif not entity_argument(target, unit):
-                issue('field_mapping requires a visible entity type or self field target')
-            return 'collection'
-        if name == 'code':
-            argument = tokens(args[0])
-            if len(argument) != 1:
-                issue('code requires a Decodes instance identifier')
-            else:
-                identifier = (
-                    string_value(argument[0]) if argument[0].type == 'STRING' else str(argument[0])
-                )
-                symbol = unit.scope.get(identifier)
-                if (symbol is not None and symbol.kind != 'decodes') or identifier in RESERVED:
-                    issue('code requires a Decodes instance identifier')
-                elif symbol is None:
-                    issue(f'undefined Decodes: {identifier}', 'warning')
-            return 'value'
-        kinds = [check_type(arg, unit, diagnostics, self_fields) for arg in args]
-        if name == 'collection' and kinds[0] not in ('reference', 'unknown'):
-            issue('collection requires an entity reference')
-        if name == 'values' and kinds[0] not in ('value', 'string', 'unknown'):
-            issue('values requires a value type')
-        if name == 'map':
-            if kinds[0] not in ('string', 'reference', 'unknown'):
-                issue('map keys must be string or entity references')
-            if kinds[1] == 'collection':
-                issue('map values cannot be collections')
-        return 'collection'
-    if arguments:
-        issue(f'{name} does not accept generic arguments')
-    if parameters:
-        parameter_tokens = tokens(parameters[0])[1:-1]
-        named = children(parameters[0], 'named_parameter')
-        if name == 'string':
-            valid = len(parameter_tokens) == 1 and parameter_tokens[0].type == 'STRING'
-            valid = valid or (
-                len(parameter_tokens) == 3
-                and str(parameter_tokens[0]) == 'regex'
-                and parameter_tokens[-1].type == 'STRING'
-            )
-        elif name == 'decimal':
-            valid = len(parameter_tokens) == 3 and [t.type for t in parameter_tokens] == [
-                'INT',
-                'COMMA',
-                'INT',
-            ]
-            valid = valid or (
-                len(parameter_tokens) == 7
-                and len(named) == 2
-                and {str(tokens(n)[0]) for n in named} == {'precision', 'scale'}
-                and all(tokens(n)[-1].type == 'INT' for n in named)
-            )
-        else:
-            valid = False
-        if not valid:
-            issue(f'invalid parameters for {name}; do not mix positional and named parameters')
-    if name in VALUES:
-        return 'string' if name == 'string' else 'value'
-    symbol = unit.scope.get(name)
-    if name in STRUCTURES or (symbol is not None and symbol.kind == 'value'):
-        return 'value'
-    if name in ENTITIES or (symbol is not None and symbol.kind == 'entity'):
-        return 'reference'
-    if symbol is not None:
-        issue(f'{name} is an instance; use code<{name}> or Decodes')
-    else:
-        issue(f'unknown type: {name}')
-    return 'unknown'
+    return Resolver(unit, diagnostics, self_fields or {}, allow_exact).resolve(node).kind
