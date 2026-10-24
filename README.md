@@ -219,8 +219,8 @@ Current implementation limits:
   expressions. They are not types or accepted configuration default literals;
   quoted strings with the same spelling remain strings. Explicit assignment,
   fallback, comparison, and operation propagation rules are not defined.
-  Instance evaluation, SCD history storage, and configuration overrides remain
-  runtime or backend work; the checker does not execute them.
+  The static checker does not read instances. SQLite and JSONL readers support
+  SCD history; configuration override execution remains unimplemented.
 
 ## Formatting
 
@@ -289,7 +289,7 @@ endings, publication failures, and the real lclang entrance. Documentation tests
 check rST syntax and parameter descriptions. CI requires zero missing statements
 and branches in every application module.
 
-The IR contract remains experimental. SQLite generation and direct reads are available; other storage targets remain future work.
+The IR contract remains experimental. SQLite generation and direct reads are available; SQLite and JSONL share the same read semantics.
 Planned targets include database schemas, data interfaces, and Python libraries.
 The current business example lives in
 [fmc-data-model](https://github.com/gokurakujoudo/fmc-data-model).
@@ -361,7 +361,7 @@ parentheses. Custom metadata participates in override/overload signatures after
 argument binding and default substitution. Call order is ignored; repetition counts
 and pair names/types are retained. Relationship markers remain outside signatures.
 
-## SQLite generation and typed reads
+## SQLite, JSONL and typed reads
 
 Compile a rooted repository, then generate into a new or empty directory:
 
@@ -378,15 +378,15 @@ unsupported business fields before writing. `--dryrun` validates and renders
 without creating output directories. Database migrations and production writes
 are not provided.
 
-Storage layout revision 3 uses names such as `tb_core_portfolio` and
+Storage layout revision 4 uses names such as `tb_core_portfolio` and
 `tb_core_security_price`. Ungrouped dimensionless static fields, including per-field states,
 share the root identity table. Collection members use the field table name;
 separate collection headers add `_status`. Readers reject databases with an older
 layout revision. Regenerate disposable databases when updating the generated package.
-Each root's `_config` table is a long table keyed by `(id, field)`, with separate
-`state` and `value` columns. The manifest supplies the field discriminator in
-`key_values`. A value column with BLOB affinity preserves TEXT exact values and
-INTEGER booleans; field-specific checks prevent accidental type conversion.
+Each root's `_config` table is keyed by `(id, field)`. Like sparse groups it uses
+only the required string, bool, int, decimal and date lanes. Normal scalar rows
+use exactly the matching lane; non-normal rows and collection headers use NULL
+in every scalar lane. Collections retain their member tables.
 
 `@sparse('bond_info')` moves a non-collection, dimensionless static field into
 the root's `_bond_info` long table. It has `(id, field)` keys, a state column,
@@ -411,12 +411,21 @@ structure offline; semantic validation also checks references and derived views.
 Recompile revision 1 artifacts. Ordinary `attr` now means `static attr`, and
 `AttrCats.Attr` has been removed in favor of `AttrCats.Static`.
 
-Readers open SQLite in read-only mode and hold a consistent read transaction.
-Call `read_*` explicitly, pass every dimension, and resolve `EntityRef` values
-with `reader.resolve`. Close the reader when finished. Closed handles return
-ERROR; detached values remain usable. Config defaults apply only to NO_ENTRY
-and carry `origin='model_default'`. There is no Hierarchy, ConfigGroup or price
-fallback execution.
+Generated packages require only Python 3.14+ and the standard library. They carry
+validated runtime contracts pinned by SHA-256; loading does not recompile the IR.
+`open_sqlite(path)` opens a read-only transaction; `open_files(path)` opens a JSONL
+snapshot. `open(path)` remains the SQLite alias. Config defaults still apply only
+to NO_ENTRY and carry `origin='model_default'`.
+
+Entities are frozen dataclasses with identity equality. Each attribute property
+lazily reads all its data. Time or dimension fields return immutable tuples of
+field-specific frozen records; each record contains coordinates and a ReadResult
+payload. Scalar properties return ReadResult directly. No records means a
+successful empty tuple. References remain explicit EntityRef values.
+
+Methods cache normalized queries and reuse complete property caches. Cached data
+survives close; new reads return ERROR. Errors are never cached. Range lists are
+copied before returning. No Hierarchy, ConfigGroup or price fallback is executed.
 
 The language repository's `lang/syntex/storage.md` documents storage rules and
 tracks implemented and pending capabilities. The FMC repository includes an
@@ -433,3 +442,28 @@ Every generated method has rST parameter and return fields, including result typ
 date boundaries, batch ordering and config default behavior. Model prose is kept
 in literal blocks and quoted safely in Python. Generated docstrings are tested as
 rST and checked against the actual Python signatures.
+
+The output also includes `schema-relations.mmd` (physical foreign keys as solid
+edges, logical references as dashed edges), `python-schema.md`, and a `repository/`
+JSONL template seeded with built-in dictionaries. The graph is embedded in
+`schema.md`. All use the same physical model.
+
+JSONL repositories contain `repository.json` and `tables/<table>.jsonl` for every
+table. Metadata pins format revision 1, layout revision 4, the model digest and
+each file's SHA-256. Tables are loaded and indexed on first use. Every new backend
+read checks file identity, size and timestamps; table loads also verify hashes
+and check file state before and after reading. Once changes are detected, reopen
+the reader. Existing immutable field caches remain usable. Rows require complete
+columns, canonical scalar encodings, unique keys and valid state/payload lanes.
+
+`reader.validate()` explicitly scans data and checks same-field reference cycles.
+It returns an immutable ValidationReport with `valid` and `issues`. Cycles are
+scoped by inheritance root, logical field, dimension tuple and snapshot date or
+intersecting SCD period. Cross-field and cross-root references are not merged;
+dangling references remain allowed. Each cyclic component has one deterministic
+witness. `python -m fmc_model check-data --backend sqlite|files --path PATH` returns
+0 for valid data, 1 for violations or read failure, and 2 for invalid arguments.
+
+Keep the latest full generation under `build/latest/`. The FMC initializer accepts
+`--backend files` for JSONL and validates either backend after seeding. Generation
+still refuses nonempty destinations and does not provide a production writer.

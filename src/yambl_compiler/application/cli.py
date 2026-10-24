@@ -190,7 +190,7 @@ schema_command = define_workflow(
     ),
 ).to_cli('schema', 'Export the current JSON Schema; --dryrun does not write.')
 generate_command = define_workflow(
-    'Generate SQLite and Python outputs',
+    'Generate SQLite, JSONL and Python outputs',
     define_task(
         'generate_backend',
         'Validate and generate a new directory',
@@ -202,7 +202,7 @@ generate_command = define_workflow(
             package=package_variable.quote,
         ),
     ),
-).to_cli('generate', 'Generate SQLite DDL, schema reference and typed Python readers from IR.')
+).to_cli('generate', 'Generate SQLite, JSONL, schema references and typed Python readers from IR.')
 
 
 def main(argv: list[str] | None = None) -> int:

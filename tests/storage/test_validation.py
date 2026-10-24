@@ -1,0 +1,225 @@
+"""Validate cycle scope by logical field, dimensions and time intersection."""
+
+import contextlib
+import io
+import sqlite3
+from unittest.mock import patch
+
+from tests.support import FilesystemCase, load_generated
+from yambl_compiler.ir import compile_repository
+from yambl_compiler.storage.backends import repository_contents
+from yambl_compiler.storage.cli_runtime import main
+from yambl_compiler.storage.generation import generate
+from yambl_compiler.storage.results import Status
+from yambl_compiler.storage.validation import cycles
+
+SOURCE = """entity Node {
+ id key: string
+ attr parent: Node
+ attr other: Node
+ attr foreign: Other
+ attr narrow: Child
+ attr children: collection<Node>
+ config attr limit: integer = 1
+ config attr active: bool = true
+ @dimension(source: string) attr dim: Node
+ snapshot attr snap: Node
+ scd attr period: Node
+}
+entity Child inherits Node { @override attr parent: Node attr extra: string }
+entity Other { id key: string attr parent: Node }
+"""
+
+
+class ValidationTests(FilesystemCase):
+    def setUp(self):
+        super().setUp()
+        self.write("yambl-root.lclcfg", "prefix: ''\n")
+        self.write("main.yambl", SOURCE)
+        self.output = self.root / "generated"
+        self.layout = generate(compile_repository(self.root), self.output, "sample_model")
+        self.api = load_generated(self.output / "sample_model", "sample_model")
+        self.path = self.root / "data.db"
+        self.db = sqlite3.connect(self.path)
+        self.addCleanup(self.db.close)
+        self.db.executescript((self.output / "schema.sql").read_text())
+        self.db.executemany(
+            "INSERT INTO tb_node(id, entity_type) VALUES (?, ?)",
+            [("a", "Node"), ("b", "Child"), ("c", "Node")],
+        )
+        self.db.execute(
+            "INSERT INTO tb_other(id,entity_type,parent__state,parent) VALUES ('x','Other','VALUE','a')"
+        )
+        self.db.executemany(
+            'INSERT INTO tb_node_config(id,field,state,int,bool) VALUES (?,?,?,?,?)',
+            [('a', 'Node.limit', 'VALUE', '1', None), ('a', 'Node.active', 'VALUE', None, 1)],
+        )
+        self.db.commit()
+
+    def edge(self, identity, owner, target, **coords):
+        s = self.layout.fields["Node." + identity]
+        if s.table == "tb_node":
+            self.db.execute(
+                f'UPDATE tb_node SET "{s.state}" = ?, "{s.value}" = ? WHERE id = ?',
+                ("VALUE", target, owner),
+            )
+        else:
+            row = {"id": owner, **coords, s.state: "VALUE", s.value: target}
+            self.db.execute(
+                'INSERT INTO "'
+                + s.table
+                + '" ('
+                + ",".join('"' + c + '"' for c in row)
+                + ") VALUES ("
+                + ",".join("?" for _ in row)
+                + ")",
+                tuple(row.values()),
+            )
+        self.db.commit()
+
+    def report(self):
+        reader = self.api.SampleReader.open(self.path).value
+        try:
+            return reader.validate()
+        finally:
+            reader.close()
+
+    def test_deterministic_scc_witnesses_without_cycle_enumeration(self):
+        self.assertEqual(cycles(set()), [])
+        self.assertEqual(
+            cycles({("a", "b"), ("b", "a"), ("b", "c"), ("c", "b"), ("d", "d"), ("x", "y")}),
+            [("a", "b", "a"), ("d", "d")],
+        )
+        self.assertEqual(cycles({("a", "b"), ("b", "c"), ("c", "b")}), [("b", "c", "b")])
+
+    def test_field_and_root_scope_and_cross_inheritance_cycle(self):
+        self.edge("parent", "a", "b")
+        self.edge("other", "b", "a")
+        self.edge("foreign", "a", "x")
+        self.edge("parent", "c", "missing")
+        self.assertTrue(self.report().value.valid)
+        self.edge("parent", "b", "a")
+        issue = self.report().value.issues[0]
+        self.assertEqual(issue.field, "Node.parent")
+        self.assertEqual(issue.ids, ("a", "b", "a"))
+        self.edge("parent", "a", "a")
+        self.assertEqual(self.report().value.issues[0].ids, ("a", "a"))
+
+    def test_unresolvable_subtype_is_dangling_and_physical_owners_are_checked(self):
+        self.edge('narrow', 'a', 'a')
+        self.assertTrue(self.report().value.valid)
+        self.edge('narrow', 'b', 'b')
+        self.assertEqual(self.report().value.issues[0].ids, ('b', 'b'))
+        self.db.execute('PRAGMA foreign_keys=OFF')
+        self.db.execute("INSERT INTO tb_node_children VALUES ('missing','a')")
+        self.db.commit()
+        self.assertIn('missing collection owner', str(self.report().value.issues))
+
+    def test_cli_reports_read_failure_and_usage(self):
+        self.db.execute('DROP TABLE tb_node_snap')
+        self.db.commit()
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(
+                main(
+                    self.api.SampleReader,
+                    ['check-data', '--backend', 'sqlite', '--path', str(self.path)],
+                ),
+                1,
+            )
+        self.assertIn('ERROR', output.getvalue())
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
+            main(self.api.SampleReader, ['check-data', '--backend', 'unknown'])
+        self.assertEqual(raised.exception.code, 2)
+
+    def test_dimensions_snapshot_dates_collections_and_scd_intersection(self):
+        self.edge("dim", "a", "b", dim_source="X")
+        self.edge("dim", "b", "a", dim_source="Y")
+        self.edge("snap", "a", "b", date="2026-01-01")
+        self.edge("snap", "b", "a", date="2026-01-02")
+        self.edge("period", "a", "b", valid_from="2026-01-01", valid_to="2026-01-03")
+        self.edge("period", "b", "a", valid_from="2026-01-03", valid_to="2026-01-05")
+        self.assertTrue(self.report().value.valid)
+        self.edge("dim", "b", "a", dim_source="X")
+        self.edge("snap", "b", "a", date="2026-01-01")
+        self.edge("period", "b", "a", valid_from="2026-01-02", valid_to="2026-01-03")
+        self.db.execute("UPDATE tb_node SET children__state='VALUE' WHERE id IN ('a','b')")
+        self.db.executemany("INSERT INTO tb_node_children VALUES (?, ?)", [("a", "b"), ("b", "a")])
+        self.db.commit()
+        issues = self.report().value.issues
+        self.assertEqual(
+            {i.field for i in issues},
+            {"Node.dim", "Node.snap", "Node.period", "Node.children"},
+        )
+        self.assertEqual(next(i for i in issues if i.field == "Node.period").start, "2026-01-02")
+        self.assertEqual(
+            next(i for i in issues if i.field == "Node.dim").dimensions,
+            (("source", "X"),),
+        )
+        self.assertEqual(next(i for i in issues if i.field == "Node.snap").start, "2026-01-01")
+
+    def test_two_backend_reports_cli_and_read_failures(self):
+        self.edge("parent", "a", "a")
+        self.db.row_factory = sqlite3.Row
+        rows = {
+            t.name: [dict(r) for r in self.db.execute('SELECT * FROM "' + t.name + '"')]
+            for t in self.layout.tables
+        }
+        files = self.root / "files"
+        for name, content in repository_contents(self.layout, rows).items():
+            path = files / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8", newline="\n")
+        reader = self.api.SampleReader.open_files(files).value
+        self.addCleanup(reader.close)
+        self.assertEqual(reader.validate(), self.report())
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            for backend, path in [("sqlite", self.path), ("files", files)]:
+                self.assertEqual(
+                    main(
+                        self.api.SampleReader,
+                        ["check-data", "--backend", backend, "--path", str(path)],
+                    ),
+                    1,
+                )
+            self.assertEqual(
+                main(
+                    self.api.SampleReader,
+                    [
+                        "check-data",
+                        "--backend",
+                        "sqlite",
+                        "--path",
+                        str(self.root / "missing"),
+                    ],
+                ),
+                1,
+            )
+        self.assertIn("same-field reference cycle", output.getvalue())
+        reader.close()
+        self.assertEqual(reader.validate().status, Status.ERROR)
+        self.db.execute("UPDATE tb_node SET parent__state='EMPTY', parent=NULL WHERE id='a'")
+        self.db.commit()
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                main(
+                    self.api.SampleReader,
+                    ["check-data", "--backend", "sqlite", "--path", str(self.path)],
+                ),
+                0,
+            )
+            with patch(
+                "yambl_compiler.storage.runtime.Reader.validate",
+                side_effect=OSError("io"),
+            ):
+                with self.assertRaises(OSError):
+                    main(
+                        self.api.SampleReader,
+                        ["check-data", "--backend", "sqlite", "--path", str(self.path)],
+                    )
+        self.db.execute("PRAGMA ignore_check_constraints=ON")
+        self.db.execute("UPDATE tb_node SET parent__state='VALUE',parent=NULL WHERE id='a'")
+        self.db.commit()
+        self.assertFalse(self.report().value.valid)
+        self.db.execute("UPDATE tb_node SET entity_type='bad' WHERE id='a'")
+        self.db.commit()
+        self.assertIn("invalid owner", str(self.report().value.issues))

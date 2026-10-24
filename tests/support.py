@@ -1,5 +1,8 @@
 """Shared source builders and isolated filesystem fixtures."""
 
+import importlib
+import importlib.util
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +10,30 @@ from pathlib import Path
 from yambl_compiler.syntax.parser import Diagnostic, Document, parse
 
 
-def document(text: str, name: str = 'model.yambl') -> Document:
+def load_generated(path, name):
+    """Test generated bindings against maintained runtime sources.
+
+    Separate isolated-process tests exercise the distributed copies without aliases.
+    """
+    spec = importlib.util.spec_from_file_location(name, path / "__init__.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    for part in (
+        "records",
+        "contract",
+        "backends",
+        "results",
+        "runtime",
+        "validation",
+        "cli_runtime",
+    ):
+        sys.modules[name + "._" + part] = importlib.import_module("yambl_compiler.storage." + part)
+    sys.modules[name + "._ir_model"] = importlib.import_module("yambl_compiler.ir.model")
+    spec.loader.exec_module(module)
+    return module
+
+
+def document(text: str, name: str = "model.yambl") -> Document:
     result = parse(text, Path(name))
     if isinstance(result, Diagnostic):
         raise AssertionError(str(result))
@@ -23,5 +49,5 @@ class FilesystemCase(unittest.TestCase):
     def write(self, name, content):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(content.encode('utf-8'))
+        path.write_bytes(content.encode("utf-8"))
         return path
