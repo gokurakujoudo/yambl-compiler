@@ -58,7 +58,7 @@ class GenerationTests(FilesystemCase):
                     self.assertIn(table.name + '__index_' + str(i), reference)
             self.assertEqual(
                 dict(db.execute('SELECT * FROM tb_yambl_metadata')),
-                {'layout_revision': '2', 'model_digest': self.model.model_digest},
+                {'layout_revision': '3', 'model_digest': self.model.model_digest},
             )
         self.assertEqual(len(manifest['tables']), len(layout.tables))
         self.assertIn('model default: 20', reference)

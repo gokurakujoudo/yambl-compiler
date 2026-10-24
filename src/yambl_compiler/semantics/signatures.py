@@ -36,7 +36,7 @@ def field_signature(
     metadata = [
         bind_call(call, field, unit, [])
         for call in annotations(field)
-        if str(tokens(call)[1]) not in ('override', 'overload')
+        if str(tokens(call)[1]) not in ('override', 'overload', 'sparse', 'dense')
     ]
     return repr(
         (

@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from lark import Token, Tree
 
 from yambl_compiler.semantics.expressions import Resolver, Term
-from yambl_compiler.semantics.symbols import Unit, header
+from yambl_compiler.semantics.symbols import EntityKey, Unit, declaration_name, header
 from yambl_compiler.semantics.types import UNKNOWN, Resolved, accepts
 from yambl_compiler.syntax.parser import Diagnostic, annotations, children, diagnostic, tokens
 
@@ -296,6 +296,8 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
     :param diagnostics: Destination for errors.
     :returns: None.
     """
+    groups: dict[tuple[EntityKey, str], str] = {}
+    placements: dict[tuple[EntityKey, str], tuple[str, str]] = {}
     for unit in units:
         for declaration in [
             c
@@ -309,7 +311,8 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
                 dimensions: set[str] = set()
                 for call in annotations(node):
                     name = str(tokens(call)[1])
-                    bind_call(call, node, unit, diagnostics)
+                    values: dict[str, Resolved] = {}
+                    bind_call(call, node, unit, diagnostics, values)
                     symbol = unit.scope.get(name)
                     if symbol is not None and symbol.kind == 'decorator':
                         check_target(call, node, declaration, unit, diagnostics)
@@ -322,6 +325,72 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
                                 diagnostic(unit.document, call, f'duplicate decorator: {name}')
                             )
                     seen.add(name)
+                    if name in ('sparse', 'dense'):
+                        category = values.get('cat', UNKNOWN).exact or ''
+                        if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', category):
+                            diagnostics.append(
+                                diagnostic(
+                                    unit.document,
+                                    call,
+                                    'storage category must be nonempty snake_case',
+                                )
+                            )
+                        if annotations(node, 'dimension') or (
+                            annotations(node, 'sparse') and annotations(node, 'dense')
+                        ):
+                            diagnostics.append(
+                                diagnostic(
+                                    unit.document,
+                                    call,
+                                    'sparse, dense and dimension are mutually exclusive',
+                                )
+                            )
+                        if node.data == 'field':
+                            syntax = children(children(node, 'field_body')[0], 'type_expr')[0]
+                            if Resolver(unit, [], {}).resolve(syntax).kind == 'collection':
+                                diagnostics.append(
+                                    diagnostic(
+                                        unit.document,
+                                        call,
+                                        'storage grouping requires a non-collection field',
+                                    )
+                                )
+                            owner = unit.scope.get(declaration_name(declaration))
+                            if owner is not None and owner.kind == 'entity':
+                                ancestors = unit.world.parents.get(owner.key, [])
+                                root = ancestors[-1] if ancestors else owner.key
+                                group_key = (root, category)
+                                field_key = (
+                                    root,
+                                    str(
+                                        next(
+                                            t
+                                            for t in tokens(children(node, 'field_body')[0])
+                                            if t.type == 'NAME'
+                                        )
+                                    ),
+                                )
+                                if group_key in groups and groups[group_key] != name:
+                                    diagnostics.append(
+                                        diagnostic(
+                                            unit.document,
+                                            call,
+                                            'conflicting sparse/dense layout for storage category',
+                                        )
+                                    )
+                                if field_key in placements and placements[field_key] != (
+                                    name,
+                                    category,
+                                ):
+                                    diagnostics.append(
+                                        diagnostic(
+                                            unit.document,
+                                            call,
+                                            'conflicting storage groups across field implementations',
+                                        )
+                                    )
+                                groups[group_key] = name
+                                placements[field_key] = (name, category)
                     if name in ('temporal', 'dimension'):
                         pairs = children(call, 'pair_argument')
                         if name == 'dimension' and pairs:

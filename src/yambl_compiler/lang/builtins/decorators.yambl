@@ -29,6 +29,11 @@ decorator @temporal(*time: date)
 @allow_multiple
 decorator @dimension(*variation: string, *selector?: Hierarchy)
 
+@targets(DecoratorTargets.EntityAttr, categories=AttrCats.Static)
+decorator @sparse(cat: string)
+@targets(DecoratorTargets.EntityAttr, categories=AttrCats.Static)
+decorator @dense(cat: string)
+
 @targets(DecoratorTargets.Decodes)
 decorator @flags()
 @targets(DecoratorTargets.EntityAttr)

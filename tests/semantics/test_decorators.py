@@ -298,6 +298,18 @@ INVALID.extend(
 
 
 class DecoratorTests(unittest.TestCase):
+    def test_storage_decorators(self):
+        for source in STORAGE_VALID:
+            with self.subTest(source=source):
+                self.assertEqual(
+                    [d for d in check([document(source)]) if d.severity == 'error'], []
+                )
+                formatted = format_document(document(source))
+                self.assertEqual(format_document(document(formatted)), formatted)
+        for source, message in STORAGE_INVALID:
+            with self.subTest(source=source):
+                self.assertTrue(any(message in d.message for d in check([document(source)])))
+
     def test_descriptor_owner_uses_original_field_site(self):
         from yambl_compiler.semantics.symbols import field_owner, resolve_scopes
         from yambl_compiler.syntax.parser import children
@@ -331,3 +343,44 @@ class DecoratorTests(unittest.TestCase):
         expected = "@title(text='Tag')\ndecorator @tag(a: string = 'x', *b?: string)\n@tag(a='x', source: string)\ntype label = string\n"
         self.assertEqual(format_document(document(source)), expected)
         self.assertEqual(format_document(document(expected)), expected)
+
+
+STORAGE_VALID = [
+    "entity A { @sparse('info') attr x: string @dense(cat='details') static attr y: integer }",
+    "entity A { @sparse('info') attr x: string } entity B inherits A { @override attr x: string }",
+    "entity A {} entity B inherits A { @overload @sparse('info') attr x: string } entity C inherits A { @overload attr x: string }",
+    "entity A {} extend A { @sparse('info') attr x: decimal } entity B inherits A { @sparse('info') static attr y: bool }",
+    "entity A { @sparse('info') attr x: string } entity B { @dense('info') attr x: string }",
+]
+STORAGE_INVALID = [
+    ("@sparse('x') entity A {}", 'does not allow this target'),
+    ("value item { @dense('x') attr x: string }", 'does not allow this target'),
+    ("entity A { @sparse('') attr x: string }", 'nonempty snake_case'),
+    ("entity A { @dense('BondInfo') attr x: string }", 'nonempty snake_case'),
+    ("entity A { @sparse('x; DROP TABLE') attr x: string }", 'nonempty snake_case'),
+    ("entity A { @sparse attr x: string }", 'missing decorator argument'),
+    ("entity A { @dense(2) attr x: string }", 'incompatible decorator argument'),
+    ("entity A { @sparse('x') config attr x: string }", 'does not allow this target'),
+    ("entity A { @dense('x') snapshot attr x: string }", 'does not allow this target'),
+    ("entity A { @sparse('x') scd attr x: string }", 'does not allow this target'),
+    ("entity A { @dense('x') id key: string }", 'does not allow this target'),
+    ("entity A { @sparse('x') attr x: collection<A> }", 'non-collection'),
+    ("type items = values<string> entity A { @dense('x') attr x: items }", 'non-collection'),
+    ("entity A { @sparse('x') attr x: mapping<string, string> }", 'non-collection'),
+    ("entity A { @sparse('x') @dimension(source: string) attr x: string }", 'mutually exclusive'),
+    ("entity A { @dense('x') @dimension(source: string) attr x: string }", 'mutually exclusive'),
+    ("entity A { @sparse('x') @dense('x') attr x: string }", 'mutually exclusive'),
+    ("entity A { @sparse('x') @sparse('x') attr x: string }", 'duplicate decorator'),
+    (
+        "entity A { @sparse('info') attr x: string } entity B inherits A { @dense('info') static attr y: integer }",
+        'conflicting sparse/dense',
+    ),
+    (
+        "entity A { @sparse('info') attr x: string } entity B inherits A { @override @sparse('other') attr x: string }",
+        'conflicting storage groups',
+    ),
+    (
+        "entity A {} entity B inherits A { @overload @sparse('info') attr x: string } entity C inherits A { @overload @dense('info') attr x: string }",
+        'conflicting storage groups',
+    ),
+]

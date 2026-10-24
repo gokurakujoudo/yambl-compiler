@@ -378,8 +378,8 @@ unsupported business fields before writing. `--dryrun` validates and renders
 without creating output directories. Database migrations and production writes
 are not provided.
 
-Storage layout revision 2 uses names such as `tb_core_portfolio` and
-`tb_core_security_price`. Dimensionless static fields, including per-field states,
+Storage layout revision 3 uses names such as `tb_core_portfolio` and
+`tb_core_security_price`. Ungrouped dimensionless static fields, including per-field states,
 share the root identity table. Collection members use the field table name;
 separate collection headers add `_status`. Readers reject databases with an older
 layout revision. Regenerate disposable databases when updating the generated package.
@@ -387,6 +387,17 @@ Each root's `_config` table is a long table keyed by `(id, field)`, with separat
 `state` and `value` columns. The manifest supplies the field discriminator in
 `key_values`. A value column with BLOB affinity preserves TEXT exact values and
 INTEGER booleans; field-specific checks prevent accidental type conversion.
+
+`@sparse('bond_info')` moves a non-collection, dimensionless static field into
+the root's `_bond_info` long table. It has `(id, field)` keys, a state column,
+and the string, bool, int, decimal or date payload columns used by that group.
+References use the target ID's column. CHECK constraints require exactly the
+selected payload for VALUE and NULL in all payload columns for other states.
+`@dense('bond_info')` instead uses a wide group with per-field state and payload
+columns. Both decorators require a nonempty snake_case category and exclude
+each other and `@dimension`. Conflicting group layouts or physical names fail
+before output is written. Overrides and overloads share the logical field's
+group; explicit placements must agree. Grouping does not change the read API.
 
 The schema also includes Decodes, Hierarchy and ConfigGroup tables. Declared
 dictionaries and their entries are initialized from the bundled IR, including

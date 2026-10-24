@@ -93,8 +93,14 @@ def reference(layout: Layout) -> str:
         'not by a target foreign key. Collection members have a physical foreign key to their header. '
         'Enable PRAGMA foreign_keys on every writing connection.',
         '',
-        'Dimensionless static fields share the root identity table. Their collection states also live '
+        'Dimensionless static fields without a storage group share the root identity table. Their collection states also live '
         'there; members use a separate field table. Other collection headers use the _status suffix.',
+        '',
+        'Sparse and dense groups use the root table name plus the category suffix. Dense groups have '
+        'one payload and state column per field. Sparse groups use (id, field) keys, one state column '
+        'and typed string/bool/int/decimal/date payload columns as needed. VALUE uses exactly one lane; '
+        'non-normal states use NULL in every lane. Integer and decimal lanes use exact TEXT. '
+        'References use the target ID lane. These groups do not change field identity or reading semantics.',
         '',
         'Configuration uses one long table per root entity, keyed by (id, field), with state and value '
         'columns. The field key is the logical qualified name. The BLOB declaration gives value no SQLite '

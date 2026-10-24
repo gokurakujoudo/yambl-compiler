@@ -40,6 +40,8 @@ def python_package(layout: Layout, package: str) -> str:
         if type_.name == 'code':
             target = type_.arguments[0].target
             codes[target] = target.rsplit('.', 1)[-1] + 'Code'
+            if not codes[target].isidentifier():
+                raise ValueError(f'{target}: unsupported Python code type name')
             return codes[target]
         return {
             'string': 'str',

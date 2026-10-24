@@ -41,6 +41,8 @@ class FmcTests(FilesystemCase):
             self.addCleanup(reader.close)
             bond = reader.get_security('BOND00000001').value
             self.assertIsInstance(bond, module.Bond)
+            self.assertEqual(bond.read_issue_date(), Success(date(2025, 1, 1)))
+            self.assertEqual(bond.read_issuer_name(), Success('Example issuer'))
             self.assertEqual(
                 bond.read_price(date(2026, 1, 2), source=module.PriceSourcesCode('Primary')),
                 Success(Decimal('101.25')),

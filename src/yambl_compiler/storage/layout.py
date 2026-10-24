@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from yambl_compiler.ir.codec import encode
 from yambl_compiler.ir.model import Bound, Definition, Field, Model, Type
 
-LAYOUT_REVISION = 2
+LAYOUT_REVISION = 3
 
 
 def quote(name: str) -> str:
@@ -267,6 +267,7 @@ def build_layout(model: Model) -> Layout:
         )
     stored: dict[str, StoredField] = {}
     groups: dict[tuple[str, str, str], str] = {}
+    sparse_tables: set[str] = set()
     for logical in model.fields:
         impls = [declarations[i] for i in logical.implementations]
         f = impls[0]
@@ -300,6 +301,19 @@ def build_layout(model: Model) -> Layout:
         ):
             raise ValueError(f'{f.identity}: generated Python parameter or field collision')
         root = roots[owner]
+        placements = {
+            (c.target.rsplit('.', 1)[-1], c.bound[0].type.exact.text)
+            for implementation in impls
+            for c in implementation.decorators
+            if c.target in ('builtins.sparse', 'builtins.dense')
+            and c.bound[0].type.exact is not None
+        }
+        if len(placements) > 1:
+            raise ValueError(
+                f'{f.identity}: conflicting storage groups across field implementations'
+            )
+        placement, category = next(iter(placements), ('', ''))
+        sparse = placement == 'sparse'
         signature = json.dumps(
             [{'key': b.key, 'type': encode(b.type)} for b in dimensions], sort_keys=True
         )
@@ -307,7 +321,9 @@ def build_layout(model: Model) -> Layout:
         config = f.category == 'config'
         base = table_name(root)
         member_name = base + '_' + f.name
-        if config:
+        if placement:
+            name, owner_key = base + '_' + category, root + ':' + placement + ':' + category
+        elif config:
             name, owner_key = base + '_config', root + ':config'
         elif f.category == 'static' and not dimensions:
             name, owner_key = base, root
@@ -335,9 +351,9 @@ def build_layout(model: Model) -> Layout:
             for b in dimensions
         ]
         checks: list[str] = []
-        if config:
+        if config or sparse:
             keys.append('field')
-            columns.append(Column('field', meaning='Logical configuration field qualified name'))
+            columns.append(Column('field', meaning='Logical field qualified name'))
         if f.category == 'snapshot':
             keys.append('date')
             columns.append(Column('date', meaning='Exact snapshot date (ISO)'))
@@ -355,13 +371,21 @@ def build_layout(model: Model) -> Layout:
         if name not in tables:
             tables[name] = Table(
                 name,
-                f'{f.category} records for {root}; dimensions: {", ".join(b.key for b in dimensions) or "none"}',
+                f'{placement or f.category} records for {root}; dimensions: {", ".join(b.key for b in dimensions) or "none"}',
                 columns,
                 tuple(keys),
                 checks,
             )
         table = tables[name]
-        if config:
+        if sparse:
+            sparse_tables.add(name)
+            state = 'state'
+            type_ = ids[roots[f.type.target]].type if f.type.kind == 'reference' else f.type
+            value = {'code': 'string', 'snowflake_id': 'int', 'integer': 'int'}.get(
+                type_.name, type_.name
+            )
+            sparse_columns(table, f, value)
+        elif config:
             state, value = 'state', '' if collection else 'value'
             config_columns(table, f)
         else:
@@ -421,8 +445,19 @@ def build_layout(model: Model) -> Layout:
             value,
             members,
             dimensions,
-            (('field', f.identity),) if config else (),
+            (('field', f.identity),) if config or sparse else (),
         )
+    for name in sorted(sparse_tables):
+        table = tables[name]
+        payloads = [c.name for c in table.columns if c.name not in ('id', 'field', 'state')]
+        table.checks.append('field IN (' + ', '.join(sql_literal(f) for f in table.fields) + ')')
+        for identity in table.fields:
+            value = stored[identity].value
+            others = [f'{quote(p)} IS NULL' for p in payloads if p != value]
+            if others:
+                table.checks.append(
+                    f'field <> {sql_literal(identity)} OR (' + ' AND '.join(others) + ')'
+                )
     for root in sorted(ids):
         name = table_name(root) + '_config'
         if claims.get(name) == root + ':config':
@@ -433,6 +468,40 @@ def build_layout(model: Model) -> Layout:
         claim(table.name, table.purpose)
         tables[table.name] = table
     return Layout(model, entities, roots, ids, stored, tuple(tables[k] for k in sorted(tables)))
+
+
+def sparse_columns(table: Table, field_: Field, value: str) -> None:
+    """Add a scalar lane and enforce the long row's state and payload type.
+
+    :param table: Sparse group with ID and logical field keys.
+    :param field_: Resolved logical field implementation.
+    :param value: Payload lane selected by the scalar or reference ID type.
+    :returns: None after adding the lane and its field-specific constraint.
+    """
+    if not table.fields:
+        table.columns.append(
+            Column(
+                'state', default="'NO_ENTRY'", meaning='VALUE, NO_ENTRY, EMPTY or NOT_APPLICABLE'
+            )
+        )
+        table.checks.append("state IN ('VALUE', 'NO_ENTRY', 'EMPTY', 'NOT_APPLICABLE')")
+    if value not in {c.name for c in table.columns}:
+        table.columns.append(
+            Column(
+                value,
+                'INTEGER' if value == 'bool' else 'TEXT',
+                True,
+                meaning=f'{value} payload; exactly one lane for VALUE, all NULL otherwise',
+            )
+        )
+    payload = (
+        f"typeof({quote(value)}) = 'integer' AND {quote(value)} IN (0, 1)"
+        if value == 'bool'
+        else f"typeof({quote(value)}) = 'text'"
+    )
+    table.checks.append(
+        f'field <> {sql_literal(field_.identity)} OR ((state = \'VALUE\' AND ({payload})) OR (state <> \'VALUE\' AND {quote(value)} IS NULL))'
+    )
 
 
 def config_columns(table: Table, field_: Field) -> None:
