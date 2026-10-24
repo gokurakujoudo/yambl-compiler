@@ -4,7 +4,15 @@ import json
 import re
 from dataclasses import asdict
 
-from yambl_compiler.storage.layout import Layout, Table, quote, sql_literal, type_label
+from yambl_compiler.storage.layout import (
+    LAYOUT_REVISION,
+    Layout,
+    Table,
+    quote,
+    sql_literal,
+    table_name,
+    type_label,
+)
 
 
 def table_sql(table: Table) -> str:
@@ -35,8 +43,14 @@ def ddl(layout: Layout) -> str:
     :returns: SQL suitable for initializing a new database.
     """
     sql = 'PRAGMA foreign_keys = ON;\n\n' + '\n'.join(table_sql(t) for t in layout.tables)
-    for key, value in (('layout_revision', '1'), ('model_digest', layout.model.model_digest)):
-        sql += f'INSERT INTO yambl_metadata (key, value) VALUES ({sql_literal(key)}, {sql_literal(value)});\n'
+    for table in layout.tables:
+        for row in table.rows:
+            sql += f'INSERT INTO {quote(table.name)} VALUES ({", ".join(sql_literal(v) for v in row)});\n'
+    for key, value in (
+        ('layout_revision', str(LAYOUT_REVISION)),
+        ('model_digest', layout.model.model_digest),
+    ):
+        sql += f'INSERT INTO tb_yambl_metadata (key, value) VALUES ({sql_literal(key)}, {sql_literal(value)});\n'
     return sql
 
 
@@ -67,7 +81,7 @@ def reference(layout: Layout) -> str:
         '# SQLite schema reference',
         '',
         f'Model SHA-256: `{layout.model.model_digest}`.',
-        f'IR revision: {layout.model.format_revision}. Storage layout revision: 1.',
+        f'IR revision: {layout.model.format_revision}. Storage layout revision: {LAYOUT_REVISION}.',
         '',
         'Each field state is VALUE, NO_ENTRY, EMPTY or NOT_APPLICABLE. A missing row is NO_ENTRY. '
         'EMPTY has a NULL payload. An existing VALUE collection header with no members is an empty collection.',
@@ -78,6 +92,23 @@ def reference(layout: Layout) -> str:
         'Entity references are logical links. Their target existence is checked by explicit resolution, '
         'not by a target foreign key. Collection members have a physical foreign key to their header. '
         'Enable PRAGMA foreign_keys on every writing connection.',
+        '',
+        'Dimensionless static fields share the root identity table. Their collection states also live '
+        'there; members use a separate field table. Other collection headers use the _status suffix.',
+        '',
+        'Configuration uses one long table per root entity, keyed by (id, field), with state and value '
+        'columns. The field key is the logical qualified name. The BLOB declaration gives value no SQLite '
+        'type affinity: scalar and reference payloads remain TEXT, booleans remain INTEGER 0/1. '
+        'Collections keep a NULL payload and use a member table. Field-specific CHECK constraints '
+        'and reader decoding enforce the corresponding storage types.',
+        '',
+        'Built-in tables store Decodes, Hierarchy and ConfigGroup. Declared dictionaries, including '
+        'generated None/All flags entries, are inserted from the embedded IR. Built-in member tables '
+        'have foreign keys to their owner. These tables have no generated read methods or selection engine.',
+        '',
+        'ConfigGroup mapping values are JSON objects with type (a resolved IR Type object) and value '
+        '(the JSON payload). SQL checks the envelope; field membership, type compatibility and configuration '
+        'execution are not implemented for these storage-only mappings.',
         '',
         '## Tables',
         '',
@@ -133,6 +164,10 @@ def reference(layout: Layout) -> str:
                             'Model defaults are applied by the reader only for NO_ENTRY; they are not SQL defaults.'
                         )
             lines.append('')
+        if table.rows:
+            lines.extend(
+                [f'Initial rows from embedded dictionary declarations: {len(table.rows)}.', '']
+            )
         sql = table_sql(table).rstrip()
         fence = '`' * max(3, max((len(m) for m in re.findall(r'`+', sql)), default=0) + 1)
         lines.extend([fence + 'sql', sql, fence])
@@ -145,11 +180,16 @@ def manifest(layout: Layout) -> str:
     :param layout: Shared storage model.
     :returns: Deterministic readable JSON manifest.
     """
+    roots = {**layout.roots, **{v.root: v.root for v in layout.fields.values()}}
     data = {
-        'layout_revision': 1,
+        'layout_revision': LAYOUT_REVISION,
         'model_digest': layout.model.model_digest,
-        'roots': layout.roots,
+        'roots': roots,
+        'identity_tables': {root: table_name(root) for root in sorted(set(roots.values()))},
         'tables': [asdict(t) for t in layout.tables],
-        'fields': {k: asdict(v) for k, v in layout.fields.items()},
+        'fields': {
+            k: {**asdict(v), 'readable': v.root in layout.entities}
+            for k, v in layout.fields.items()
+        },
     }
     return json.dumps(data, ensure_ascii=False, indent=4) + '\n'

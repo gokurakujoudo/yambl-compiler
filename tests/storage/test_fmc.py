@@ -47,6 +47,9 @@ class FmcTests(FilesystemCase):
             )
             self.assertEqual(bond.read_price_fallback_days(), Success(20, 'model_default'))
             self.assertEqual(
+                reader.get_security('SECU00000001').value.read_price_fallback_days(), Success(5)
+            )
+            self.assertEqual(
                 reader.get_security('SECU00000001').value.read_coupon().status, Status.NOT_DEFINED
             )
             fund = reader.get_fund('FUND00000001').value

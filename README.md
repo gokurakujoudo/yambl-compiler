@@ -378,6 +378,23 @@ unsupported business fields before writing. `--dryrun` validates and renders
 without creating output directories. Database migrations and production writes
 are not provided.
 
+Storage layout revision 2 uses names such as `tb_core_portfolio` and
+`tb_core_security_price`. Dimensionless static fields, including per-field states,
+share the root identity table. Collection members use the field table name;
+separate collection headers add `_status`. Readers reject databases with an older
+layout revision. Regenerate disposable databases when updating the generated package.
+Each root's `_config` table is a long table keyed by `(id, field)`, with separate
+`state` and `value` columns. The manifest supplies the field discriminator in
+`key_values`. A value column with BLOB affinity preserves TEXT exact values and
+INTEGER booleans; field-specific checks prevent accidental type conversion.
+
+The schema also includes Decodes, Hierarchy and ConfigGroup tables. Declared
+dictionaries and their entries are initialized from the bundled IR, including
+flags None/All entries. ConfigGroup mappings use child tables keyed by group ID
+and logical field name, with a typed JSON value. SQL checks the JSON envelope;
+mapping type compatibility and built-in read methods are not implemented.
+The manifest marks these storage-only fields with `readable: false`.
+
 IR revision 2 uses compact JSON. The packaged Draft 2020-12 schema validates
 structure offline; semantic validation also checks references and derived views.
 Recompile revision 1 artifacts. Ordinary `attr` now means `static attr`, and

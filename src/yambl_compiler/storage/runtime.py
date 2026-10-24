@@ -8,7 +8,14 @@ from typing import ClassVar, Self, cast
 
 from yambl_compiler.ir.application import load_ir
 from yambl_compiler.ir.model import Field, Type
-from yambl_compiler.storage.layout import Layout, StoredField, build_layout, quote, snake
+from yambl_compiler.storage.layout import (
+    LAYOUT_REVISION,
+    Layout,
+    StoredField,
+    build_layout,
+    quote,
+    table_name,
+)
 from yambl_compiler.storage.results import EntityRef, NonNormalResult, ReadResult, Status, Success
 
 
@@ -62,8 +69,13 @@ class Reader:
             connection = sqlite3.connect(Path(path).resolve().as_uri() + '?mode=ro', uri=True)
             connection.row_factory = sqlite3.Row
             connection.execute('BEGIN')
-            metadata = dict(connection.execute('SELECT key, value FROM yambl_metadata').fetchall())
-            if metadata != {'layout_revision': '1', 'model_digest': layout.model.model_digest}:
+            metadata = dict(
+                connection.execute('SELECT key, value FROM tb_yambl_metadata').fetchall()
+            )
+            if metadata != {
+                'layout_revision': str(LAYOUT_REVISION),
+                'model_digest': layout.model.model_digest,
+            }:
                 raise ValueError(
                     'database model or storage revision does not match the generated package'
                 )
@@ -201,7 +213,7 @@ class Reader:
             root = self._layout.roots[entity]
             encoded = self._encode(self._layout.ids[root].type, id_value)
             rows = self._connection.execute(
-                f'SELECT entity_type FROM {quote(snake(root) + "__identity")} WHERE id = ?',
+                f'SELECT entity_type FROM {quote(table_name(root))} WHERE id = ?',
                 (encoded,),
             ).fetchall()
             if not rows:
@@ -290,10 +302,15 @@ class Reader:
         """
         if set(dimensions) != {d.key for d in stored.dimensions}:
             raise ValueError('all declared dimensions must be supplied exactly once')
-        keys = ['id', *('dim_' + d.key for d in stored.dimensions)]
+        keys = [
+            'id',
+            *('dim_' + d.key for d in stored.dimensions),
+            *(k for k, _ in stored.key_values),
+        ]
         params = [
             self._encode(self._layout.ids[stored.root].type, handle.id),
             *(self._encode(d.type, dimensions[d.key]) for d in stored.dimensions),
+            *(v for _, v in stored.key_values),
         ]
         query = f'SELECT * FROM {quote(stored.table)} WHERE ' + ' AND '.join(
             quote(k) + ' = ?' for k in keys
@@ -324,7 +341,11 @@ class Reader:
             if state != 'VALUE' or row is None:
                 raise ValueError('invalid stored field state')
             if stored.members:
-                keys = ['id', *('dim_' + d.key for d in stored.dimensions)]
+                keys = [
+                    'id',
+                    *('dim_' + d.key for d in stored.dimensions),
+                    *(k for k, _ in stored.key_values),
+                ]
                 if field.category == 'snapshot':
                     keys.append('date')
                 if field.category == 'scd':

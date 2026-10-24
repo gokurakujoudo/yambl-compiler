@@ -46,6 +46,8 @@ def python_package(layout: Layout, package: str) -> str:
         }[type_.name]
 
     for stored in layout.fields.values():
+        if stored.root not in layout.entities:
+            continue
         python_type(stored.field.type)
         for dim in stored.dimensions:
             python_type(dim.type)

@@ -9,7 +9,7 @@ from unittest.mock import patch
 from tests.support import FilesystemCase
 from yambl_compiler.ir import compile_repository
 from yambl_compiler.storage.generation import generate
-from yambl_compiler.storage.layout import quote, snake
+from yambl_compiler.storage.layout import quote, table_name
 from yambl_compiler.storage.results import EntityRef, Status, Success
 from yambl_compiler.storage.runtime import EntityHandle
 
@@ -27,6 +27,9 @@ entity A {
     attr members: collection<Other>
     config attr limit: integer = 20
     config attr enabled: bool = true
+    config attr threshold: decimal
+    config attr peer: Other
+    config attr peers: collection<Other>
     @dimension(source: code<'Sources'>)
     @temporal(day: date)
     snapshot attr price: decimal
@@ -59,13 +62,13 @@ class RuntimeTests(FilesystemCase):
         self.path = self.root / 'example.db'
         self.writer = sqlite3.connect(self.path)
         self.addCleanup(self.writer.close)
-        self.writer.executescript((self.output / 'schema.sql').read_text())
+        self.writer.executescript((self.output / 'schema.sql').read_text(encoding='utf-8'))
         for root, values in [
             ('A', [('a', 'A'), ('b', 'B'), ('c', 'C')]),
             ('Other', [('1', 'Other')]),
         ]:
             self.writer.executemany(
-                f'INSERT INTO {quote(snake(root) + "__identity")} VALUES (?, ?)', values
+                f'INSERT INTO {quote(table_name(root))} (id, entity_type) VALUES (?, ?)', values
             )
         self.writer.commit()
 
@@ -78,9 +81,13 @@ class RuntimeTests(FilesystemCase):
 
     def put(self, identity, value=None, state='VALUE', id='a', **keys):
         stored = self.layout.fields[identity]
-        values = {'id': id, **keys, stored.state: state}
+        values = {'id': id, **dict(stored.key_values), **keys, stored.state: state}
         if stored.value:
             values[stored.value] = value
+        if stored.table == table_name(stored.root):
+            values['entity_type'] = self.writer.execute(
+                f'SELECT entity_type FROM {quote(stored.table)} WHERE id = ?', (id,)
+            ).fetchone()[0]
         cols = ', '.join(quote(k) for k in values)
         self.writer.execute(
             f'INSERT INTO {quote(stored.table)} ({cols}) VALUES ({", ".join("?" for _ in values)}) ON CONFLICT DO UPDATE SET '
@@ -145,6 +152,60 @@ class RuntimeTests(FilesystemCase):
         self.assertEqual(a.read_limit().status, Status.NOT_APPLICABLE)
         self.assertEqual(a.read_members().status, Status.NO_ENTRY)
         self.assertEqual(reader.get_a('b').value.read_text().status, Status.NO_ENTRY)
+
+    def test_config_long_rows_preserve_types_states_and_field_identity(self):
+        huge = '123456789012345678901234567890'
+        self.put('A.limit', huge)
+        self.put('A.enabled', 0)
+        self.put('A.threshold', '0.12345678901234567890123456789')
+        self.put('A.peer', '1')
+        self.put('A.peers')
+        members = self.layout.fields['A.peers'].members
+        self.writer.execute(f'INSERT INTO {quote(members)} VALUES (?, ?, ?)', ('a', 'A.peers', '1'))
+        self.writer.commit()
+        reader = self.open()
+        a = reader.get_a('a').value
+        self.assertEqual(a.read_limit(), Success(int(huge)))
+        self.assertEqual(a.read_enabled(), Success(False))
+        self.assertEqual(a.read_threshold(), Success(Decimal('0.12345678901234567890123456789')))
+        self.assertEqual(a.read_peer(), Success(EntityRef('Other', 1)))
+        self.assertEqual(a.read_peers(), Success(frozenset({EntityRef('Other', 1)})))
+        self.assertEqual(reader.get_c('c').value.read_limit(), Success(30, 'model_default'))
+        self.assertEqual(
+            self.writer.execute(
+                'SELECT typeof(value), value FROM tb_a_config WHERE id = ? AND field = ?',
+                ('a', 'A.limit'),
+            ).fetchone(),
+            ('text', huge),
+        )
+        self.assertEqual(
+            self.writer.execute(
+                'SELECT typeof(value), value FROM tb_a_config WHERE id = ? AND field = ?',
+                ('a', 'A.enabled'),
+            ).fetchone(),
+            ('integer', 0),
+        )
+        reader.close()
+        for identity, state in [('A.limit', 'EMPTY'), ('A.enabled', 'NOT_APPLICABLE')]:
+            self.put(identity, state=state)
+        reader = self.open()
+        self.assertEqual(reader.get_a('a').value.read_limit().status, Status.EMPTY)
+        self.assertEqual(reader.get_a('a').value.read_enabled().status, Status.NOT_APPLICABLE)
+        reader.close()
+        self.put('A.limit', state='NO_ENTRY')
+        self.assertEqual(self.open().get_a('a').value.read_limit(), Success(20, 'model_default'))
+        for identity, value in [('A.limit', 1), ('A.enabled', '1'), ('A.enabled', 2)]:
+            with (
+                self.subTest(identity=identity, value=value),
+                self.assertRaises(sqlite3.IntegrityError),
+            ):
+                self.put(identity, value)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.writer.execute("INSERT INTO tb_a_config VALUES ('b', 'A.unknown', 'VALUE', 'x')")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.writer.execute(
+                f'INSERT INTO {quote(members)} VALUES (?, ?, ?)', ('a', 'A.limit', '2')
+            )
 
     def test_sparse_snapshots_scd_changes_gaps_and_collections(self):
         for day, value in [('2026-01-02', '10.1'), ('2026-01-04', 'bad')]:
@@ -241,9 +302,14 @@ class RuntimeTests(FilesystemCase):
         self.assertEqual(reader.read(foreign, 'A.text', {}).status, Status.ERROR)
         foreign.reader.close()
         with self.assertRaises(sqlite3.OperationalError):
-            reader._connection.execute('DELETE FROM yambl_metadata')
+            reader._connection.execute('DELETE FROM tb_yambl_metadata')
         reader.close()
-        self.writer.execute('DELETE FROM yambl_metadata')
+        self.writer.execute(
+            "UPDATE tb_yambl_metadata SET value = '1' WHERE key = 'layout_revision'"
+        )
+        self.writer.commit()
+        self.assertIn('does not match', self.module.SampleReader.open(self.path).message)
+        self.writer.execute('DELETE FROM tb_yambl_metadata')
         self.writer.commit()
         self.assertIn('does not match', self.module.SampleReader.open(self.path).message)
         self.assertEqual(
@@ -298,7 +364,7 @@ class RuntimeTests(FilesystemCase):
 
         self.writer.execute('PRAGMA ignore_check_constraints = ON')
         self.put('A.text', 'bad', state='CORRUPT')
-        self.writer.execute('UPDATE a__identity SET entity_type = ? WHERE id = ?', ('unknown', 'b'))
+        self.writer.execute('UPDATE tb_a SET entity_type = ? WHERE id = ?', ('unknown', 'b'))
         self.writer.commit()
         reader = self.open()
         self.assertEqual(reader.get_a('b').status, Status.ERROR)
@@ -337,8 +403,8 @@ class RuntimeTests(FilesystemCase):
     def test_missing_columns_are_results_not_exceptions(self):
         table = self.layout.fields['A.text'].table
         self.writer.execute(f'DROP TABLE {quote(table)}')
-        self.writer.execute(f'CREATE TABLE {quote(table)} (id TEXT)')
-        self.writer.execute(f'INSERT INTO {quote(table)} VALUES (?)', ('a',))
+        self.writer.execute(f'CREATE TABLE {quote(table)} (id TEXT, entity_type TEXT)')
+        self.writer.execute(f'INSERT INTO {quote(table)} VALUES (?, ?)', ('a', 'A'))
         self.writer.commit()
         reader = self.open()
         self.assertEqual(reader.get_a('a').value.read_text().status, Status.ERROR)

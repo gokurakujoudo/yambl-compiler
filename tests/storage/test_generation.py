@@ -11,6 +11,7 @@ from tests.storage.test_runtime import SOURCE
 from tests.support import FilesystemCase
 from yambl_compiler.application.cli import Arguments, run_generation
 from yambl_compiler.ir import compile_repository, write_ir
+from yambl_compiler.ir.codec import encode
 from yambl_compiler.storage.generation import generate, python_package
 from yambl_compiler.storage.layout import build_layout, quote, supported, type_label
 from yambl_compiler.storage.rendering import markdown_cell
@@ -26,9 +27,9 @@ class GenerationTests(FilesystemCase):
     def test_all_documented_tables_match_sqlite_and_manifest(self):
         output = self.root / 'output'
         layout = generate(self.model, output, 'sample_model')
-        schema = (output / 'schema.sql').read_text()
-        reference = (output / 'schema.md').read_text()
-        manifest = json.loads((output / 'storage-manifest.json').read_text())
+        schema = (output / 'schema.sql').read_text(encoding='utf-8')
+        reference = (output / 'schema.md').read_text(encoding='utf-8')
+        manifest = json.loads((output / 'storage-manifest.json').read_text(encoding='utf-8'))
         with closing(sqlite3.connect(':memory:')) as db:
             db.executescript(schema)
             self.assertEqual(
@@ -56,20 +57,25 @@ class GenerationTests(FilesystemCase):
                 for i, _ in enumerate(table.indexes):
                     self.assertIn(table.name + '__index_' + str(i), reference)
             self.assertEqual(
-                dict(db.execute('SELECT * FROM yambl_metadata')),
-                {'layout_revision': '1', 'model_digest': self.model.model_digest},
+                dict(db.execute('SELECT * FROM tb_yambl_metadata')),
+                {'layout_revision': '2', 'model_digest': self.model.model_digest},
             )
         self.assertEqual(len(manifest['tables']), len(layout.tables))
         self.assertIn('model default: 20', reference)
         self.assertIn('not SQL defaults', reference)
         self.assertIn('not by a target foreign key', reference)
         self.assertNotEqual(layout.fields['A.limit'].table, layout.fields['A.text'].table)
+        config = next(t for t in layout.tables if t.name == 'tb_a_config')
+        self.assertEqual(config.primary, ('id', 'field'))
+        self.assertEqual([c.name for c in config.columns], ['id', 'field', 'state', 'value'])
+        self.assertEqual(layout.fields['A.limit'].table, layout.fields['A.enabled'].table)
+        self.assertEqual(layout.fields['A.limit'].key_values, (('field', 'A.limit'),))
         self.assertNotEqual(layout.fields['A.price'].table, layout.fields['A.positions'].table)
         self.assertEqual(layout.fields['A.text'].table, layout.fields['A.extra'].table)
         self.assertEqual(markdown_cell('中文|`<>&\r\n'), '中文&#124;&#96;&lt;&gt;&amp;<br>')
         with self.assertRaisesRegex(ValueError, 'new or empty'):
             generate(self.model, output, 'sample_model')
-        self.assertEqual((output / 'schema.sql').read_text(), schema)
+        self.assertEqual((output / 'schema.sql').read_text(encoding='utf-8'), schema)
         other = self.root / 'other'
         other.mkdir()
         generate(self.model, other, 'sample_model')
@@ -99,6 +105,129 @@ class GenerationTests(FilesystemCase):
                 generate(self.model, output, 'sample_model')
         self.assertFalse(output.exists())
         self.assertEqual(list(output.parent.iterdir()), [])
+
+    def test_readable_names_wide_identity_and_collisions(self):
+        model = self.compile('''namespace core
+            entity Portfolio { id portfolio_id: string attr title: string }
+            entity Fund inherits Portfolio { snapshot attr holdings: collection<HoldingEntry> }
+            entity HoldingEntry { id holding_entry_id: integer }
+            entity Security {
+                id security_id: string
+                static attr name: string
+                @dimension(source: string) snapshot attr price: decimal
+                @dimension(source: string) attr a: string
+                @dimension(source: code<'Sources'>) attr b: string
+                @dimension(source: string) attr c: string
+            }
+        ''')
+        layout = build_layout(model)
+        self.assertEqual(layout.fields['core.Portfolio.title'].table, 'tb_core_portfolio')
+        holdings = layout.fields['core.Portfolio.holdings']
+        self.assertEqual(holdings.table, 'tb_core_portfolio_holdings_status')
+        self.assertEqual(holdings.members, 'tb_core_portfolio_holdings')
+        self.assertEqual(layout.fields['core.Security.price'].table, 'tb_core_security_price')
+        self.assertEqual(layout.fields['core.Security.a'].table, 'tb_core_security_static_source')
+        self.assertEqual(layout.fields['core.Security.b'].table, 'tb_core_security_static_source_2')
+        self.assertEqual(
+            layout.fields['core.Security.c'].table, layout.fields['core.Security.a'].table
+        )
+        self.assertIn('tb_core_holding_entry', {t.name for t in layout.tables})
+        for source in (
+            'entity YamblMetadata { id key: string }',
+            'entity A { id key: string snapshot attr price: string } entity APrice { id key: string }',
+            'entity A { id key: string snapshot attr x: collection<B> snapshot attr x_status: string } entity B { id key: string }',
+            'namespace foo entity BarBaz { id key: string }',
+            'entity A { id key: string config attr x: string snapshot attr config: string }',
+        ):
+            with self.subTest(source=source):
+                if source.startswith('namespace'):
+                    self.write('other.yambl', 'namespace foo.bar entity Baz { id key: string }')
+                with self.assertRaisesRegex(ValueError, 'SQL table collision'):
+                    build_layout(self.compile(source))
+                (self.root / 'other.yambl').unlink(missing_ok=True)
+
+    def test_builtin_storage_and_declared_dictionary_rows(self):
+        output = self.root / 'output'
+        model = self.compile(SOURCE.replace('US dollar', "Dollar\\'s"))
+        layout = generate(model, output, 'sample_model')
+        manifest = json.loads((output / 'storage-manifest.json').read_text(encoding='utf-8'))
+        self.assertFalse(manifest['fields']['builtins.ConfigGroup.when']['readable'])
+        self.assertEqual(manifest['identity_tables']['builtins.Decodes'], 'tb_decodes')
+        self.assertEqual(manifest['roots']['builtins.ConfigGroup'], 'builtins.ConfigGroup')
+        self.assertTrue(manifest['fields']['A.text']['readable'])
+        self.assertEqual(layout.fields['A.members'].table, 'tb_a')
+        self.assertEqual(layout.fields['A.members'].members, 'tb_a_members')
+        with closing(sqlite3.connect(':memory:')) as db:
+            db.executescript((output / 'schema.sql').read_text(encoding='utf-8'))
+            self.assertEqual(
+                list(
+                    db.execute(
+                        'SELECT code, decode FROM tb_decodes_entries WHERE decodes_id = ? ORDER BY code',
+                        ('Currencies',),
+                    )
+                ),
+                [('CNY', '人民币'), ('USD', "Dollar's")],
+            )
+            self.assertEqual(
+                dict(
+                    db.execute(
+                        'SELECT code, ordering FROM tb_decodes_entries WHERE decodes_id = ? AND code IN (?, ?)',
+                        ('builtins.AttrCats', 'None', 'All'),
+                    )
+                ),
+                {'None': '0', 'All': '30'},
+            )
+            self.assertEqual(
+                db.execute(
+                    'SELECT entries__state FROM tb_decodes WHERE decodes_id = ?', ('Currencies',)
+                ).fetchone(),
+                ('VALUE',),
+            )
+            db.execute(
+                "INSERT INTO tb_hierarchy (hierarchy_id, hierarchy_entries__state) VALUES ('prices', 'VALUE')"
+            )
+            db.execute("INSERT INTO tb_hierarchy_entries VALUES ('prices', 'Primary', '1')")
+            db.execute(
+                "INSERT INTO tb_config_group (config_group_id, entity_type__state, entity_type, when__state, then_set__state) VALUES ('g', 'VALUE', 'A', 'VALUE', 'VALUE')"
+            )
+            encoded = json.dumps(
+                {'type': encode(layout.fields['A.text'].field.type), 'value': "中'文"},
+                ensure_ascii=False,
+            )
+            db.execute(
+                'INSERT INTO tb_config_group_when VALUES (?, ?, ?)', ('g', 'A.text', encoded)
+            )
+            self.assertEqual(
+                json.loads(db.execute('SELECT value FROM tb_config_group_when').fetchone()[0])[
+                    'value'
+                ],
+                "中'文",
+            )
+            for sql, values in (
+                (
+                    'INSERT INTO tb_decodes_entries VALUES (?, ?, ?, ?)',
+                    ('Currencies', 'USD', 'duplicate', '2'),
+                ),
+                ('INSERT INTO tb_hierarchy_entries VALUES (?, ?, ?)', ('prices', 'Secondary', '1')),
+                ('INSERT INTO tb_hierarchy_entries VALUES (?, ?, ?)', ('missing', 'Primary', '1')),
+                ('INSERT INTO tb_config_group_when VALUES (?, ?, ?)', ('g', 'A.text', encoded)),
+                (
+                    'INSERT INTO tb_config_group_then_set VALUES (?, ?, ?)',
+                    ('missing', 'A.limit', encoded),
+                ),
+            ):
+                with (
+                    self.subTest(sql=sql, values=values),
+                    self.assertRaises(sqlite3.IntegrityError),
+                ):
+                    db.execute(sql, values)
+            for value in ('broken', '[]', '{}', '{"type": "string", "value": "x"}', '{"type": {}}'):
+                with self.subTest(value=value), self.assertRaises(sqlite3.IntegrityError):
+                    db.execute(
+                        'INSERT INTO tb_config_group_then_set VALUES (?, ?, ?)',
+                        ('g', 'A.limit', value),
+                    )
+            self.assertEqual(list(db.execute('PRAGMA foreign_key_check')), [])
 
     def compile(self, source):
         self.write('main.yambl', source)
@@ -179,6 +308,16 @@ class GenerationTests(FilesystemCase):
             type_label(replace(type_, exact=Value('string', 'fixed', ''))), 'string = fixed'
         )
         self.assertFalse(supported(replace(type_, dependent=True), layout.entities, model))
+        self.assertEqual(
+            type_label(
+                replace(type_, exact=Value('flags', '', 'builtins.AttrCats', ('Static',), '2'))
+            ),
+            'string = builtins.AttrCats[Static; mask=2]',
+        )
+        self.assertEqual(
+            type_label(replace(type_, exact=Value('flags', '', 'builtins.AttrCats', (), '0'))),
+            'string = builtins.AttrCats[None; mask=0]',
+        )
         self.assertFalse(
             supported(replace(type_, kind='reference', target='unknown'), layout.entities, model)
         )
@@ -200,9 +339,9 @@ class GenerationTests(FilesystemCase):
         self.assertFalse(schema_path.exists())
         self.assertTrue(run_generation(schema_args, False).ok)
         self.assertEqual(
-            json.loads(schema_path.read_text())['$defs']['Model']['properties']['format_revision'][
-                'const'
-            ],
+            json.loads(schema_path.read_text(encoding='utf-8'))['$defs']['Model']['properties'][
+                'format_revision'
+            ]['const'],
             2,
         )
         self.assertFalse(run_generation(replace(schema_args, output=''), False).ok)
