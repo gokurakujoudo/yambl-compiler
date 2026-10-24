@@ -135,7 +135,7 @@ final entity Decodes {
 }
 
 value decodes_entry {
-    attr code: string
-    attr decode: string
-    attr ordering: integer
+    static attr code: string
+    static attr decode: string
+    static attr ordering: integer
 }

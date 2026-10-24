@@ -22,6 +22,6 @@ final entity Hierarchy {
 }
 
 value hierarchy_entry {
-    attr entry_value: string
-    attr ordering: integer
+    static attr entry_value: string
+    static attr ordering: integer
 }
