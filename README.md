@@ -410,3 +410,15 @@ fallback execution.
 The language repository's `lang/syntex/storage.md` documents storage rules and
 tracks implemented and pending capabilities. The FMC repository includes an
 initializer and seed data for a disposable example database.
+
+Generated entity classes include their declared title and description when present.
+Attribute read methods document the YAMBL type, dimensions and every entity that
+declares the logical field, sorted by qualified name. Override and overload owners
+are included; an extension belongs to its target entity. Inheritance alone does
+not add another declaration owner. Optional Hierarchy selectors are identified as
+metadata rather than Python arguments.
+
+Every generated method has rST parameter and return fields, including result types,
+date boundaries, batch ordering and config default behavior. Model prose is kept
+in literal blocks and quoted safely in Python. Generated docstrings are tested as
+rST and checked against the actual Python signatures.

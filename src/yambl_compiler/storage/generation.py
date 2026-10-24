@@ -7,6 +7,11 @@ from pathlib import Path
 
 from yambl_compiler.ir.codec import dumps
 from yambl_compiler.ir.model import Model, Type
+from yambl_compiler.storage.documentation import (
+    docstring,
+    entity_documentation,
+    field_documentation,
+)
 from yambl_compiler.storage.layout import Layout, build_layout, snake
 from yambl_compiler.storage.rendering import ddl, manifest, reference
 
@@ -113,9 +118,7 @@ def python_package(layout: Layout, package: str) -> str:
     for key in ordered:
         entity = layout.entities[key]
         parent = names.get(entity.parent, 'EntityHandle')
-        lines.extend(
-            ['', '', f'class {names[key]}({parent}):', f'    """Read handle for {entity.name}."""']
-        )
+        lines.extend(['', '', f'class {names[key]}({parent}):', *entity_documentation(entity)])
         if layout.roots[key] != key:
             continue
         methods: set[str] = set()
@@ -148,7 +151,7 @@ def python_package(layout: Layout, package: str) -> str:
                 [
                     '',
                     f'    def {method}(self{point_arg}{kw}) -> ReadResult[{output}]:',
-                    f'        """Read {f.identity} explicitly."""',
+                    *field_documentation(layout, stored, output, time_key if temporal else ''),
                     f'        return cast(ReadResult[{output}], self.reader.read(self, {f.identity!r}, {dimensions}{when}))',
                 ]
             )
@@ -166,7 +169,7 @@ def python_package(layout: Layout, package: str) -> str:
                     [
                         '',
                         f'    def {range_method}(self, start_date: date, end_date: date{kw}) -> {result}:',
-                        f'        """Read {f.identity} in [start_date, end_date)."""',
+                        *field_documentation(layout, stored, output, time_key, True),
                         f'        return cast({result}, self.reader.read_range(self, {f.identity!r}, {dimensions}, start_date, end_date))',
                     ]
                 )
@@ -188,11 +191,31 @@ def python_package(layout: Layout, package: str) -> str:
             [
                 '',
                 f'    def {method}(self, id_value: {id_type}) -> ReadResult[{name}]:',
-                f'        """Read one {key} or subtype identity."""',
+                *docstring(
+                    [
+                        f'Read one {key} or subtype identity.',
+                        '',
+                        f':param id_value: ID of the requested {key} instance.',
+                        f':type id_value: {id_type}',
+                        ':returns: Success containing the actual subtype handle, NO_ENTRY when absent or outside the requested subtype, or ERROR on failure.',
+                        f':rtype: ReadResult[{name}]',
+                    ],
+                    8,
+                ),
                 f'        return cast(ReadResult[{name}], self.get({key!r}, id_value))',
                 '',
                 f'    def {method}_many(self, ids: list[{id_type}]) -> ReadResult[list[ReadResult[{name}]]]:',
-                '        """Read IDs in order, preserving duplicates."""',
+                *docstring(
+                    [
+                        f'Read {key} IDs in order, preserving duplicates.',
+                        '',
+                        ':param ids: IDs in requested result order; repeated IDs retain separate positions.',
+                        f':type ids: list[{id_type}]',
+                        ':returns: Success containing one handle or NO_ENTRY result per ID. Empty input succeeds with an empty list; any query failure returns outer ERROR without a partial list.',
+                        f':rtype: ReadResult[list[ReadResult[{name}]]]',
+                    ],
+                    8,
+                ),
                 f'        return cast(ReadResult[list[ReadResult[{name}]]], self.get_many({key!r}, list(ids)))',
             ]
         )
