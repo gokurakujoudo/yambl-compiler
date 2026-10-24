@@ -71,16 +71,15 @@ it does not read YAMBL sources or installed language resources. Validation rejec
 duplicate JSON keys, unsupported nodes or revisions, broken references, invalid
 cycles and constraints, and inconsistent derived views, even if hashes were recomputed.
 
-The current `format_revision` is `1`. Compatibility is not promised until the
+The current `format_revision` is `2`. Compatibility is not promised until the
 format is frozen; unsupported revisions require recompilation. Output is deterministic
-UTF-8 JSON with four-space indentation, LF, and one final newline. Semantic SHA-256
+compact UTF-8 JSON with LF and one final newline. Semantic SHA-256
 digests exclude source positions and compiler version. Integer and decimal payloads
 are strings to preserve precision. The full contract is documented in
 [JSON IR](https://github.com/gokurakujoudo/yambl/blob/feat/language-foundations/lang/syntex/ir.md).
 
-This stage provides compilation and independent static validation. Storage targets,
-Python type generation, retrieval APIs, and runtime evaluation remain unimplemented.
-The seven non-normal result constants retain their definitions only.
+SQLite generation and typed direct reads are available as described below.
+Hierarchy, ConfigGroup and general result propagation remain unimplemented.
 
 ## Checks
 
@@ -120,7 +119,7 @@ Decodes whose explicit entry numbers must be distinct positive single-bit masks.
 Decimal and `0b` binary notation are accepted. Each flags dictionary provides
 `None = 0` and `All` (all declared flags) automatically; declaring either name
 explicitly is an error. In an empty flags dictionary, All equals None.
-`AttrCats.Attr + AttrCats.Config` combines codes from the same flags dictionary by
+`AttrCats.Static + AttrCats.Config` combines codes from the same flags dictionary by
 bitwise union. `AttrCats.All - AttrCats.Snapshot` removes Snapshot. Repeating an
 addition or removal has no further effect. Both operators have the same precedence
 and evaluate left to right, after member access.
@@ -132,7 +131,7 @@ The checker validates these expressions without executing model instances.
 declarations, values, fields, type aliases, or decorator declarations. Each `@dimension(source: string, preference: Hierarchy)`
 defines one independent dimension and an optional alternative lookup parameter.
 The first parameter accepts string or code types; the second accepts Hierarchy.
-Dimensions apply only to ordinary, snapshot, and scd attributes. Parameter names,
+Dimensions apply to static (including ordinary attr), snapshot, and scd attributes. Parameter names,
 including temporal names, must be distinct within a field. Direct values take
 precedence over Hierarchy references. Hierarchy tries existing data in ascending
 ordering; priorities must be unique. Lookup execution is not implemented. `@temporal(as_of_date: date)` applies to `snapshot` or `scd`.
@@ -290,7 +289,7 @@ endings, publication failures, and the real lclang entrance. Documentation tests
 check rST syntax and parameter descriptions. CI requires zero missing statements
 and branches in every application module.
 
-Freezing the experimental IR contract and implementing target generation are future work.
+The IR contract remains experimental. SQLite generation and direct reads are available; other storage targets remain future work.
 Planned targets include database schemas, data interfaces, and Python libraries.
 The current business example lives in
 [fmc-data-model](https://github.com/gokurakujoudo/fmc-data-model).
@@ -361,3 +360,36 @@ and subtraction. Collection attributes follow the same target/category rules.
 parentheses. Custom metadata participates in override/overload signatures after
 argument binding and default substitution. Call order is ignored; repetition counts
 and pair names/types are retained. Relationship markers remain outside signatures.
+
+## SQLite generation and typed reads
+
+Compile a rooted repository, then generate into a new or empty directory:
+
+```console
+yambl compile -o path ../fmc-data-model -o output ./build/model.yambl-ir.json
+yambl schema -o output ./build/yambl-ir.schema.json
+yambl generate -o path ./build/model.yambl-ir.json -o output ./build/generated -o package fmc_model
+```
+
+The output contains `schema.sql`, a complete readable `schema.md`,
+`storage-manifest.json`, and the `fmc_model` package with bundled IR and `py.typed`.
+The SQL, reference and manifest share one physical model. Generation rejects
+unsupported business fields before writing. `--dryrun` validates and renders
+without creating output directories. Database migrations and production writes
+are not provided.
+
+IR revision 2 uses compact JSON. The packaged Draft 2020-12 schema validates
+structure offline; semantic validation also checks references and derived views.
+Recompile revision 1 artifacts. Ordinary `attr` now means `static attr`, and
+`AttrCats.Attr` has been removed in favor of `AttrCats.Static`.
+
+Readers open SQLite in read-only mode and hold a consistent read transaction.
+Call `read_*` explicitly, pass every dimension, and resolve `EntityRef` values
+with `reader.resolve`. Close the reader when finished. Closed handles return
+ERROR; detached values remain usable. Config defaults apply only to NO_ENTRY
+and carry `origin='model_default'`. There is no Hierarchy, ConfigGroup or price
+fallback execution.
+
+The language repository's `lang/syntex/storage.md` documents storage rules and
+tracks implemented and pending capabilities. The FMC repository includes an
+initializer and seed data for a disposable example database.

@@ -8,6 +8,7 @@ from types import UnionType
 from typing import Literal, cast, get_args, get_origin, get_type_hints
 
 from yambl_compiler.ir.model import Model, Record
+from yambl_compiler.ir.schema import validate_schema
 
 type JSON = None | str | int | bool | list[JSON] | dict[str, JSON]
 type IRValue = None | str | int | bool | Record | tuple[IRValue, ...]
@@ -107,11 +108,12 @@ def loads(text: str) -> Model:
     if (
         not isinstance(data, dict)
         or type(data.get('format_revision')) is not int
-        or data['format_revision'] != 1
+        or data['format_revision'] != 2
     ):
         raise ValueError(
             '$.format_revision: unsupported IR revision; recompile the model repository'
         )
+    validate_schema(data)
     return cast(Model, decode(data, Model))
 
 
@@ -119,9 +121,11 @@ def dumps(model: Model) -> str:
     """Serialize an artifact deterministically with exactly one trailing LF.
 
     :param model: Typed intermediate model.
-    :returns: Pretty-printed JSON text.
+    :returns: Compact JSON text.
     """
-    return json.dumps(encode(model), ensure_ascii=False, allow_nan=False, indent=4) + '\n'
+    return (
+        json.dumps(encode(model), ensure_ascii=False, allow_nan=False, separators=(',', ':')) + '\n'
+    )
 
 
 def semantic(value: JSON) -> JSON:

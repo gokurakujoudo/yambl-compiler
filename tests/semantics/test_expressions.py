@@ -46,7 +46,7 @@ entity Selection {
     attr shortcut: field_mapping<AttrCats.Static, Security>
     attr references: mapping<type<Entity>, Security>
     attr by_code: mapping<code<Currencies>, money>
-    attr by_field: mapping<attrs<AttrCats.Attr, Security>, string>
+    attr by_field: mapping<attrs<AttrCats.Static, Security>, string>
     attr id_map: mapping<snowflake_id, string>
     attr aliases: alias<self.mapping::value>
 }
@@ -69,7 +69,7 @@ INVALID = [
     ('entity A { attr a: string attr b: self.a.type }', 'field access requires an entity'),
     ('entity A { attr a: string attr b: A.a::value }', 'field value requires an instance origin'),
     (
-        'entity A { attr a: mapping<attrs<AttrCats.Attr, A> as Attr, Attr::value> }',
+        'entity A { attr a: mapping<attrs<AttrCats.Static, A> as Attr, Attr::value> }',
         'field value requires an instance origin',
     ),
     ('entity A { attr a: exact<true> }', 'exact requires override or overload'),
@@ -80,7 +80,7 @@ INVALID = [
     ('entity A { attr a: alias<string> }', 'alias requires an instance field value'),
     ('entity A { attr a: alias<1> }', 'alias requires an instance field value'),
     ('entity A { attr a: attrs<string, A> }', 'attrs requires an AttrCats code'),
-    ('entity A { attr a: attrs<AttrCats.Attr, string> }', 'attrs requires an entity type value'),
+    ('entity A { attr a: attrs<AttrCats.Static, string> }', 'attrs requires an entity type value'),
     ('entity A { attr a: attrs<AttrCats.absent, A> }', 'unknown Decodes code'),
     ('entity A {} entity B { attr a: A.absent::type }', 'unknown field: absent'),
     ('entity A { attr a: Entity[1] }', 'invalid parameters for Entity'),
@@ -108,7 +108,7 @@ class ExpressionTests(unittest.TestCase):
         self.assertEqual(resolved['c4'].dependency, 'self.kind::value')
         self.assertEqual(resolved['currency'].name, 'code')
         self.assertEqual(resolved['mapping'], resolved['shortcut'])
-        self.assertEqual([t.name for t in resolved['fields'].members], ['code'])
+        self.assertEqual([t.name for t in resolved['fields'].members], ['code', 'decimal'])
         self.assertEqual(resolved['bond_fields'].members[0].exact, 'USD')
         self.assertEqual(resolved['aliases'].kind, 'collection')
         self.assertEqual(resolver.diagnostics, [])
@@ -172,7 +172,7 @@ class ExpressionTests(unittest.TestCase):
         entity Root {} entity Left inherits Root { @overload attr x: exact<First.X> }
         entity Right inherits Root { @overload attr x: code<Second> }
         entity Other { attr x: integer }
-        entity Selection { attr a: attrs<AttrCats.Attr, Root> attr b: attrs<AttrCats.Attr, Entity> }'''
+        entity Selection { attr a: attrs<AttrCats.Static, Root> attr b: attrs<AttrCats.Static, Entity> }'''
         self.assertEqual(check([document(source)]), [])
         resolver, fields, index = self.resolver(source)
         self.assertEqual(index.contracts[(('', 'Root'), 'x')].name, 'string')

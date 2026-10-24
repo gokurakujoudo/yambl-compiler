@@ -40,7 +40,7 @@ def field_signature(
     ]
     return repr(
         (
-            str(tokens(body)[0]),
+            str(tokens(body)[0]).replace('attr', 'static'),
             (
                 type_signature(children(body, 'type_expr')[0], unit, self_fields)
                 if include_type

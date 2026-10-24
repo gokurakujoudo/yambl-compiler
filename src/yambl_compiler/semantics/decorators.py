@@ -266,7 +266,7 @@ def check_target(
     if errors:
         return
     body = children(node, 'field_body')
-    mode = str(tokens(body[0])[0]) if body else ''
+    mode = str(tokens(body[0])[0]).replace('attr', 'static') if body else ''
     kind = {
         'entity': 'Entity',
         'value': 'Value',

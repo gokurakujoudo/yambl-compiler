@@ -15,7 +15,7 @@ class TypeTests(unittest.TestCase):
                     attr conditions: field_mapping<AttrCats.Static, self.target_kind::value>
                     {mode} target_kind: type<Security>
                 }}
-                entity Narrow inherits Selection {{ attr copied: field_mapping<AttrCats.Attr, self.target_kind::value> }}
+                entity Narrow inherits Selection {{ attr copied: field_mapping<AttrCats.Static, self.target_kind::value> }}
                 extend Selection {{ attr extra: field_mapping<AttrCats.Config, self.later::value> attr later: type<Entity> }}'''
             with self.subTest(mode=mode):
                 self.assertEqual(check([document(source)]), [])
@@ -24,7 +24,7 @@ class TypeTests(unittest.TestCase):
             attr group: ConfigGroup
             attr types: values<type<Entity>>
             attr by_name: mapping<string, type<ConfigGroup>>
-            attr a: field_mapping<AttrCats.Attr, Decodes>
+            attr a: field_mapping<AttrCats.Static, Decodes>
             attr b: field_mapping<AttrCats.Snapshot, A>
             attr c: field_mapping<AttrCats.Scd, A>
         }''')]),

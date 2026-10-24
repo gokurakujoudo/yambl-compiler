@@ -247,7 +247,7 @@ class Field(Record):
     name: str
     identity: str
     implementation: str
-    category: Literal['id', 'attr', 'static', 'config', 'snapshot', 'scd']
+    category: Literal['id', 'static', 'config', 'snapshot', 'scd']
     expression: Expression
     expanded: Expression
     type: Type

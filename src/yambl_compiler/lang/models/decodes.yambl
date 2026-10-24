@@ -123,7 +123,7 @@ decodes Permissions {
 不允许组合不同字典的 code，也不允许对普通字典 code 使用 `+` 或 `-`。
 
 组合可用于接受该 code 的泛型参数和 override/overload 的 exact 常量约束。
-`AttrCats` 的类别筛选使用同一规则，例如 `AttrCats.Attr + AttrCats.Config`；
+`AttrCats` 的类别筛选使用同一规则，例如 `AttrCats.Static + AttrCats.Config`；
 `AttrCats.None` 不选择任何字段，`AttrCats.All` 选择全部类别。格式化保留二进制拼写，
 在 `+`、`-` 两侧加空格。
 当前工具检查这些表达式及约束，尚不执行实例求值或保存组合值。

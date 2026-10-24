@@ -193,7 +193,7 @@ class Lowering:
         if resolved.name == 'attrs':
             category, target_type = resolved.args
             modes = (
-                ('attr', 'static', 'config', 'snapshot', 'scd')
+                ('static', 'config', 'snapshot', 'scd')
                 if category.exact is None
                 else tuple(c.lower() for c in category.exact.split('+'))
             )
@@ -452,7 +452,7 @@ class Lowering:
             resolved = field_resolver.resolve(syntax)
             self.resolved_fields[qualified(key) + '.' + name] = resolved
             defaults = children(body, 'default_value')
-            mode = str(tokens(body)[0])
+            mode = str(tokens(body)[0]).replace('attr', 'static')
             if node.data == 'value':
                 mode = 'static'
             fields.append(
@@ -586,7 +586,7 @@ class Lowering:
         )
         return seal(
             Model(
-                1,
+                2,
                 self.version,
                 self.prefix,
                 primitives,
@@ -615,5 +615,5 @@ type ExpressionKind = Literal[
     'primitive', 'generic', 'reference', 'parameter', 'self', 'literal', 'external'
 ]
 type ArgumentKind = Literal['positional', 'keyword', 'pair']
-type FieldCategory = Literal['id', 'attr', 'static', 'config', 'snapshot', 'scd']
+type FieldCategory = Literal['id', 'static', 'config', 'snapshot', 'scd']
 type DefinitionKind = Literal['entity', 'value', 'type_alias', 'decorator', 'decodes']

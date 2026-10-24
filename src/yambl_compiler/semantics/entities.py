@@ -77,8 +77,8 @@ class EntityIndex:
             for name, site in fields.items():
                 syntax = children(children(site.declaration, 'field_body')[0], 'type_expr')[0]
                 resolved = Resolver(site.unit, [], self.field_types(target), True).resolve(syntax)
-                if str(
-                    tokens(children(site.declaration, 'field_body')[0])[0]
+                if str(tokens(children(site.declaration, 'field_body')[0])[0]).replace(
+                    'attr', 'static'
                 ) == mode and resolved.kind not in ('collection', 'unknown'):
                     implementations = result.setdefault(name, [])
                     if site not in implementations:

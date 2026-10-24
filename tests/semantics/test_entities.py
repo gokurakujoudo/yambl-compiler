@@ -39,7 +39,7 @@ class EntityTests(unittest.TestCase):
                 'overload requires marked branches with identical signatures: x',
             ),
             (
-                'entity A {} entity B inherits A { @overload static attr x: string } entity C inherits A { @overload attr x: string }',
+                'entity A {} entity B inherits A { @overload config attr x: string } entity C inherits A { @overload attr x: string }',
                 'overload requires marked branches with identical signatures: x',
             ),
             (
@@ -92,7 +92,7 @@ class EntityTests(unittest.TestCase):
         )
         self.assertEqual(set(index.candidates(('root', 'Security'), 'static')), {'currency'})
         self.assertEqual(
-            set(index.candidates(('builtins', 'ConfigGroup'), 'attr')),
+            set(index.candidates(('builtins', 'ConfigGroup'), 'static')),
             {'entity_type'},
         )
         self.assertEqual(index.field_types(('absent', 'Absent')), {})

@@ -503,7 +503,7 @@ class Resolver:
                 continue
             for field_name, (scope, field) in fields.items():
                 body = children(field, 'field_body')[0]
-                mode = str(tokens(body)[0])
+                mode = str(tokens(body)[0]).replace('attr', 'static')
                 if mode == 'id' or (
                     category.type.exact is not None
                     and mode.capitalize() not in category.type.exact.split('+')

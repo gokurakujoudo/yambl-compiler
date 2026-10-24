@@ -28,7 +28,7 @@ VALID = [
     "entity Security { id key: string['[A-Z]+'] } @targets(DecoratorTargets.All) decorator @tag(target: Security) @tag('ABC') entity A {}",
     "entity Security { id key: snowflake_id } entity Bond inherits Security {} @targets(DecoratorTargets.All) decorator @tag(target: Bond = '123') @tag entity A {}",
     "decodes Codes { - 1 One: 'One' } @targets(DecoratorTargets.All) decorator @tag(dict: Decodes, code: code<Codes>, target: type<Entity>) @tag(Codes, Codes.One, A) entity A {}",
-    "@targets(DecoratorTargets.All) decorator @tag(flags: code<AttrCats> = AttrCats.All - AttrCats.Attr) @tag(AttrCats.Config + AttrCats.Static) entity A {}",
+    "@targets(DecoratorTargets.All) decorator @tag(flags: code<AttrCats> = AttrCats.All - AttrCats.Static) @tag(AttrCats.Config + AttrCats.Static) entity A {}",
     "@targets(DecoratorTargets.All) decorator @tag(text: string = 'x') entity A { @tag attr x: string } entity B inherits A { @override @tag(text='x') attr x: string }",
     "@allow_multiple @targets(DecoratorTargets.All) decorator @tag(text: string) entity A {} entity B inherits A { @overload @tag('a') @tag('b') attr x: string } entity C inherits A { @tag('b') @overload @tag('a') attr x: string }",
     "@targets(DecoratorTargets.All) decorator @tag() @tag decodes Codes {} @tag value item { @tag attr x: string } @tag type label = string entity A { @tag id key: string }",
@@ -256,7 +256,7 @@ INVALID.extend(
             'decorator tag does not allow this target',
         ),
         (
-            '@targets(DecoratorTargets.ValueAttr, categories=AttrCats.Attr) decorator @tag() value item { @tag attr x: string }',
+            '@targets(DecoratorTargets.ValueAttr, categories=AttrCats.Config) decorator @tag() value item { @tag attr x: string }',
             'decorator tag does not allow this target',
         ),
         (

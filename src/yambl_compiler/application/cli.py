@@ -26,13 +26,15 @@ class Arguments:
     :param path: Source file or directory.
     :param operation: Selected CLI command.
     :param verify: Whether formatting only checks for drift.
-    :param output: Required JSON destination for compile.
+    :param output: Required output destination.
+    :param package: Generated Python package name.
     """
 
     path: str
-    operation: Literal['check', 'format', 'compile', 'check-ir']
+    operation: Literal['check', 'format', 'compile', 'check-ir', 'schema', 'generate']
     verify: bool = False
     output: str = ''
+    package: str = ''
 
 
 async def execute(
@@ -45,7 +47,9 @@ async def execute(
     :param status_mgr: Owning task status manager.
     :returns: Operation report; also prints diagnostics and updates task status.
     """
-    if args.operation == 'compile' or args.operation == 'check-ir':
+    if args.operation == 'schema' or args.operation == 'generate':
+        report = run_generation(args, context.is_dryrun)
+    elif args.operation == 'compile' or args.operation == 'check-ir':
         report = run_ir(Path(args.path), args.operation, Path(args.output), context.is_dryrun)
     else:
         report = run(Path(args.path), args.operation, args.verify or context.is_dryrun)
@@ -88,6 +92,37 @@ def run_ir(path: Path, operation: str, output: Path, dry_run: bool) -> Report:
         return Report(False, [str(error)])
 
 
+def run_generation(args: Arguments, dry_run: bool) -> Report:
+    """Export the schema or publish a generated backend.
+
+    :param args: CLI arguments.
+    :param dry_run: Whether publication is disabled.
+    :returns: Success or a diagnostic report.
+    """
+    import json
+
+    from yambl_compiler.ir.application import load_ir
+    from yambl_compiler.ir.schema import schema
+    from yambl_compiler.storage.generation import generate
+
+    try:
+        if not args.output:
+            raise ValueError('output is required')
+        output = Path(args.output)
+        if args.operation == 'schema':
+            if output.suffix.lower() != '.json':
+                raise ValueError('schema output must end in .json')
+            text = json.dumps(schema(), ensure_ascii=False, indent=4) + '\n'
+            if not dry_run:
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_text(text, encoding='utf-8', newline='\n')
+        else:
+            generate(load_ir(Path(args.path)), output, args.package, dry_run)
+        return Report(True, [f'{"validated" if dry_run else "generated"}: {output}'])
+    except (OSError, UnicodeError, ValueError, RecursionError) as error:
+        return Report(False, [str(error)])
+
+
 path_variable = define_variable[str](
     'path', 'YAMBL file or directory; default: current directory.', default='.'
 )
@@ -97,7 +132,7 @@ verify_variable = define_variable[bool](
     default=False,
 )
 output_variable = define_variable[str](
-    'output', 'Required compile destination ending in .json; replaced only after validation.'
+    'output', 'Required output: .json for compile/schema, a new directory for generate.'
 )
 
 check_command = define_workflow(
@@ -142,6 +177,32 @@ check_ir_task = define_task(
 check_ir_command = define_workflow('Validate a JSON model', check_ir_task).to_cli(
     'check_ir', 'check-ir: validate one JSON IR file without consulting its source repository.'
 )
+
+
+package_variable = define_variable[str]('package', 'Required snake_case package name for generate.')
+schema_command = define_workflow(
+    'Export the JSON IR schema',
+    define_task(
+        'export_schema',
+        'Write the offline schema',
+        task_action=execute,
+        args_mapping=Arguments(path='.', operation='schema', output=output_variable.quote),
+    ),
+).to_cli('schema', 'Export the current JSON Schema; --dryrun does not write.')
+generate_command = define_workflow(
+    'Generate SQLite and Python outputs',
+    define_task(
+        'generate_backend',
+        'Validate and generate a new directory',
+        task_action=execute,
+        args_mapping=Arguments(
+            path=path_variable.quote,
+            operation='generate',
+            output=output_variable.quote,
+            package=package_variable.quote,
+        ),
+    ),
+).to_cli('generate', 'Generate SQLite DDL, schema reference and typed Python readers from IR.')
 
 
 def main(argv: list[str] | None = None) -> int:

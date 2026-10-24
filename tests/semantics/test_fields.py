@@ -36,7 +36,7 @@ class FieldTests(unittest.TestCase):
                 'unexpected argument for decorator: dimension',
             ),
             (
-                '@dimension(source: string) static attr x: string',
+                '@dimension(source: string) config attr x: string',
                 'decorator dimension does not allow this target',
             ),
             (

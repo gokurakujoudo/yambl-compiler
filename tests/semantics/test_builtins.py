@@ -41,7 +41,7 @@ class BuiltinTests(FilesystemCase):
                 f'type label = {name}',
                 f'@title({name}) entity A {{}}',
                 f'entity A {{ attr x: exact<{name}> }}',
-                f'entity A {{ attr x: {name} + AttrCats.Attr }}',
+                f'entity A {{ attr x: {name} + AttrCats.Static }}',
                 f'@targets(DecoratorTargets.All) decorator @note(text: string = {name})',
             ]:
                 with self.subTest(source=source):

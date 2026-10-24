@@ -188,7 +188,7 @@ decodes Codes { - 1 First: 'First' }
 
     def test_validation_api_handles_wrong_dataclass_types_and_revision(self):
         self.assertIn('expected str', '\n'.join(validate_ir(replace(self.model, prefix=7))))
-        self.assertIn('revision', '\n'.join(validate_ir(replace(self.model, format_revision=2))))
+        self.assertIn('revision', '\n'.join(validate_ir(replace(self.model, format_revision=99))))
         self.assertIn(
             'digest mismatch', '\n'.join(validate_ir(replace(self.model, builtins_digest='x')))
         )

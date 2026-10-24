@@ -37,7 +37,7 @@ entity Selection {
     attr empty: attrs<AttrCats.None, Base>
     attr identity: attrs<AttrCats.None + AttrCats.Config + AttrCats.Config, Base>
     attr all: attrs<AttrCats.All, Base>
-    attr removed: attrs<AttrCats.All-AttrCats.Attr-AttrCats.Snapshot-AttrCats.Scd-AttrCats.Scd, Base>
+    attr removed: attrs<AttrCats.All-AttrCats.Static-AttrCats.Snapshot-AttrCats.Scd-AttrCats.Scd, Base>
     attr cleared: attrs<AttrCats.All - AttrCats.All, Base>
     attr absent: attrs<AttrCats.None - AttrCats.Config - AttrCats.Config, Base>
     attr restored: attrs<AttrCats.All - AttrCats.Config + AttrCats.Config, Base>
@@ -127,7 +127,7 @@ INVALID = [
 
 SYNTAX_ERRORS = [
     "@flags decodes Codes { - 0b12 A: 'x' }",
-    'type a = AttrCats.Attr +',
+    'type a = AttrCats.Static +',
     'entity A { config attr x: integer = 0b1 }',
     'type a = exact<0b1>',
 ]
@@ -144,12 +144,14 @@ class DecodesTests(unittest.TestCase):
         resolver = Resolver(unit, [], fields)
         resolved = {name: resolver.resolve(syntax) for name, (_, syntax) in fields.items()}
         self.assertEqual(
-            [t.name for t in resolved['keys'].members], ['integer', 'bool', 'decimal', 'date']
+            [t.name for t in resolved['keys'].members],
+            ['string', 'integer', 'bool', 'code', 'decimal', 'date'],
         )
         self.assertEqual(resolved['empty'].members, ())
         self.assertEqual([t.name for t in resolved['identity'].members], ['bool', 'decimal'])
         self.assertEqual(
-            [t.name for t in resolved['union'].args[0].members], ['integer', 'bool', 'decimal']
+            [t.name for t in resolved['union'].args[0].members],
+            ['string', 'integer', 'bool', 'code', 'decimal'],
         )
         self.assertIsNone(resolved['symbolic'].args[0].exact)
         self.assertIsNone(resolved['symbolic_difference'].args[0].exact)
@@ -157,7 +159,8 @@ class DecodesTests(unittest.TestCase):
         self.assertEqual(resolved['absent'].members, ())
         self.assertEqual(resolved['all'], resolved['restored'])
         self.assertEqual(
-            [t.name for t in resolved['removed'].members], ['integer', 'bool', 'decimal']
+            [t.name for t in resolved['removed'].members],
+            ['bool', 'decimal'],
         )
         self.assertEqual(resolver.diagnostics, [])
 
@@ -187,8 +190,8 @@ class DecodesTests(unittest.TestCase):
         self.assertEqual(check([document(s, str(i)) for i, s in enumerate(sources)]), [])
 
     def test_format_keeps_flags_and_binary_spelling(self):
-        source = "@flags #bits\ndecodes Codes{- 0b0001 Read:'Read'}\ntype fields=attrs<AttrCats.Attr+AttrCats.None,Entity>"
-        expected = "@flags  # bits\ndecodes Codes {\n    - 0b0001 Read: 'Read'\n}\ntype fields = attrs<AttrCats.Attr + AttrCats.None, Entity>\n"
+        source = "@flags #bits\ndecodes Codes{- 0b0001 Read:'Read'}\ntype fields=attrs<AttrCats.Static+AttrCats.None,Entity>"
+        expected = "@flags  # bits\ndecodes Codes {\n    - 0b0001 Read: 'Read'\n}\ntype fields = attrs<AttrCats.Static + AttrCats.None, Entity>\n"
         formatted = format_document(document(source))
         self.assertEqual(formatted, expected)
         self.assertEqual(format_document(document(formatted)), formatted)

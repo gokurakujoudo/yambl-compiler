@@ -1,11 +1,10 @@
 """Exercise strict JSON decoding and content identity."""
 
-import json
 from dataclasses import replace
 
 from tests.support import FilesystemCase
 from yambl_compiler.ir.application import compile_repository
-from yambl_compiler.ir.codec import dumps, encode, loads, seal
+from yambl_compiler.ir.codec import decode, dumps, encode, loads, seal
 
 
 class CodecTests(FilesystemCase):
@@ -54,11 +53,11 @@ class CodecTests(FilesystemCase):
             data = encode(self.model)
             mutate(data)
             with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
-                loads(json.dumps(data))
+                decode(data, type(self.model))
 
     def test_numbers_and_output_bytes_preserve_precision(self):
         text = dumps(self.model)
-        self.assertIn('"text": "12345678901234567890.125"', text)
+        self.assertIn('"text":"12345678901234567890.125"', text)
         self.assertEqual(loads(text), self.model)
         self.assertTrue(text.endswith('\n'))
         self.assertFalse(text.endswith('\n\n'))

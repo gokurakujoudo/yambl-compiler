@@ -218,7 +218,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
     """
     try:
         decode(encode(model), Model)
-        if model.format_revision != 1:
+        if model.format_revision != 2:
             return ('$.format_revision: unsupported IR revision; recompile the model repository',)
         issues = structural(model)
         if issues:
