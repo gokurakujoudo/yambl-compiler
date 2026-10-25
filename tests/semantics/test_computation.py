@@ -10,9 +10,57 @@ from yambl_compiler.semantics.validation import analyze
 
 
 class ComputationTests(unittest.TestCase):
+    def test_declared_inputs_defaults_and_descriptions(self):
+        self.assertTrue(
+            any(
+                "?? requires" in d
+                for d in self.errors("entity E { computed attr x: integer { return 1 ?? 2 } }")
+            )
+        )
+        source = """entity E {
+            snapshot attr value: integer
+            @extra_input_params(day: date = '2026-01-01', 'A date')
+            @extra_input_params(count: integer = 2, description='An integer')
+            @extra_input_params(rate: decimal = 1.2)
+            @extra_input_params(enabled: bool = true)
+            @extra_input_params(label: string = 'x')
+            computed attr result: integer {
+                return self.value::at(as_of_date=input.day ?? input.unused_date) + input.count
+            }
+        }"""
+        result = self.analyze(source)
+        self.assertEqual([d.message for d in result.diagnostics if d.severity == 'error'], [])
+        inputs = {p.name: p for p in result.calculations[(('', 'E'), 'result')].inputs}
+        self.assertNotIn('unused_date', inputs)
+        self.assertEqual(inputs['day'].default.value, '2026-01-01')
+        self.assertEqual(inputs['rate'].default.kind, 'decimal')
+        self.assertFalse(inputs['count'].required)
+        for metadata, message in [
+            (
+                '@extra_input_params(day: date) @extra_input_params(day: date)',
+                'duplicate extra input',
+            ),
+            ("@extra_input_params(day: date = '2026-02-30')", 'valid YYYY-MM-DD'),
+            ("@extra_input_params(day: date = '20260101')", 'valid YYYY-MM-DD'),
+            ('@extra_input_params(day: date = EMPTY)', 'incompatible decorator'),
+            ('@extra_input_params(day: collection<E>)', 'incompatible decorator pair'),
+            ('@extra_input_params(day: dimension_ref)', 'incompatible decorator pair'),
+            ('@extra_input_params()', 'missing decorator argument'),
+            ('@extra_input_params(best_effort: bool)', 'reserved calculation parameter'),
+        ]:
+            with self.subTest(metadata=metadata):
+                self.assertTrue(
+                    any(
+                        message in d
+                        for d in self.errors(
+                            f'entity E {{ {metadata} computed attr x: integer {{ return 0 }} }}'
+                        )
+                    )
+                )
+
     def test_default_local_expansion_and_shared_dependency_graph(self):
         result = self.analyze(
-            "entity E { static attr day: date snapshot attr x: integer computed attr y: integer { let d = self.day return self.x::at(as_of_date=input.day.default(d)) } }"
+            "entity E { static attr day: date snapshot attr x: integer computed attr y: integer { let d = self.day return self.x::at(as_of_date=input.day ?? d) } }"
         )
         self.assertEqual([d.message for d in result.diagnostics if d.severity == "error"], [])
         calculation = result.calculations[(("", "E"), "y")]
@@ -77,7 +125,7 @@ class ComputationTests(unittest.TestCase):
                 @temporal(as_of_date: date) snapshot attr holdings: collection<Holding>
                 computed attr amount: decimal {
                     let holdings = self.holdings::at()
-                    return holdings.sum_by(h -> h.amount::value(as_of_date=input.price_date.default(input.as_of_date)))
+                    return holdings.sum_by(h -> h.amount::value(as_of_date=input.price_date ?? input.as_of_date))
                 }
             }
         """)
@@ -111,7 +159,7 @@ class ComputationTests(unittest.TestCase):
                 "dependency cycle",
             ),
             (
-                "entity E { @temporal(day: date) snapshot attr x: integer computed attr a: integer { return self.x::at(day=input.day.default(input.day)) } }",
+                "entity E { @temporal(day: date) snapshot attr x: integer computed attr a: integer { return self.x::at(day=input.day ?? input.day) } }",
                 "default cycle",
             ),
             (
@@ -220,7 +268,7 @@ class ComputationTests(unittest.TestCase):
             ),
             (
                 "entity E { snapshot attr x: integer computed attr y: integer { return self.x::at(as_of_date=input.day.default()) } }",
-                "one positional",
+                "unknown calculation method",
             ),
             (
                 "entity E { snapshot attr x: integer computed attr y: integer { return self.x::at(as_of_date=1) } }",
@@ -282,7 +330,7 @@ class ComputationTests(unittest.TestCase):
         source = """entity E {
             static attr date_value: date
             snapshot attr x: integer
-            computed attr child: integer { return self.x::at(as_of_date=input.other.default(input.day)) }
+            computed attr child: integer { return self.x::at(as_of_date=input.other ?? input.day) }
             computed attr parent: integer { return self.child::value(day=self.date_value, other=input.valuation_date) }
         }"""
         result = self.analyze(source)

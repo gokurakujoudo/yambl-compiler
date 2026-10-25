@@ -84,6 +84,9 @@ class Emitter:
                 return f"engine.partial_member({frame}, {emit(receiver)}, {node.value!r})"
             raise ValueError(f"unresolved field operation: {node.value}")
         if node.kind in ("unary", "binary"):
+            if node.value == "??":
+                branch = self.fresh()
+                return f"engine.default({frame}, {node.operands[0].value!r}, lambda {branch}: {self.expression(node.operands[1], branch, locals_)})"
             if node.value in ("and", "or"):
                 branch = self.fresh()
                 right = self.expression(node.operands[1], branch, locals_)
@@ -98,9 +101,6 @@ class Emitter:
         if node.kind in ("call", "recover"):
             selected = node.operands[0]
             receiver, method = selected.operands[0], selected.value
-            if method == "default":
-                branch = self.fresh()
-                return f"engine.default({frame}, {receiver.value!r}, lambda {branch}: {self.expression(node.arguments[0].expression, branch, locals_)})"
             if method == "recover":
                 branches: list[str] = []
                 for case in node.cases:
@@ -185,6 +185,7 @@ def programs(model: Model) -> str:
         emitter: Emitter,
         expression: Expression,
         bindings: tuple[tuple[str, Expression], ...] = (),
+        literal_type: str = '',
     ) -> None:
         """Append one generated function.
 
@@ -192,6 +193,7 @@ def programs(model: Model) -> str:
         :param emitter: Resolved expression context.
         :param expression: Return expression.
         :param bindings: Ordered immutable locals.
+        :param literal_type: Contextual type for a declared scalar default.
         :returns: None.
         """
         name = "program_" + str(len(registry))
@@ -207,7 +209,12 @@ def programs(model: Model) -> str:
             local = emitter.fresh()
             lines.append(f'    {local} = {emitter.expression(value, "frame", locals_)}')
             locals_[source_name] = local
-        lines.extend(["    return " + emitter.expression(expression, "frame", locals_), "", ""])
+        if literal_type == 'date' and expression.kind == 'string':
+            lines.append('    from datetime import date')
+            emitted = f"engine.literal(frame, date.fromisoformat({expression.value!r}))"
+        else:
+            emitted = emitter.expression(expression, "frame", locals_)
+        lines.extend(["    return " + emitted, "", ""])
 
     for definition in model.definitions:
         for field in definition.fields:
@@ -246,6 +253,9 @@ def programs(model: Model) -> str:
                             "default:" + field.implementation + ":" + name,
                             emitter,
                             pending.pop(name),
+                            literal_type=next(
+                                p.type.name for p in calculation.inputs if p.name == name
+                            ),
                         )
                 function(
                     field.implementation,

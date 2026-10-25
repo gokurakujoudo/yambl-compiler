@@ -139,6 +139,17 @@ def python_package(layout: Layout, package: str) -> str:
             ":param best_effort: Keep successful contributions with PARTIAL when non-error rows fail; defaults to false.",
         ]
         for p in field.calculation.inputs:
+            descriptions = [
+                item.type.exact.text
+                for call in field.decorators
+                if call.target == 'builtins.extra_input_params'
+                and any(b.name == 'parameter' and b.key == p.name for b in call.bound)
+                for item in call.bound
+                if item.name == 'description' and item.type.exact is not None
+            ]
+            for description in descriptions:
+                text.append('')
+                text.extend(literal_section('Input ' + p.name, description))
             sources = ", ".join(sorted({f"{s.path}:{s.line}:{s.column}" for s in p.sites}))
             default = (
                 (" Defaults to input." + p.default.value + " when omitted.")

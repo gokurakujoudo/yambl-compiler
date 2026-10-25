@@ -187,6 +187,13 @@ class Restoring:
                         ]
                     )
                 values.append(self.expression(arg.expression))
+                if arg.default is not None:
+                    values.append(
+                        Tree(
+                            'decorator_default',
+                            [token('=', 'EQUAL', arg.default.source), self.expression(arg.default)],
+                        )
+                    )
                 parts.append(Tree(arg.kind + '_argument', values))
             result.append(Tree('annotation', parts))
         return result

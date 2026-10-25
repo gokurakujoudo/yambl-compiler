@@ -41,7 +41,7 @@ def schema() -> Schema:
             hints = cast(dict[str, object], get_type_hints(cls))
             properties = {name: annotation(value) for name, value in hints.items()}
             if cls is Model:
-                properties['format_revision'] = {'type': 'integer', 'const': 3}
+                properties['format_revision'] = {'type': 'integer', 'const': 4}
             definitions[cls.__name__] = {
                 'type': 'object',
                 'properties': properties,

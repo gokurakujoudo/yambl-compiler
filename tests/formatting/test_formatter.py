@@ -42,6 +42,30 @@ else 0 } }"""
                 self.assertEqual(formatted, 'entity A {\n}\n')
                 self.assertEqual(format_document(document(formatted)), formatted)
 
+    def test_calculation_lambda_line_breaks_and_chain_indentation(self):
+        expected = """entity E {
+    computed attr n: integer {
+        return self.entries.map(h ->
+            h.n
+            .recover(case EMPTY -> 0)
+        ).sum_by(v ->
+            v
+        )
+    }
+}
+"""
+        source = '\n'.join(line.lstrip() for line in expected.splitlines())
+        self.assertEqual(format_document(document(source)), expected)
+        self.assertEqual(format_document(document(expected)), expected)
+        commented = expected.replace(
+            '            h.n', '            # Contribution\n            h.n'
+        )
+        self.assertEqual(format_document(document(commented)), commented)
+        dimension = "entity E { dimension d { value source: string fallback_days = self.days # policy\n+ 1 } }"
+        formatted = format_document(document(dimension))
+        self.assertIn('fallback_days = self.days  # policy\n        + 1', formatted)
+        self.assertEqual(format_document(document(formatted)), formatted)
+
     def test_comments_inside_multiline_syntax(self):
         source = (
             "entity #name\nA { attr x: mapping< #key\nstring, #value\ndecimal[18, 4]> #field\n}"

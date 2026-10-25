@@ -108,7 +108,7 @@ INVALID = [
         'missing decorator argument: a',
     ),
     (
-        "@targets(DecoratorTargets.All) decorator @tag(a: string) @tag(a='x', 'y') entity A {}",
+        "@targets(DecoratorTargets.All) decorator @tag(a: string) @tag(a='x', 2) entity A {}",
         'positional arguments must precede named arguments',
     ),
     (
@@ -120,7 +120,7 @@ INVALID = [
         'unexpected argument for decorator',
     ),
     (
-        "@targets(DecoratorTargets.All) decorator @tag() @tag('x') entity A {}",
+        "@targets(DecoratorTargets.All) decorator @tag() @tag(2) entity A {}",
         'unexpected argument for decorator',
     ),
     (
@@ -322,6 +322,45 @@ INVALID.extend(
 
 
 class DecoratorTests(unittest.TestCase):
+    def test_implicit_description_and_input_constraints(self):
+        valid = [
+            "@title('Title', 'Notes') entity E {}",
+            "@title(text='Title', 'Notes') entity E {}",
+            "@title('Title', description='Notes') entity E {}",
+            "@flags('Notes') decodes Codes {}",
+            "entity E { dimension d { value source: string } @dimension(d, 'Notes') snapshot attr x: integer }",
+            "entity E { @temporal(day: date, 'Notes') snapshot attr x: integer }",
+            "@targets(DecoratorTargets.All) decorator @tag(*x: input_type) @tag(x: date) entity E {}",
+        ]
+        for source in valid:
+            self.assertEqual(
+                [d.message for d in check([document(source)]) if d.severity == 'error'], [], source
+            )
+        invalid = [
+            (
+                "@title('Title', description='a', description='b') entity E {}",
+                'duplicate decorator description',
+            ),
+            ("@title(description='Notes', text='Title') entity E {}", 'final decorator argument'),
+            ("@title('Title', description=2) entity E {}", 'incompatible decorator argument'),
+            (
+                "@targets(DecoratorTargets.All) decorator @tag(description: string)",
+                'reserved decorator metadata',
+            ),
+            (
+                "@targets(DecoratorTargets.All) decorator @tag(x: input_type)",
+                'only a decorator pair constraint',
+            ),
+            ("entity E { static attr x: input_type }", 'only a decorator pair constraint'),
+            ("type bad = input_type", 'only a decorator pair constraint'),
+            (
+                "entity E { @temporal(day: date = '2026-01-01') snapshot attr x: integer }",
+                'pair defaults are only',
+            ),
+        ]
+        for source, message in invalid:
+            self.assertTrue(any(message in d.message for d in check([document(source)])), source)
+
     def test_storage_decorators(self):
         for source in STORAGE_VALID:
             with self.subTest(source=source):

@@ -25,6 +25,7 @@ VALUES = {
     'datetime',
     'snowflake_id',
     "dimension_ref",
+    "input_type",
 }
 GENERICS = {
     'collection',

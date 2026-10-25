@@ -24,7 +24,7 @@ class CalculationSyntaxTests(unittest.TestCase):
 
     def test_lambda_binding_and_recovery(self):
         result = self.calculation(
-            "return self.holdings::at().map(h -> h.price::best_available(as_of_date=input.price_date.default(input.as_of_date))).recover(case EMPTY -> 0, case NO_ENTRY, NO_DATA -> -1, case PARTIAL as p -> p.value)"
+            "return self.holdings::at().map(h -> h.price::best_available(as_of_date=input.price_date ?? input.as_of_date)).recover(case EMPTY -> 0, case NO_ENTRY, NO_DATA -> -1, case PARTIAL as p -> p.value)"
         )
         self.assertEqual(result.result.kind, "recover")
         self.assertEqual(result.result.cases[1].statuses, ("NO_ENTRY", "NO_DATA"))
@@ -33,7 +33,7 @@ class CalculationSyntaxTests(unittest.TestCase):
         self.assertEqual(receiver.arguments[0].expression.kind, "lambda")
         nested = receiver.arguments[0].expression.operands[0]
         self.assertEqual(nested.arguments[0].name, "as_of_date")
-        self.assertEqual(nested.arguments[0].expression.kind, "call")
+        self.assertEqual(nested.arguments[0].expression.kind, "binary")
 
     def test_condition_and_literals(self):
         result = self.calculation(

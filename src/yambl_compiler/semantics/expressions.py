@@ -578,6 +578,11 @@ def check_aliases(units: list[Unit], diagnostics: list[Diagnostic]) -> None:
         for declaration in children(unit.document.tree, 'type_alias'):
             bindings: dict[str, Term] = {}
             resolver = Resolver(unit, diagnostics, {}, True, bindings)
+            for token in tokens(declaration):
+                if str(token) == 'input_type':
+                    resolver.issue(
+                        Tree('type_expr', [token]), 'input_type is only a decorator pair constraint'
+                    )
             groups = children(header(declaration), 'type_parameters')
             for formal in children(groups[0], 'type_parameter') if groups else []:
                 name = str(tokens(formal)[0])

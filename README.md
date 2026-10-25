@@ -71,7 +71,7 @@ it does not read YAMBL sources or installed language resources. Validation rejec
 duplicate JSON keys, unsupported nodes or revisions, broken references, invalid
 cycles and constraints, and inconsistent derived views, even if hashes were recomputed.
 
-The current `format_revision` is `3`. Compatibility is not promised until the
+The current `format_revision` is `4`. Compatibility is not promised until the
 format is frozen; unsupported revisions require recompilation. Output is deterministic
 compact UTF-8 JSON with LF and one final newline. Semantic SHA-256
 digests exclude source positions and compiler version. Integer and decimal payloads
@@ -404,7 +404,7 @@ the effective-config evaluator checks mapping types against the actual field imp
 Generic public read methods for these mapping fields remain unavailable; the manifest
 marks them with `readable: false`.
 
-IR revision 3 uses compact JSON. The packaged Draft 2020-12 schema validates
+IR revision 4 uses compact JSON. The packaged Draft 2020-12 schema validates
 structure offline; semantic validation also checks references and derived views.
 Recompile revision 1 and 2 artifacts. Ordinary `attr` now means `static attr`, and
 `AttrCats.Attr` has been removed in favor of `AttrCats.Static`.
@@ -475,7 +475,7 @@ still refuses nonempty destinations and does not provide a production writer.
 
 `computed attr name: Type { let local = expression return expression }` declares a
 read-only calculation. Its inferred inputs, defaults and dependency identities are
-stored in IR revision 3. Runtime contract 2 and storage layout 5 require regenerated
+stored in IR revision 4. Runtime contract 3 and storage layout 5 require regenerated
 artifacts; JSONL format remains 1. Computed fields add no physical columns.
 
 The generated package exposes frozen request classes and `read_*_many` methods.
@@ -493,3 +493,12 @@ See the [calculation contract](../yambl/lang/syntex/computations.md) and the
 [capability matrix](../yambl/lang/syntex/storage.md#能力清单). General functions,
 write APIs, migrations, division, FX conversion and automatic combinations of
 multiple Hierarchies are outside this release.
+
+Optional calculation inputs can be declared with
+`@extra_input_params(day: date = '2026-01-01', 'Observation date')`.
+Caller values override declaration defaults. `input.day ?? input.as_of_date` uses
+its right operand only when the input is omitted; `.default(...)` is no longer
+accepted. Native non-normal results still require `recover`.
+Decorator calls accept optional trailing description metadata without adding a
+formal parameter to each declaration. IR revision 4 preserves pair defaults;
+runtime contract 3 carries the same checked metadata into generated packages.

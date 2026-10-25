@@ -174,9 +174,10 @@ def field_dimension(
             )
         )
         return None
-    arguments = [
-        item for item in branches(call) if item.data in ("positional_argument", "keyword_argument")
-    ]
+    from yambl_compiler.semantics.decorators import call_arguments, parameters
+
+    definition = unit.world.declarations[unit.scope['dimension'].key][1]
+    arguments, _ = call_arguments(call, parameters(definition), Resolver(unit, [], {}))
     bodies = children(field, "field_body")
     if len(arguments) != 1 or not bodies:
         diagnostics.append(

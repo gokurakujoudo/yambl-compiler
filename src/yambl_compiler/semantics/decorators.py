@@ -3,6 +3,7 @@
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
+from datetime import date
 
 from lark import Token, Tree
 
@@ -95,6 +96,14 @@ def argument_type(resolver: Resolver, syntax: Tree[Token], expected: Resolved) -
         'bool': {'BOOLEAN'},
     }
     items = tokens(syntax)
+    if expected.name == 'date' and actual.name == 'string' and actual.exact is not None:
+        try:
+            date.fromisoformat(actual.exact)
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', actual.exact):
+                raise ValueError('expected ISO date')
+            actual = replace(expected, exact=actual.exact)
+        except ValueError:
+            resolver.issue(syntax, 'date argument requires a valid YYYY-MM-DD string')
     if len(items) == 1 and items[0].type in literal_types.get(expected.name, set()):
         actual = replace(expected, exact=actual.exact)
     if expected.kind == 'reference' and actual.name == 'string':
@@ -140,6 +149,8 @@ def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Dia
     for formal in parameters(declaration):
         if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', formal.name):
             resolver.issue(formal.node, 'decorator parameter names must use snake_case')
+        if formal.name == 'description':
+            resolver.issue(formal.node, 'description is reserved decorator metadata')
         if formal.name in seen:
             resolver.issue(formal.node, f"duplicate decorator parameter: {formal.name}")
         seen.add(formal.name)
@@ -154,10 +165,56 @@ def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Dia
         optional_seen |= formal.optional
         if 'self' not in map(str, tokens(formal.type)):
             expected = resolver.resolve(formal.type)
+            if expected.name == 'input_type' and not formal.pair:
+                resolver.issue(formal.type, 'input_type is only a decorator pair constraint')
             if expected.kind == 'collection':
                 resolver.issue(formal.type, 'decorator parameters cannot be collections')
             if formal.default is not None and 'self' not in map(str, tokens(formal.default)):
                 argument_type(resolver, formal.default, expected)
+
+
+def call_arguments(
+    call: Tree[Token], formals: list[Parameter], resolver: Resolver
+) -> tuple[list[Tree[Token]], Tree[Token] | None]:
+    """Separate optional trailing description from explicit call arguments.
+
+    :param call: Original invocation.
+    :param formals: Explicit signature, excluding implicit description.
+    :param resolver: Context for diagnostics.
+    :returns: Explicit arguments and optional description expression.
+    """
+    arguments = [c for c in call.children if isinstance(c, Tree)]
+    ordinary = [p for p in formals if not p.pair]
+    result: list[Tree[Token]] = []
+    description = None
+    position = 0
+    pair_seen = False
+    supplied: set[str] = set()
+    for i, argument in enumerate(arguments):
+        syntax = children(argument, 'type_expr')[0]
+        named = argument.data == 'keyword_argument' and str(tokens(argument)[0]) == 'description'
+        trailing = (
+            argument.data == 'positional_argument'
+            and i == len(arguments) - 1
+            and (pair_seen or all(p.name in supplied for p in ordinary))
+            and len(tokens(syntax)) == 1
+            and tokens(syntax)[0].type == 'STRING'
+        )
+        if named or trailing:
+            if description is not None:
+                resolver.issue(argument, 'duplicate decorator description')
+            if i != len(arguments) - 1:
+                resolver.issue(argument, 'description must be the final decorator argument')
+            description = syntax
+        else:
+            result.append(argument)
+            if argument.data == 'keyword_argument':
+                supplied.add(str(tokens(argument)[0]))
+            elif argument.data == 'positional_argument' and position < len(ordinary):
+                supplied.add(ordinary[position].name)
+            position += argument.data == 'positional_argument'
+            pair_seen |= argument.data == 'pair_argument'
+    return result, description
 
 
 def bind_call(
@@ -184,14 +241,34 @@ def bind_call(
     if symbol is None or symbol.kind != 'decorator':
         actual_resolver.issue(call, f"unknown decorator: {name}")
         return ''
+    scope, declaration = unit.world.declarations[symbol.key]
+    formals = parameters(declaration)
+    arguments, description = call_arguments(call, formals, actual_resolver)
+    description_bound = (
+        [
+            (
+                'description',
+                '',
+                argument_type(actual_resolver, description, Resolved('string', 'string')),
+            )
+        ]
+        if description is not None
+        else []
+    )
     if name == "dimension" and symbol.key == unit.scope["dimension"].key:
         from yambl_compiler.semantics.computation import structural
         from yambl_compiler.semantics.dimensions import field_dimension
 
-        dimension = field_dimension(unit, node, call, diagnostics)
+        explicit_call = Tree(
+            call.data, [c for c in call.children if not isinstance(c, Tree) or c in arguments]
+        )
+        dimension = field_dimension(unit, node, explicit_call, diagnostics)
         if dimension is None:
             return ""
-        dimension_bound = [("variation", dimension.value_name, dimension.value_type)]
+        dimension_bound = [
+            ("variation", dimension.value_name, dimension.value_type),
+            *description_bound,
+        ]
         if dimension.hierarchy_name:
             dimension_bound.append(
                 (
@@ -212,16 +289,14 @@ def bind_call(
                 structural(dimension.fallback),
             )
         )
-    scope, declaration = unit.world.declarations[symbol.key]
     formal_resolver = Resolver(scope, diagnostics, {}, bindings=actual_resolver.bindings)
-    formals = parameters(declaration)
     ordinary = [p for p in formals if not p.pair]
     pairs = [p for p in formals if p.pair]
     supplied: dict[str, Tree[Token]] = {}
     position = pair_position = 0
     keyword_seen = pair_seen = False
     keys: set[str] = set()
-    for argument in [c for c in call.children if isinstance(c, Tree)]:
+    for argument in arguments:
         kind = argument.data
         if kind == 'pair_argument':
             pair_seen = True
@@ -250,7 +325,7 @@ def bind_call(
             actual_resolver.issue(argument, f"duplicate decorator argument: {formal.name}")
         else:
             supplied[formal.name] = argument
-    bound: list[tuple[str, str, Resolved]] = []
+    bound: list[tuple[str, str, Resolved]] = list(description_bound)
     for formal in formals:
         expected = formal_resolver.resolve(formal.type)
         if expected.kind == 'collection':
@@ -266,9 +341,24 @@ def bind_call(
         syntax = children(provided, 'type_expr')[0]
         if formal.pair:
             actual = actual_resolver.resolve(syntax)
-            if actual.kind == 'collection' or not accepts(expected, actual, unit.world):
+            input_constraint = expected.name == 'input_type'
+            if (
+                actual.kind in ('collection', 'unknown')
+                or actual.name in ('attrs', 'dimension_ref', 'input_type')
+                or (not input_constraint and not accepts(expected, actual, unit.world))
+            ):
                 actual_resolver.issue(syntax, 'incompatible decorator pair type')
             bound.append((formal.name, str(tokens(provided)[0]), actual))
+            defaults = children(provided, 'decorator_default')
+            if defaults:
+                if name != 'extra_input_params':
+                    actual_resolver.issue(
+                        provided, 'pair defaults are only supported by extra_input_params'
+                    )
+                default = argument_type(
+                    actual_resolver, children(defaults[0], 'type_expr')[0], actual
+                )
+                bound.append(('parameter_default', str(tokens(provided)[0]), default))
         else:
             bound.append((formal.name, '', argument_type(actual_resolver, syntax, expected)))
     if values is not None:

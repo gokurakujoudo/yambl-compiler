@@ -2,10 +2,12 @@
 
 import re
 from dataclasses import dataclass, field, replace
+from typing import Literal
 
 from lark import Token, Tree
 
 from yambl_compiler.computation.records import Body, Expression, Span
+from yambl_compiler.semantics.decorators import bind_call
 from yambl_compiler.semantics.dimensions import (
     Dimension,
     field_dimension,
@@ -16,6 +18,7 @@ from yambl_compiler.semantics.expressions import Resolver
 from yambl_compiler.semantics.symbols import EntityKey, Unit, field_owner
 from yambl_compiler.semantics.types import UNKNOWN, Resolved, accepts
 from yambl_compiler.syntax.computation import body as calculation_body
+from yambl_compiler.syntax.computation import span
 from yambl_compiler.syntax.parser import Diagnostic, annotations, children, tokens
 
 NUMBERS = ("integer", "decimal", "float")
@@ -141,6 +144,7 @@ class Computations:
             checker.issue(body.result, f"computed field dependency cycle: {name}")
             return None
         self.active.add(key)
+        checker.declare_inputs(site.declaration)
         environment = {"self": Value(Resolved(owner[1], "reference", key=owner))}
         for binding in body.bindings:
             if (
@@ -216,8 +220,47 @@ class Checker:
         self.owner = owner
         self.unit = unit
         self.inputs: dict[str, Input] = {}
+        self.declared: dict[str, Input] = {}
         self.accesses: list[Access] = []
         self.dependencies: set[tuple[EntityKey, str]] = set()
+
+    def declare_inputs(self, declaration: Tree[Token]) -> None:
+        """Read explicitly declared optional inputs before dependency inference.
+
+        :param declaration: Computed field with checked metadata.
+        :returns: None; records input contracts and declaration defaults.
+        """
+        for call in annotations(declaration, 'extra_input_params'):
+            bound: list[tuple[str, str, Resolved]] = []
+            bind_call(call, declaration, self.unit, [], bound_arguments=bound)
+            pairs = children(call, 'pair_argument')
+            if not pairs:
+                continue
+            location = span(pairs[0])
+            for formal, name, type_ in bound:
+                if formal != 'parameter':
+                    continue
+                node = Expression('name', name, (), (), (), location)
+                if name in self.declared:
+                    self.issue(node, f'duplicate extra input parameter: {name}')
+                default_type = next(
+                    (t for n, k, t in bound if n == 'parameter_default' and k == name), None
+                )
+                default = None
+                if default_type is not None and default_type.exact is not None:
+                    kind: Literal['string', 'integer', 'decimal', 'bool'] = (
+                        'integer'
+                        if type_.name in ('integer', 'snowflake_id')
+                        else (
+                            'decimal'
+                            if type_.name in ('decimal', 'float')
+                            else 'bool' if type_.name == 'bool' else 'string'
+                        )
+                    )
+                    default = Expression(kind, default_type.exact, (), (), (), location)
+                parameter = Input(name, type_, False, default, ((self.unit, location),))
+                self.add_input(parameter, node)
+                self.declared[name] = parameter
 
     def issue(self, node: Expression, message: str) -> None:
         """Append a located calculation error once.
@@ -262,6 +305,11 @@ class Checker:
         if not IDENTIFIER.fullmatch(name) or name in ("self", "input", "best_effort"):
             self.issue(node, f"invalid or reserved calculation parameter: {name}")
         prior = self.inputs.get(name)
+        declared = self.declared.get(name)
+        if declared is not None:
+            requirement = replace(
+                requirement, required=False, default=declared.default or requirement.default
+            )
         if prior is not None:
             if prior.type != requirement.type or (
                 prior.default is not None
@@ -289,16 +337,8 @@ class Checker:
         """
         alias = expression
         default = None
-        if (
-            expression.kind == "call"
-            and expression.operands[0].kind == "member"
-            and expression.operands[0].value == "default"
-        ):
-            alias = expression.operands[0].operands[0]
-            if len(expression.arguments) != 1 or expression.arguments[0].name:
-                self.issue(expression, "input.default requires one positional value")
-            else:
-                default = expression.arguments[0].expression
+        if expression.kind == "binary" and expression.value == "??":
+            alias, default = expression.operands
         if (
             alias.kind == "member"
             and alias.operands[0].kind == "name"
@@ -315,11 +355,14 @@ class Checker:
                 expression,
             )
             if default is not None:
+                saved = dict(self.inputs)
                 self.bind_input(
                     replace(requirement, default=None, required=True),
                     default,
                     environment,
                 )
+                if alias.value in self.declared and self.declared[alias.value].default is not None:
+                    self.inputs = saved
             return
         actual = self.read(self.infer(expression, environment), expression).type
         # A contextual reference ID is a value, not a lookup during compilation.
@@ -484,6 +527,8 @@ class Checker:
             return Value(UNKNOWN)
         if node.kind == "member":
             receiver = node.operands[0]
+            if receiver.kind == 'name' and receiver.value == 'input' and node.value in self.inputs:
+                return Value(self.inputs[node.value].type)
             if (
                 receiver.kind == "name"
                 and receiver.value in self.unit.scope
@@ -539,6 +584,19 @@ class Checker:
         if node.kind in ("call", "recover"):
             return self.invoke(node, environment)
         if node.kind in ("binary", "unary"):
+            if node.value == '??':
+                input_node = node.operands[0]
+                if (
+                    input_node.kind == 'member'
+                    and input_node.operands[0].kind == 'name'
+                    and input_node.operands[0].value == 'input'
+                    and input_node.value in self.inputs
+                ):
+                    parameter = self.inputs[input_node.value]
+                    self.bind_input(parameter, node, environment)
+                    return Value(parameter.type)
+                self.issue(node, '?? requires an input.name with an inferred or declared type')
+                return Value(UNKNOWN)
             operands = [self.read(self.infer(e, environment), e).type for e in node.operands]
             if node.value in ("and", "or", "not"):
                 if any(t.name != "bool" and t.kind != "unknown" for t in operands):

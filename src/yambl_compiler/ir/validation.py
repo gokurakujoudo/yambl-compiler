@@ -148,6 +148,7 @@ def structural(model: Model) -> list[str]:
             if item.kind == "unary" and item.value not in ("+", "-", "not"):
                 issues.append(path + ".value: unsupported unary operator")
             if item.kind == "binary" and item.value not in (
+                "??",
                 "+",
                 "-",
                 "*",
@@ -295,7 +296,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
     """
     try:
         decode(encode(model), Model)
-        if model.format_revision != 3:
+        if model.format_revision != 4:
             return ('$.format_revision: unsupported IR revision; recompile the model repository',)
         issues = structural(model)
         if issues:

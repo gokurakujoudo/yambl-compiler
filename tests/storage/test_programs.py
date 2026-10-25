@@ -65,10 +65,14 @@ entity Fund {
     @temporal(as_of_date: date) snapshot attr holdings: collection<Holding>
     computed attr amount: mapping<string, decimal> {
         let holdings = self.holdings::at()
-        return holdings.group_by(h -> h.security.industry::value(as_of_date=input.industry_date.default(input.as_of_date)).recover(case NO_ENTRY -> 'Other')).sum_by(h -> h.amount::value(as_of_date=input.price_date.default(input.as_of_date)))
+        return holdings.group_by(h -> h.security.industry::value(as_of_date=input.industry_date ?? input.as_of_date).recover(case NO_ENTRY -> 'Other')).sum_by(h -> h.amount::value(as_of_date=input.price_date ?? input.as_of_date))
     }
 }
 extend Security {
+    @extra_input_params(day: date = '2026-01-10', 'Requested date')
+    computed attr declared_price: decimal { return self.price::best_available(as_of_date=input.day ?? input.unused_day) }
+    @extra_input_params(count: integer)
+    computed attr input_value: integer { return input.count ?? 7 }
     computed attr identity_text: string { return self.key }
     computed attr safe: integer { return if true and not false then -2 + 3 * 4 else self.days }
     computed attr recovered: integer { return ERROR.recover(case ERROR -> 42) }
@@ -186,6 +190,17 @@ class ProgramTests(FilesystemCase):
             self.assertIsInstance(result, Success)
             self.addCleanup(result.value.close)
             yield result.value
+
+    def test_declared_defaults_and_omission_operator_on_both_backends(self):
+        for reader in self.readers():
+            security = reader.get_security('s').value
+            self.assertEqual(security.read_declared_price().value, Decimal('3'))
+            self.assertEqual(
+                security.read_declared_price(day=date(2026, 1, 9)).value, Decimal('2.5')
+            )
+            self.assertEqual(security.read_input_value().value, 7)
+            self.assertEqual(security.read_input_value(count=0).value, 0)
+            self.assertNotIn('unused_day', security.read_declared_price.__annotations__)
 
     def test_generated_batch_dates_defaults_and_repeated_contributions(self):
         for reader in self.readers():

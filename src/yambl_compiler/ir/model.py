@@ -166,11 +166,13 @@ class Argument(Record):
     :param kind: Positional value, named value or key/type pair.
     :param name: Named argument or caller-defined pair key.
     :param expression: Argument expression.
+    :param default: Optional caller-defined input default on a pair.
     """
 
     kind: Literal['positional', 'keyword', 'pair']
     name: str
     expression: Expression
+    default: Expression | None = None
 
 
 @dataclass(frozen=True)

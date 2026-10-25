@@ -43,6 +43,26 @@ class ComputationIRTests(FilesystemCase):
         self.write("a.yambl", "invalid source after compilation")
         self.assertEqual(validate_ir(loads(dumps(self.model))), ())
 
+    def test_pair_defaults_and_description_round_trip_without_sources(self):
+        self.write(
+            'a.yambl',
+            "entity E { id key: string snapshot attr price: decimal @extra_input_params(day: date = '2026-01-01', 'Valuation day') computed attr total: decimal { return self.price::at(as_of_date=input.day ?? input.other_day) } }",
+        )
+        model = compile_repository(self.root)
+        self.write('a.yambl', 'source intentionally unavailable')
+        restored = loads(dumps(model))
+        self.assertEqual(validate_ir(restored), ())
+        self.assertEqual(dumps(restored), dumps(model))
+        field = next(
+            f
+            for d in restored.definitions
+            if d.identity == 'E'
+            for f in d.fields
+            if f.category == 'computed'
+        )
+        self.assertEqual([p.name for p in field.calculation.inputs], ['day'])
+        self.assertEqual(field.decorators[0].arguments[0].default.literal.text, '2026-01-01')
+
     def test_malformed_calculation_nodes_report_json_paths(self):
         node = self.field.calculation.body.result
         literal = node.operands[1]

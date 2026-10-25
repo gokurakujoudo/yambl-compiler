@@ -22,6 +22,7 @@ class CodecTests(FilesystemCase):
             ('[]', 'revision'),
             ('{"format_revision": true}', 'revision'),
             ('{"format_revision": 99}', 'recompile'),
+            ('{"format_revision": 3}', 'recompile'),
             ('{"format_revision":1,"format_revision":1}', 'duplicate JSON key'),
             ('{"format_revision":1,"unknown":NaN}', 'nonstandard'),
             ('{"format_revision":1,"unknown":Infinity}', 'nonstandard'),

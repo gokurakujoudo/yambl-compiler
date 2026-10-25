@@ -41,7 +41,10 @@ def line_piece(items: list[Token], indent: int, calculation: bool = False) -> Pi
     keyword_equals = {
         items[i + 1].start_pos
         for i, item in enumerate(items[:-1])
-        if item.type == 'NAME' and str(items[i + 1]) == '=' and str(items[0]) == '@'
+        if item.type == 'NAME'
+        and str(items[i + 1]) == '='
+        and str(items[0]) == '@'
+        and (i == 0 or str(items[i - 1]) != ':')
     }
     if calculation:
         for i, item in enumerate(items[:-1]):
@@ -72,6 +75,31 @@ def line_piece(items: list[Token], indent: int, calculation: bool = False) -> Pi
         previous = value
     # Lark assigns positions to every token because propagate_positions is enabled.
     return Piece(cast(int, items[0].start_pos), cast(int, items[-1].end_pos), indent, result)
+
+
+def calculation_pieces(items: list[Token], indent: int) -> list[Piece]:
+    """Preserve calculation line breaks with parenthesis-based indentation.
+
+    :param items: Positioned statement tokens, excluding comments.
+    :param indent: Statement indentation within its computation.
+    :returns: Lines with four-space continuation levels and original source spans.
+    """
+    groups: list[list[Token]] = []
+    for item in items:
+        if not groups or groups[-1][-1].end_line != item.line:
+            groups.append([])
+        groups[-1].append(item)
+    result: list[Piece] = []
+    depth = 0
+    for group in groups:
+        closing = 0
+        for item in group:
+            if str(item) != ')':
+                break
+            closing += 1
+        result.append(line_piece(group, indent + max(0, depth - closing), calculation=True))
+        depth += sum(str(t) == '(' for t in group) - sum(str(t) == ')' for t in group)
+    return result
 
 
 def format_document(document: Document) -> str:
@@ -117,7 +145,14 @@ def format_document(document: Document) -> str:
                         *children(computation, "let_statement"),
                         *children(computation, "return_statement"),
                     ]:
-                        pieces.append(line_piece(tokens(statement), 2, calculation=True))
+                        statement_tokens = tokens(statement)
+                        pieces.extend(calculation_pieces(statement_tokens, 2))
+                        parentheses: list[int] = []
+                        for item in statement_tokens:
+                            if str(item) == '(':
+                                parentheses.append(cast(int, item.end_pos))
+                            elif str(item) == ')':
+                                blocks.append((parentheses.pop(), cast(int, item.start_pos)))
             for dimension in children(declaration, "dimension"):
                 dimension_items = tokens(dimension)
                 opening = line_piece(dimension_items[:3], 1)

@@ -30,7 +30,8 @@ let_statement: LET NAME "=" calculation
 return_statement: RETURN calculation
 ?calculation: NAME "->" calculation -> lambda_expression
             | IF calculation THEN calculation ELSE calculation -> conditional_expression
-            | disjunction
+            | coalescence
+?coalescence: disjunction ("??" coalescence)?
 ?disjunction: conjunction (OR conjunction)*
 ?conjunction: comparison (AND comparison)*
 ?comparison: sum_expression (COMPARISON sum_expression)?
@@ -54,7 +55,7 @@ recovery_case: CASE NAME ("," NAME)* (AS NAME)? "->" calculation
 default_value: "=" (INT | NUMBER | STRING | BOOLEAN)
 annotation: "@" NAME ["(" [annotation_argument ("," annotation_argument)*] ")"]
 ?annotation_argument: NAME "=" type_expr -> keyword_argument
-                    | NAME ":" type_expr -> pair_argument
+                    | NAME ":" type_expr decorator_default? -> pair_argument
                     | type_expr -> positional_argument
 decodes: annotation* decodes_header "{" entry* "}"
 decodes_header: DECODES NAME

@@ -52,6 +52,10 @@ def check_field(
             diagnostic(unit.document, body, 'extend may add attributes, not id fields')
         )
     type_node = children(body, 'type_expr')[0]
+    if any(str(token) == 'input_type' for token in tokens(type_node)):
+        diagnostics.append(
+            diagnostic(unit.document, type_node, 'input_type is only a decorator pair constraint')
+        )
     if any(str(token) == "dimension_ref" for token in tokens(type_node)):
         diagnostics.append(
             diagnostic(

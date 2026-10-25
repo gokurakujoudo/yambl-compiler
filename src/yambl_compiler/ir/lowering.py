@@ -396,6 +396,15 @@ class Lowering:
                         cast('ArgumentKind', kind),
                         '' if kind == 'positional' else str(tokens(arg)[0]),
                         self.expression(children(arg, 'type_expr')[0], unit, resolver),
+                        (
+                            self.expression(
+                                children(children(arg, 'decorator_default')[0], 'type_expr')[0],
+                                unit,
+                                resolver,
+                            )
+                            if children(arg, 'decorator_default')
+                            else None
+                        ),
                     )
                 )
             target = qualified(unit.scope[str(tokens(call)[1])].key)
@@ -714,7 +723,7 @@ class Lowering:
         )
         return seal(
             Model(
-                3,
+                4,
                 self.version,
                 self.prefix,
                 primitives,
