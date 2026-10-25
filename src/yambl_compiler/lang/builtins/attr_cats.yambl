@@ -17,4 +17,5 @@ decodes AttrCats {
     - 0b00100 Config: 'Configuration'
     - 0b01000 Snapshot: 'Snapshot'
     - 0b10000 Scd: 'SCD Type 2'
+    - 0b100000 Computed: 'Computed'
 }

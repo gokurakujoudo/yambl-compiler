@@ -1,7 +1,7 @@
 """Read generated SQLite layouts through explicit session-bound handles."""
 
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, is_dataclass
 from dataclasses import field as data_field
 from datetime import date
@@ -10,7 +10,16 @@ from pathlib import Path
 from typing import ClassVar, Self, cast
 
 from yambl_compiler.ir.model import Field, Type
-from yambl_compiler.storage.backends import Backend, FileBackend, Row, SQLiteBackend
+from yambl_compiler.storage.backends import (
+    Backend,
+    FileBackend,
+    Row,
+    Selection,
+    SQLiteBackend,
+)
+from yambl_compiler.storage.batch import Batch, FieldRequest
+from yambl_compiler.storage.computing import Computing, Frame, Program, Vector
+from yambl_compiler.storage.configuration import Configuration
 from yambl_compiler.storage.contract import load_contract
 from yambl_compiler.storage.records import (
     Layout,
@@ -24,6 +33,7 @@ from yambl_compiler.storage.results import (
     Status,
     Success,
 )
+from yambl_compiler.storage.session import Session
 from yambl_compiler.storage.validation import ValidationReport
 
 
@@ -66,6 +76,7 @@ class Reader:
     record_types: ClassVar[dict[str, Callable[..., object]]] = {}
     entity_types: ClassVar[dict[str, type[EntityHandle]]] = {}
     code_types: ClassVar[dict[str, type[str]]] = {}
+    calculation_programs: ClassVar[dict[str, Program]] = {}
 
     def __init__(self, backend: Backend, layout: Layout) -> None:
         """Take ownership of an opened connection.
@@ -83,6 +94,100 @@ class Reader:
         self._implementations = {
             f.implementation: f for d in layout.model.definitions for f in d.fields
         }
+        self._session = Session(
+            layout,
+            backend,
+            self._implementations,
+            self.code_types,
+            self._ready,
+            self._encode,
+            self._decode,
+            self._point,
+            self._value,
+        )
+        self._batch = Batch(self._session)
+        self._configuration = Configuration(self._batch)
+        self._computing = Computing(
+            self._session, self._batch, self._configuration, self.calculation_programs
+        )
+
+    def calculate(
+        self,
+        handle: EntityHandle,
+        identity: str,
+        parameters: Mapping[str, object],
+        best_effort: bool = False,
+    ) -> ReadResult[object]:
+        """Calculate one field using the same dependency batches as a many call.
+
+        :param handle: Existing entity handle in this session.
+        :param identity: Logical computed field identity.
+        :param parameters: Explicit inferred parameter values.
+        :param best_effort: Whether to retain valid contributions as PARTIAL.
+        :returns: Computed payload or a native non-normal outcome.
+        """
+        if handle.reader is not self:
+            return NonNormalResult(Status.ERROR, "handle belongs to a different reader")
+        result = self.calculate_many(
+            handle.entity_type, identity, ((handle.id, parameters, best_effort),)
+        )
+        return result.value[0] if isinstance(result, Success) else cast(ReadResult[object], result)
+
+    def calculate_many(
+        self,
+        target: str,
+        identity: str,
+        requests: Sequence[tuple[str | int, Mapping[str, object], bool]],
+    ) -> ReadResult[tuple[ReadResult[object], ...]]:
+        """Execute a generated computation for an ordered request batch.
+
+        :param target: Requested entity type.
+        :param identity: Logical computed field identity.
+        :param requests: IDs, independent parameters and best-effort choices.
+        :returns: Ordered per-request results, or outer ERROR on backend failure.
+        """
+        try:
+            lanes = tuple((i,) for i in range(len(requests)))
+            source: Vector = {}
+            refs: list[EntityRef[object]] = []
+            valid: list[tuple[int, ...]] = []
+            root = self._layout.roots[target]
+            for lane, (id_value, _, mode) in zip(lanes, requests, strict=True):
+                try:
+                    self._encode(self._layout.ids[root].type, id_value)
+                    if type(mode) is not bool:
+                        raise ValueError("best_effort requires bool")
+                    refs.append(EntityRef(target, id_value))
+                    valid.append(lane)
+                except (ValueError, TypeError) as error:
+                    source[lane] = NonNormalResult(Status.ERROR, str(error))
+            owners = self._batch.entities(refs, Status.NO_ENTRY)
+            source.update(
+                (lane, cast(ReadResult[object], owner))
+                for lane, owner in zip(valid, owners, strict=True)
+            )
+            inputs: dict[str, Vector] = {}
+            for i, (_, parameters, _) in enumerate(requests):
+                for name, value in parameters.items():
+                    inputs.setdefault(name, {})[(i,)] = Success(value)
+            from yambl_compiler.storage.computing import UNSET
+
+            for vector in inputs.values():
+                for lane in lanes:
+                    vector.setdefault(lane, Success(UNSET))
+            modes = tuple(request[2] for request in requests)
+            frame = Frame(lanes, source, inputs, modes)
+            values = self._computing.compute(frame, source, identity, {})
+            return Success(tuple(values[lane] for lane in lanes), "computation")
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            OSError,
+            sqlite3.Error,
+            InvalidOperation,
+        ) as error:
+            return NonNormalResult(Status.ERROR, str(error))
 
     @classmethod
     def open(cls, path: Path) -> ReadResult[Self]:
@@ -183,7 +288,7 @@ class Reader:
             if isinstance(result, Success):
                 payload = result.value
                 if isinstance(payload, list):
-                    return Success(list(cast(list[object], payload)), result.origin)
+                    return Success(list(cast(list[object], payload)), result.origin, result.groups)
             return result
         except (
             OSError,
@@ -210,13 +315,25 @@ class Reader:
         :param when: Date for time fields.
         :returns: Field result, including defaults and non-normal states.
         """
-        return self._cached(
+        result = self._cached(
             handle,
             identity,
             dimensions,
             ("point", type(when), when),
             lambda: self._read(handle, identity, dimensions, when),
         )
+        if not has_error(result) and identity in self._layout.fields:
+            field = self._batch.implementation(handle.entity_type, identity)
+            if field is not None:
+                request = FieldRequest(
+                    EntityRef(handle.entity_type, handle.id),
+                    identity,
+                    tuple(dimensions.items()),
+                    when,
+                )
+                selection = self._batch.selection(request, self._layout.fields[identity], field)
+                self._batch.points[(handle.entity_type, identity, selection)] = result
+        return result
 
     def read_range(
         self,
@@ -325,6 +442,7 @@ class Reader:
             if not has_error(result):
                 self._cache.setdefault(handle, {})[key] = result
                 self._full.setdefault(handle, {})[identity] = tuple(rows)
+                self._batch.full[(EntityRef(handle.entity_type, handle.id), identity)] = tuple(rows)
             return result
         except (
             OSError,
@@ -366,7 +484,7 @@ class Reader:
         :raises ValueError: If the stored value violates its contract.
         """
         if type_.kind == "reference":
-            id_type = self._layout.ids[self._layout.roots[type_.target]].type
+            id_type = self._id_type(type_.target)
             if type_.exact is not None and str(value) != type_.exact.text:
                 raise ValueError("reference violates exact constraint")
             return EntityRef[EntityHandle](
@@ -429,7 +547,7 @@ class Reader:
         if type_.kind == "reference":
             if not isinstance(value, EntityRef) or value.target != type_.target:
                 raise ValueError("dimension requires a reference of the declared type")
-            return self._encode(self._layout.ids[self._layout.roots[type_.target]].type, value.id)
+            return self._encode(self._id_type(type_.target), value.id)
         if type_.name == "bool":
             valid = type(value) is bool
             encoded: str | int = int(cast(bool, value)) if valid else 0
@@ -452,6 +570,26 @@ class Reader:
             raise ValueError(f"invalid input for {type_.name}")
         self._decode(type_, encoded)
         return encoded
+
+    def _id_type(self, target: str) -> Type:
+        """Find business or embedded builtin reference ID contracts.
+
+        :param target: Qualified entity identity.
+        :returns: Declared scalar ID type.
+        :raises ValueError: If no unique ID contract exists.
+        """
+        if target in self._layout.roots:
+            return self._layout.ids[self._layout.roots[target]].type
+        ids = [
+            f.type
+            for d in self._layout.model.definitions
+            if d.identity == target
+            for f in d.fields
+            if f.category == "id"
+        ]
+        if len(ids) != 1:
+            raise ValueError("reference requires one identifiable ID field")
+        return ids[0]
 
     def get(self, entity: str, id_value: object) -> ReadResult[EntityHandle]:
         """Fetch one identity and return its actual subtype handle.
@@ -478,6 +616,10 @@ class Reader:
             key = (actual, cast(str | int, id_value))
             if key not in self._handles:
                 self._handles[key] = self.entity_types[actual](self, *key)
+            self._batch.identities[EntityRef(entity, cast(str | int, id_value))] = Success(
+                EntityRef(*key)
+            )
+            self._batch.identities[EntityRef(*key)] = Success(EntityRef(*key))
             return Success(self._handles[key])
         except (
             OSError,
@@ -501,13 +643,45 @@ class Reader:
         """
         if not isinstance(cast(object, ids), list):
             return NonNormalResult(Status.ERROR, "ids must be a list")
-        result = [self.get(entity, value) for value in ids]
-        errors = [r for r in result if isinstance(r, NonNormalResult) and r.status == Status.ERROR]
-        if errors:
-            return errors[0]
-        if self._closed:
-            return NonNormalResult(Status.ERROR, "reader is closed")
-        return Success(result)
+        try:
+            self._ready()
+            root = self._layout.roots[entity]
+            selections = [
+                Selection((("id", self._encode(self._layout.ids[root].type, value)),))
+                for value in ids
+            ]
+            batches = self._backend.rows_many(table_name(root), selections, ("id", "entity_type"))
+            result: list[ReadResult[EntityHandle]] = []
+            for value, rows in zip(ids, batches, strict=True):
+                if not rows:
+                    result.append(NonNormalResult(Status.NO_ENTRY))
+                    continue
+                actual = str(rows[0]["entity_type"])
+                if actual not in self._layout.entities or self._layout.roots[actual] != root:
+                    raise ValueError("invalid actual entity type")
+                ancestor = actual
+                while ancestor != entity and ancestor in self._layout.entities:
+                    ancestor = self._layout.entities[ancestor].parent
+                if ancestor != entity:
+                    result.append(NonNormalResult(Status.NO_ENTRY))
+                    continue
+                key = (actual, value)
+                if key not in self._handles:
+                    self._handles[key] = self.entity_types[actual](self, *key)
+                self._batch.identities[EntityRef(entity, value)] = Success(EntityRef(*key))
+                self._batch.identities[EntityRef(*key)] = Success(EntityRef(*key))
+                result.append(Success(self._handles[key]))
+            return Success(result)
+        except (
+            OSError,
+            sqlite3.Error,
+            ValueError,
+            TypeError,
+            KeyError,
+            IndexError,
+            InvalidOperation,
+        ) as error:
+            return NonNormalResult(Status.ERROR, str(error))
 
     def resolve[T](self, ref: EntityRef[T]) -> ReadResult[T]:
         """Resolve a typed reference explicitly.
@@ -661,6 +835,9 @@ class Reader:
             if field.category in ("snapshot", "scd") and type(when) is not date:
                 raise ValueError("time field requires a date")
             stored = self._layout.fields[identity]
+            if field.category == "config":
+                request = FieldRequest(EntityRef(handle.entity_type, handle.id), identity)
+                return self._configuration.read((request,))[0]
             return self._point(stored, field, self._rows(handle, stored, dimensions), when)
         except (
             OSError,

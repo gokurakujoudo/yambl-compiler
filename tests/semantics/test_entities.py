@@ -13,11 +13,20 @@ from yambl_compiler.syntax.parser import children, tokens
 class EntityTests(unittest.TestCase):
     def test_final_and_marker_errors(self):
         cases = [
-            ('final entity A {} entity B inherits A {}', 'cannot inherit final entity: A'),
+            (
+                'final entity A {} entity B inherits A {}',
+                'cannot inherit final entity: A',
+            ),
             ('final entity A {} extend A {}', 'cannot extend final entity: A'),
-            ('entity B inherits ConfigGroup {}', 'cannot inherit final entity: ConfigGroup'),
+            (
+                'entity B inherits ConfigGroup {}',
+                'cannot inherit final entity: ConfigGroup',
+            ),
             ('extend ConfigGroup {}', 'cannot extend final entity: ConfigGroup'),
-            ('entity A { @override attr x: string }', 'override requires an inherited field: x'),
+            (
+                'entity A { @override attr x: string }',
+                'override requires an inherited field: x',
+            ),
             (
                 'entity A { @overload attr x: string }',
                 'overload requires another branch implementation: x',
@@ -82,18 +91,24 @@ class EntityTests(unittest.TestCase):
         category = index.candidates(('root', 'Security'), 'config')['category']
         self.assertEqual(len(category), 4)
         self.assertEqual(
-            {s.unit.document.path for s in category}, {Path('bond.yambl'), Path('stock.yambl')}
+            {s.unit.document.path for s in category},
+            {Path('bond.yambl'), Path('stock.yambl')},
         )
         identity = index.identities[(('bond', 'Bond'), 'category')]
-        for key in [('bond', 'DeepBond'), ('bond', 'DeeperBond'), ('stock', 'DeepStock')]:
+        for key in [
+            ('bond', 'DeepBond'),
+            ('bond', 'DeeperBond'),
+            ('stock', 'DeepStock'),
+        ]:
             self.assertEqual(index.identities[(key, 'category')], identity)
         self.assertEqual(
-            index.identities[(('stock', 'Stock'), 'days')], (('root', 'Security'), 'days')
+            index.identities[(('stock', 'Stock'), 'days')],
+            (('root', 'Security'), 'days'),
         )
         self.assertEqual(set(index.candidates(('root', 'Security'), 'static')), {'currency'})
         self.assertEqual(
             set(index.candidates(('builtins', 'ConfigGroup'), 'static')),
-            {'entity_type'},
+            {'entity_type', "priority"},
         )
         self.assertEqual(index.field_types(('absent', 'Absent')), {})
         self.assertEqual(check(list(reversed(sources))), [])
@@ -107,7 +122,7 @@ class EntityTests(unittest.TestCase):
         for name in ('Entity', 'ConfigGroup'):
             self.assertIn(
                 'duplicate or reserved declaration: ' + name,
-                [d.message for d in check([document(f'entity {name} {{}}')])],
+                [d.message for d in check([document(f"entity {name} {{}}")])],
             )
 
     def test_extension_merge_retains_attribute_metadata_and_source(self):
@@ -120,7 +135,10 @@ class EntityTests(unittest.TestCase):
                 'namespace core entity Bond inherits Security { attr coupon: decimal }',
                 'bond.yambl',
             ),
-            document('namespace core entity Security { id security_id: string }', 'base.yambl'),
+            document(
+                'namespace core entity Security { id security_id: string }',
+                'base.yambl',
+            ),
         ]
         diagnostics = []
         units = resolve_scopes(sources, diagnostics)
@@ -139,18 +157,27 @@ class EntityTests(unittest.TestCase):
     def test_invalid_targets_cycles_and_duplicate_fields(self):
         cases = [
             ('entity A inherits Missing {}', 'inherits requires a visible entity'),
-            ('decodes Names {} entity A inherits Names {}', 'inherits requires a visible entity'),
+            (
+                'decodes Names {} entity A inherits Names {}',
+                'inherits requires a visible entity',
+            ),
             ('entity A inherits Decodes {}', 'cannot inherit final entity'),
             ('entity A inherits DecodesEntry {}', 'inherits requires a visible entity'),
             ('extend Missing { attr x: string }', 'extend requires a visible'),
-            ('decodes Names {} extend Names { attr x: string }', 'extend requires a visible'),
+            (
+                'decodes Names {} extend Names { attr x: string }',
+                'extend requires a visible',
+            ),
             ('extend Decodes { attr x: string }', 'cannot extend final entity'),
             ('entity A inherits A {}', 'inheritance cycle'),
             (
                 'entity A inherits B {} entity B inherits C {} entity C inherits A {}',
                 'inheritance cycle',
             ),
-            ('entity A { attr x: string } extend A { attr x: string }', 'duplicate field: x'),
+            (
+                'entity A { attr x: string } extend A { attr x: string }',
+                'duplicate field: x',
+            ),
             (
                 'entity A {} extend A { attr x: string } extend A { attr x: string }',
                 'duplicate field: x',
@@ -176,7 +203,10 @@ class EntityTests(unittest.TestCase):
             document(
                 'namespace extras from core import Security extend Security { attr a: string }'
             ),
-            document('namespace extras extend Security { attr b: string }', 'unimported.yambl'),
+            document(
+                'namespace extras extend Security { attr b: string }',
+                'unimported.yambl',
+            ),
         ]
         diagnostics = check(sources)
         self.assertEqual(len(diagnostics), 1)

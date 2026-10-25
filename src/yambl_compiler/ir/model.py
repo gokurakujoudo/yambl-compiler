@@ -3,10 +3,16 @@
 from dataclasses import dataclass
 from typing import Literal
 
-
-@dataclass(frozen=True)
-class Record:
-    """Mark explicitly supported IR records for the JSON codec."""
+from yambl_compiler.computation.records import (
+    Body,
+    Span,
+)
+from yambl_compiler.computation.records import (
+    Expression as CalculationExpression,
+)
+from yambl_compiler.computation.records import (
+    Record as Record,
+)
 
 
 @dataclass(frozen=True)
@@ -55,7 +61,15 @@ class Value(Record):
     """
 
     kind: Literal[
-        'string', 'integer', 'decimal', 'bool', 'reference', 'type', 'dictionary', 'code', 'flags'
+        'string',
+        'integer',
+        'decimal',
+        'bool',
+        'reference',
+        'type',
+        'dictionary',
+        'code',
+        'flags',
     ]
     text: str
     target: str
@@ -242,18 +256,96 @@ class Field(Record):
     :param decorators: Metadata applications.
     :param extension: Whether the field originated in an extend block.
     :param source: Original declaration location.
+    :param calculation: Checked computation, absent for stored fields.
     """
 
     name: str
     identity: str
     implementation: str
-    category: Literal['id', 'static', 'config', 'snapshot', 'scd']
+    category: Literal['id', 'static', 'config', 'snapshot', 'scd', "computed"]
     expression: Expression
     expanded: Expression
     type: Type
     default: Value | None
     decorators: tuple[Call, ...]
     extension: bool
+    source: Source
+    calculation: Calculation | None = None
+
+
+@dataclass(frozen=True)
+class CalculationInput(Record):
+    """Expose one inferred calculation argument.
+
+    :param name: Public parameter name.
+    :param type: Resolved input constraint.
+    :param required: Whether an unbound input requires a caller value.
+    :param default: Optional input-dependent or literal default.
+    :param sites: Contributing expression locations.
+    """
+
+    name: str
+    type: Type
+    required: bool
+    default: CalculationExpression | None
+    sites: tuple[Source, ...]
+
+
+@dataclass(frozen=True)
+class CalculationAccess(Record):
+    """Resolve a field operation without importing source files at runtime.
+
+    :param span: Field access location.
+    :param identity: Logical field identity.
+    :param implementation: Original declaring implementation.
+    :param operation: Requested field operation.
+    """
+
+    span: Span
+    identity: str
+    implementation: str
+    operation: Literal["at", "best_available", "value"]
+
+
+@dataclass(frozen=True)
+class Calculation(Record):
+    """Carry a checked calculation body and its dependency contract.
+
+    :param body: Structured expression body.
+    :param inputs: Inferred public arguments, sorted by name.
+    :param accesses: Resolved field operations.
+    :param dependencies: Referenced computed implementation identities.
+    :param references: Used lexical declaration names and resolved identities.
+    """
+
+    body: Body
+    inputs: tuple[CalculationInput, ...]
+    accesses: tuple[CalculationAccess, ...]
+    dependencies: tuple[str, ...]
+    references: tuple[Text, ...]
+
+
+@dataclass(frozen=True)
+class Dimension(Record):
+    """Define an entity-scoped dimension and its selection policy.
+
+    :param name: Entity-local dimension name.
+    :param value_name: Explicit dimension parameter name.
+    :param expression: Lexical value type expression.
+    :param type: Resolved dimension value contract.
+    :param hierarchy_name: Selector parameter, empty when absent.
+    :param hierarchy_default: Optional selector reference ID.
+    :param fallback: Per-instance fallback expression, or None.
+    :param source: Original declaration location.
+    """
+
+    name: str
+    value_name: str
+    expression: Expression
+    type: Type
+    hierarchy_name: str
+    hierarchy_default: CalculationExpression | None
+    fallback: CalculationExpression | None
     source: Source
 
 
@@ -287,6 +379,7 @@ class Definition(Record):
     :param effective: Effective implementation choices, including inherited fields.
     :param entries: Declared and generated dictionary entries.
     :param source: Original declaration location.
+    :param dimensions: Entity-owned dimension declarations, including extensions.
     """
 
     kind: Literal['entity', 'value', 'type_alias', 'decorator', 'decodes']
@@ -301,6 +394,7 @@ class Definition(Record):
     effective: tuple[Effective, ...]
     entries: tuple[Entry, ...]
     source: Source
+    dimensions: tuple[Dimension, ...] = ()
 
 
 @dataclass(frozen=True)

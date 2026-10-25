@@ -108,7 +108,7 @@ def dumps(layout: Layout) -> str:
     """
     return (
         json.dumps(
-            {"runtime_revision": 1, "layout": asdict(layout)},
+            {"runtime_revision": 2, "layout": asdict(layout)},
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -134,7 +134,7 @@ def load_contract(path: Path, digest: str) -> Layout:
         not isinstance(data, dict)
         or set(data) != {"runtime_revision", "layout"}
         or type(data["runtime_revision"]) is not int
-        or data["runtime_revision"] != 1
+        or data["runtime_revision"] != 2
     ):
         raise ValueError("unsupported runtime contract revision or fields")
     return cast(Layout, decode(data["layout"], Layout))

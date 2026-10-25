@@ -9,14 +9,21 @@ from yambl_compiler.semantics.validation import check
 
 class TypeTests(unittest.TestCase):
     def test_entity_types_and_arbitrary_self_fields(self):
-        for mode in ('attr', 'static attr', 'config attr', 'snapshot attr', 'scd attr', 'id'):
-            source = f'''entity Security {{ static attr currency: string }}
+        for mode in (
+            'attr',
+            'static attr',
+            'config attr',
+            'snapshot attr',
+            'scd attr',
+            'id',
+        ):
+            source = f"""entity Security {{ static attr currency: string }}
                 entity Selection {{
                     attr conditions: field_mapping<AttrCats.Static, self.target_kind::value>
                     {mode} target_kind: type<Security>
                 }}
                 entity Narrow inherits Selection {{ attr copied: field_mapping<AttrCats.Static, self.target_kind::value> }}
-                extend Selection {{ attr extra: field_mapping<AttrCats.Config, self.later::value> attr later: type<Entity> }}'''
+                extend Selection {{ attr extra: field_mapping<AttrCats.Config, self.later::value> attr later: type<Entity> }}"""
             with self.subTest(mode=mode):
                 self.assertEqual(check([document(source)]), [])
         self.assertEqual(
@@ -45,13 +52,22 @@ class TypeTests(unittest.TestCase):
             ('field_mapping<id, A>', 'incompatible argument for field_mapping.a'),
             ("field_mapping<'static', A>", 'incompatible argument for field_mapping.a'),
             ('field_mapping<static<A>, A>', 'static does not accept generic arguments'),
-            ('field_mapping<self.target::value, A>', 'incompatible argument for field_mapping.a'),
+            (
+                'field_mapping<self.target::value, A>',
+                'incompatible argument for field_mapping.a',
+            ),
             (
                 'field_mapping<AttrCats.Static, Missing>',
                 'incompatible argument for field_mapping.b',
             ),
-            ('field_mapping<AttrCats.Static, Codes>', 'incompatible argument for field_mapping.b'),
-            ('field_mapping<AttrCats.Static, self.absent::value>', 'unknown field: absent'),
+            (
+                'field_mapping<AttrCats.Static, Codes>',
+                'incompatible argument for field_mapping.b',
+            ),
+            (
+                'field_mapping<AttrCats.Static, self.absent::value>',
+                'unknown field: absent',
+            ),
             (
                 'field_mapping<AttrCats.Static, self.bad::value>',
                 'incompatible argument for field_mapping.b',
@@ -60,7 +76,10 @@ class TypeTests(unittest.TestCase):
             ('code<self.target::value>', 'code requires a Decodes instance value'),
             ('code<Entity>', 'code requires a Decodes instance identifier'),
             ('collection<type<A>>', 'collection requires an entity reference'),
-            ('values<field_mapping<AttrCats.Static, A>>', 'values requires a value type'),
+            (
+                'values<field_mapping<AttrCats.Static, A>>',
+                'values requires a value type',
+            ),
             (
                 'mapping<string, field_mapping<AttrCats.Static, A>>',
                 'mapping values cannot be collections',
@@ -68,16 +87,18 @@ class TypeTests(unittest.TestCase):
         ]
         for spelling, message in cases:
             with self.subTest(spelling=spelling):
-                source = f'decodes Codes {{}} entity A {{ attr target: type<Entity> attr bad: string attr item: {spelling} }}'
+                source = f"decodes Codes {{}} entity A {{ attr target: type<Entity> attr bad: string attr item: {spelling} }}"
                 self.assertIn(message, [d.message for d in check([document(source)])])
         self.assertEqual(
-            check([document('entity A { attr x: field_mapping<AttrCats.Static, Entity> }')]), []
+            check([document('entity A { attr x: field_mapping<AttrCats.Static, Entity> }')]),
+            [],
         )
 
     def test_unresolved_codes_distinguish_names_from_external_identifiers(self):
         source = """entity Security {
     attr market: code<'TradingMarkets'>
-    @dimension(source: code<PriceSources>)
+    dimension price_source { value source: code<PriceSources> }
+    @dimension(price_source)
     snapshot attr price: decimal
     attr markets: values<code<TradingMarkets>>
     attr by_name: mapping<string, code<'OtherSources'>>
@@ -94,17 +115,20 @@ class TypeTests(unittest.TestCase):
             ],
         )
         self.assertEqual(
-            [(item.line, item.column) for item in diagnostics], [(2, 18), (3, 29), (5, 31), (6, 35)]
+            [(item.line, item.column) for item in diagnostics],
+            [(2, 18), (3, 49), (6, 31), (7, 35)],
         )
         self.assertEqual(
-            [item.severity for item in diagnostics], ['warning', 'error', 'error', 'warning']
+            [item.severity for item in diagnostics],
+            ['warning', 'error', 'error', 'warning'],
         )
         self.assertTrue(all(item.path == Path('security.yambl') for item in diagnostics))
         self.assertIn(':2:18: warning: undefined Decodes: TradingMarkets', str(diagnostics[0]))
 
     def test_quoted_identifier_uses_scope_and_cannot_replace_reference(self):
         self.assertEqual(
-            check([document("decodes Currencies {} entity A { attr c: code<'Currencies'> }")]), []
+            check([document("decodes Currencies {} entity A { attr c: code<'Currencies'> }")]),
+            [],
         )
         for expression in ["code<'A'>", 'code<Decodes>', 'code<integer>']:
             with self.subTest(expression=expression):

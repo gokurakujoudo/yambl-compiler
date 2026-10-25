@@ -2,13 +2,21 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import field as data_field
 
+from yambl_compiler.semantics.computation import Calculation, check_computations
 from yambl_compiler.semantics.decodes import check_decodes
 from yambl_compiler.semantics.decorators import check_decorators
+from yambl_compiler.semantics.dimensions import check_dimensions, collect_dimensions
 from yambl_compiler.semantics.entities import EntityIndex, check_entities
 from yambl_compiler.semantics.expressions import check_aliases
 from yambl_compiler.semantics.fields import check_field
-from yambl_compiler.semantics.symbols import Unit, declaration_name, resolve_scopes
+from yambl_compiler.semantics.symbols import (
+    EntityKey,
+    Unit,
+    declaration_name,
+    resolve_scopes,
+)
 from yambl_compiler.semantics.values import check_values
 from yambl_compiler.syntax.parser import Diagnostic, Document, children
 
@@ -20,11 +28,15 @@ class Analysis:
     :param units: Analyzed compilation units.
     :param entities: Effective fields and logical identities.
     :param diagnostics: Ordered errors and warnings.
+    :param calculations: Typed computation bodies and inferred parameter contracts.
     """
 
     units: tuple[Unit, ...]
     entities: EntityIndex
     diagnostics: tuple[Diagnostic, ...]
+    calculations: dict[tuple[EntityKey, str], Calculation] = data_field(
+        default_factory=dict[tuple[EntityKey, str], Calculation]
+    )
 
 
 def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
@@ -34,7 +46,9 @@ def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
     :param diagnostics: Existing scope diagnostics.
     :returns: Checked semantic model and source-ordered diagnostics.
     """
+    collect_dimensions(units, diagnostics)
     entities = check_entities(units, diagnostics)
+    check_dimensions(units, diagnostics)
     check_decorators(units, diagnostics)
     check_aliases(units, diagnostics)
     check_values(units, diagnostics)
@@ -55,14 +69,17 @@ def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
                 )
         for decodes in children(unit.document.tree, 'decodes'):
             check_decodes(decodes, unit, diagnostics)
+    calculations = check_computations(entities, diagnostics, units)
     return Analysis(
         tuple(units),
         entities,
         tuple(
             sorted(
-                diagnostics, key=lambda item: (str(item.path), item.line, item.column, item.message)
+                set(diagnostics),
+                key=lambda item: (str(item.path), item.line, item.column, item.message),
             )
         ),
+        calculations,
     )
 
 

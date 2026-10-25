@@ -22,9 +22,11 @@ namespace builtins
 候选字段，`price_fallback_days` 是 config 候选字段，其值须为 integer。
 各组配置的目标类型与内容属于实例数据，本轮没有引入实例声明语法或实例检查器。
 
-编译器和 LSP 检查模型声明、依赖字段类型及字段关系；不执行条件匹配或配置应用。
-多个组同时匹配时的优先级、配置合并、缺失值的其他比较规则及计算字段留待后续定义。
-本页的等值条件不引入表达式语言。
+编译器和 LSP 检查模型声明；生成的读取器按实例执行条件匹配。
+priority 为必填任意精度 integer，每个 config 字段独立选择设置它的最高优先级组。
+并列且类型化值相同则合并，不同则 ERROR；组覆盖实例值，实例 NO_ENTRY 才使用实际子类型默认值。
+when 的非错误非正常结果视为不匹配，ERROR 阻止该实例配置求值；不降级到低优先级配置。
+结果保留相关组身份，会话内缓存按实例及实际实现区分。计算字段不参与 when。
 
 通用原语和任意 `self` 类型字段的用法见
 [实体类型与字段映射](../builtins/field-mapping.md)。
@@ -32,6 +34,7 @@ namespace builtins
 
 final entity ConfigGroup {
     id config_group_id: string
+    static attr priority: integer
     static attr entity_type: type<Entity>
     static attr when: field_mapping<AttrCats.Static, self.entity_type::value>
     static attr then_set: field_mapping<AttrCats.Config, self.entity_type::value>

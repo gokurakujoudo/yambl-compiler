@@ -7,13 +7,14 @@ Hierarchy 为一个维度提供候选值的优先级。hierarchy_entries 是无�
 按 ordering 升序尝试候选，ordering 在同一 Hierarchy 内必须唯一。
 entry_value 保存维度字符串或字典代码值。优先级唯一性是实例数据约束。
 
-@dimension(source: code<'PriceSources'>, price_dimension: Hierarchy) 允许用
-source 直接定位，或以 price_dimension 指定 Hierarchy 引用；显式 source 优先。
-在实体、时间及其他维度固定时，选择存在字段数据的第一个候选。
-不进行跨日回退或额外有效性判断。NO_DATA 表示没有满足取数要求的数据；EMPTY
-表示记录存在但值为空，NO_ENTRY 表示对应存储记录不存在。遇到这些结果时是否
-继续尝试其他候选、多个 Hierarchy 的组合及结果传播规则尚未定义。
-当前工具不执行取数或校验 Hierarchy 实例数据。
+@dimension(prices) 引用实体内命名 dimension，其中 value 声明实际维度，hierarchy
+声明可选选择参数及默认引用。显式 value 优先于 hierarchy，显式 hierarchy 优先于默认值。
+best_available 对 snapshot 在每实例有效 fallback_days 窗口内先按日期倒序，再按 ordering 升序选择。
+SCD 只查询指定日期，不跨缺口回退；static 不使用日期。NO_ENTRY 行视为不存在，
+EMPTY/NOT_APPLICABLE 跳过；无候选为 NO_ENTRY，全部跳过为 NO_DATA。
+优先于正常结果的 ERROR 阻止选择；选中后不解码较低优先级业务载荷。
+最多自动选择一个 Hierarchy，其他维度必须显式提供。运行时检查 ordering 唯一性。
+完整规则见 [计算字段](../syntex/computations.md)。
 ---
 
 final entity Hierarchy {

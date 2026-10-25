@@ -16,21 +16,13 @@ class RelationsTests(FilesystemCase):
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write(
             'main.yambl',
-            """entity Root {
-                id key: string
-                config attr choice: Child
-                @sparse('links') attr sparse_link: Child
-                @dimension(source: string)
-                snapshot attr children: collection<Child>
-            }
-            entity Child inherits Root {}
-            """,
+            "entity Root { dimension dimension_160 { value source: string } \n                id key: string\n                config attr choice: Child\n                @sparse('links') attr sparse_link: Child\n                @dimension(dimension_160)\n                snapshot attr children: collection<Child>\n            }\n            entity Child inherits Root {}\n            ",
         )
         layout = build_layout(compile_repository(self.root))
         diagram = relations(layout)
         self.assertEqual(diagram, relations(layout))
         tables = {table.name: table for table in layout.tables}
-        nodes = {table.name: f't{i}' for i, table in enumerate(layout.tables)}
+        nodes = {table.name: f"t{i}" for i, table in enumerate(layout.tables)}
         root = nodes['tb_root']
         self.assertIn(
             f'{nodes["tb_root_config"]}::string ..> {root}::id : Root.choice [field=Root.choice]',
@@ -45,7 +37,7 @@ class RelationsTests(FilesystemCase):
             diagram,
         )
         header = nodes['tb_root_children_status']
-        self.assertIn(f'{header}::id ..> {root}::id : owner', diagram)
+        self.assertIn(f"{header}::id ..> {root}::id : owner", diagram)
         self.assertNotIn('entity "tb_child"', diagram)
         node_tables = {node: tables[name] for name, node in nodes.items()}
         edges = re.findall(r'^(t\d+)::(\w+) (-->|\.\.>) (t\d+)::(\w+) : (.+)$', diagram, re.M)

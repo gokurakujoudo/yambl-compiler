@@ -14,39 +14,7 @@ from yambl_compiler.storage.documentation import docstring, literal_section, met
 from yambl_compiler.storage.generation import generate, python_package
 from yambl_compiler.storage.layout import build_layout
 
-SOURCE = """
-@title(text='根实体')
-@description('Root description')
-entity Root {
-    id key: string
-    @title('Price')
-    @description(text='Observed price')
-    @dimension(source: code<'Sources'>, priority: Hierarchy)
-    @dimension(venue: string)
-    @temporal(day: date)
-    snapshot attr price: decimal
-    scd attr balance: decimal
-    config attr limit: integer = 20
-    attr tag: string
-}
-@title('Zulu title')
-entity Zulu inherits Root {
-    @overload attr shared: string
-    @override
-    @title(text='Price')
-    @description('Observed price')
-    @dimension(source: code<'Sources'>, priority: Hierarchy)
-    @dimension(venue: string)
-    @temporal(day: date)
-    snapshot attr price: decimal
-}
-entity Alpha inherits Root {
-    @overload attr shared: string
-    @override attr tag: exact<'fixed'>
-}
-entity Child inherits Alpha {}
-extend Root { attr extended: string }
-"""
+SOURCE = "\n@title(text='根实体')\n@description('Root description')\nentity Root { dimension dimension_150 { value source: code<'Sources'> hierarchy priority: Hierarchy } dimension dimension_211 { value venue: string } \n    id key: string\n    @title('Price')\n    @description(text='Observed price')\n    @dimension(dimension_150)\n    @dimension(dimension_211)\n    @temporal(day: date)\n    snapshot attr price: decimal\n    scd attr balance: decimal\n    config attr limit: integer = 20\n    attr tag: string\n}\n@title('Zulu title')\nentity Zulu inherits Root { dimension dimension_545 { value source: code<'Sources'> hierarchy priority: Hierarchy } dimension dimension_606 { value venue: string } \n    @overload attr shared: string\n    @override\n    @title(text='Price')\n    @description('Observed price')\n    @dimension(dimension_545)\n    @dimension(dimension_606)\n    @temporal(day: date)\n    snapshot attr price: decimal\n}\nentity Alpha inherits Root {\n    @overload attr shared: string\n    @override attr tag: exact<'fixed'>\n}\nentity Child inherits Alpha {}\nextend Root { attr extended: string }\n"
 
 
 class DocumentationTests(FilesystemCase):

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from yambl_compiler.ir.model import Bound, Definition, Field, Model
 
-LAYOUT_REVISION = 4
+LAYOUT_REVISION = 5
 
 
 def quote(name: str) -> str:

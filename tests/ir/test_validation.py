@@ -45,9 +45,12 @@ decodes Codes { - 1 First: 'First' }
 
     def test_catalogue_and_source_invariants(self):
         cases = [
-            (lambda d: d['definitions'].append(d['definitions'][0]), 'duplicate qualified'),
+            (
+                lambda d: d['definitions'].append(d['definitions'][0]),
+                'duplicate qualified',
+            ),
             (lambda d: d.update(definitions=[]), 'incomplete embedded'),
-            (lambda d: d.update(constants=[]), 'seven result constants'),
+            (lambda d: d.update(constants=[]), "eight result constants"),
             (lambda d: d.update(prefix='bad-prefix'), '$.prefix'),
             (lambda d: self.definition(d, 'A').update(identity='wrong'), '.identity'),
             (lambda d: self.definition(d, 'A').update(name='other.A'), '.name'),
@@ -66,7 +69,10 @@ decodes Codes { - 1 First: 'First' }
                 'relative POSIX',
             ),
             (lambda d: self.definition(d, 'A')['source'].update(line=0), 'source span'),
-            (lambda d: self.definition(d, 'A')['source'].update(end_line=1), 'source span'),
+            (
+                lambda d: self.definition(d, 'A')['source'].update(end_line=1),
+                'source span',
+            ),
             (
                 lambda d: self.definition(d, 'item').update(parent='business.A'),
                 'only entities inherit',
@@ -139,7 +145,10 @@ decodes Codes { - 1 First: 'First' }
 
     def test_broken_references_cycles_and_derived_views(self):
         cases = [
-            (lambda d: d['fields'][0].update(applicable=[]), 'inconsistent semantic value'),
+            (
+                lambda d: d['fields'][0].update(applicable=[]),
+                'inconsistent semantic value',
+            ),
             (
                 lambda d: self.definition(d, 'A').update(parent='business.Missing'),
                 'missing reference',
@@ -173,13 +182,19 @@ decodes Codes { - 1 First: 'First' }
                 ),
                 'duplicate decorator',
             ),
-            (lambda d: self.definition(d, 'B')['fields'][0].update(decorators=[]), 'override'),
+            (
+                lambda d: self.definition(d, 'B')['fields'][0].update(decorators=[]),
+                'override',
+            ),
             (
                 lambda d: self.definition(d, 'Codes')['entries'][0].update(code='invalid_code'),
                 'PascalCase',
             ),
             (lambda d: d.update(primitives=[]), 'inconsistent semantic value'),
-            (lambda d: d.update(external_dictionaries=[]), 'inconsistent semantic value'),
+            (
+                lambda d: d.update(external_dictionaries=[]),
+                'inconsistent semantic value',
+            ),
         ]
         for mutate, error in cases:
             with self.subTest(error=error):
@@ -190,9 +205,13 @@ decodes Codes { - 1 First: 'First' }
         self.assertIn('expected str', '\n'.join(validate_ir(replace(self.model, prefix=7))))
         self.assertIn('revision', '\n'.join(validate_ir(replace(self.model, format_revision=99))))
         self.assertIn(
-            'digest mismatch', '\n'.join(validate_ir(replace(self.model, builtins_digest='x')))
+            'digest mismatch',
+            '\n'.join(validate_ir(replace(self.model, builtins_digest='x'))),
         )
-        with patch('yambl_compiler.ir.validation.restore', side_effect=RecursionError('nesting')):
+        with patch(
+            'yambl_compiler.ir.validation.restore',
+            side_effect=RecursionError('nesting'),
+        ):
             self.assertIn('nesting', '\n'.join(validate_ir(self.model)))
         self.assertEqual(differences({'a': 1}, {'b': 1}), ['$: inconsistent semantic value'])
         self.assertEqual(differences([1], [1, 2]), ['$: inconsistent semantic value'])

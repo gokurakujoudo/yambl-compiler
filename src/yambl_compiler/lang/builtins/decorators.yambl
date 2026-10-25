@@ -27,7 +27,7 @@ decorator @temporal(*time: date)
 
 @targets(DecoratorTargets.EntityAttr, categories=AttrCats.Static + AttrCats.Snapshot + AttrCats.Scd)
 @allow_multiple
-decorator @dimension(*variation: string, *selector?: Hierarchy)
+decorator @dimension(definition: dimension_ref)
 
 @targets(DecoratorTargets.EntityAttr, categories=AttrCats.Static)
 decorator @sparse(cat: string)

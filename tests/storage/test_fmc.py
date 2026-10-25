@@ -27,7 +27,7 @@ class FmcTests(FilesystemCase):
         initialize(output, files, 'files')
         with self.assertRaises(FileExistsError):
             initialize(output, files, 'files')
-        isolated = '''import sys, runpy
+        isolated = """import sys, runpy
 from pathlib import Path
 from datetime import date
 from decimal import Decimal
@@ -42,14 +42,34 @@ for backend, path in [('sqlite',sys.argv[2]), ('files',sys.argv[3])]:
     bond = reader.get_security('BOND00000001').value
     assert bond.price.value
     assert bond.issue_date == m.Success(date(2025,1,1))
-    assert bond.price_fallback_days == m.Success(20,'model_default')
+    assert bond.price_fallback_days == m.Success(30,'model_default')
+    req = m.FundIndustryMarketValueRequest
+    results = reader.read_fund_industry_market_value_many([
+        req(id_value='FUND00000001', as_of_date=date(2026,1,6)),
+        req(id_value='FUND00000001', as_of_date=date(2026,1,6), industry_date=date(2026,1,5)),
+        req(id_value='FUND00000001', as_of_date=date(2026,1,2), best_effort=True),
+    ])
+    assert isinstance(results, m.Success), results
+    assert dict(results.value[0].value) == {'Financials': Decimal('10451.5'), 'Other': Decimal('38'), 'Technology': Decimal('100')}, results
+    assert dict(results.value[1].value) == {'Industrials': Decimal('10451.5'), 'Other': Decimal('38'), 'Technology': Decimal('100')}, results
+    assert isinstance(results.value[2],m.Partial), results
+    assert results.value[2].value == {'Industrials':Decimal('10175.625')}, results
     reader.close()
-    assert bond.read_price(date(2026,1,2),source=m.PriceSourcesCode('Primary')) == m.Success(Decimal('101.25'))
+    assert bond.read_price(date(2026,1,2),price_source=m.PriceSourcesCode('Primary')) == m.Success(Decimal('101.25'))
 sys.argv=['fmc_model','check-data','--backend','files','--path',sys.argv[3]]
 runpy.run_module('fmc_model',run_name='__main__')
-'''
+"""
         completed = subprocess.run(
-            [sys.executable, '-I', '-S', '-c', isolated, str(output), str(database), str(files)],
+            [
+                sys.executable,
+                '-I',
+                '-S',
+                '-c',
+                isolated,
+                str(output),
+                str(database),
+                str(files),
+            ],
             capture_output=True,
             text=True,
         )
@@ -75,10 +95,10 @@ runpy.run_module('fmc_model',run_name='__main__')
             self.assertEqual(bond.read_issue_date(), Success(date(2025, 1, 1)))
             self.assertEqual(bond.read_issuer_name(), Success("Example issuer"))
             self.assertEqual(
-                bond.read_price(date(2026, 1, 2), source=module.PriceSourcesCode("Primary")),
+                bond.read_price(date(2026, 1, 2), price_source=module.PriceSourcesCode("Primary")),
                 Success(Decimal("101.25")),
             )
-            self.assertEqual(bond.read_price_fallback_days(), Success(20, "model_default"))
+            self.assertEqual(bond.read_price_fallback_days(), Success(30, "model_default"))
             self.assertEqual(
                 reader.get_security("SECU00000001").value.read_price_fallback_days(),
                 Success(5),

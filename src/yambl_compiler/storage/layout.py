@@ -174,7 +174,7 @@ def build_layout(model: Model) -> Layout:
         impls = [declarations[i] for i in logical.implementations]
         f = impls[0]
         owner = f.implementation.rsplit(".", 1)[0]
-        if owner not in entities or f.category == "id":
+        if owner not in entities or f.category in ("id", "computed"):
             continue
         dimensions = tuple(
             sorted(
@@ -444,13 +444,13 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
             )
             table.fields.append(f.identity)
             value, members = "", ""
-            if f.type.name == "type":
+            if f.type.name in ("type", "integer"):
                 value = f.name
                 table.columns.append(
                     Column(
                         value,
                         nullable=True,
-                        meaning=f"{f.identity}: qualified entity type",
+                        meaning=f"{f.identity}: {type_label(f.type)}",
                     )
                 )
                 table.checks.append(

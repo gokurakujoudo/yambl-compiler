@@ -7,10 +7,35 @@ from typing import Literal, cast
 
 from lark import Token, Tree
 
-from yambl_compiler.syntax.parser import Diagnostic, Document, children, diagnostic, tokens
+from yambl_compiler.syntax.parser import (
+    Diagnostic,
+    Document,
+    children,
+    diagnostic,
+    tokens,
+)
 
-VALUES = {'bool', 'string', 'integer', 'float', 'decimal', 'date', 'datetime', 'snowflake_id'}
-GENERICS = {'collection', 'values', 'mapping', 'code', 'type', 'attrs', 'alias', 'exact'}
+VALUES = {
+    'bool',
+    'string',
+    'integer',
+    'float',
+    'decimal',
+    'date',
+    'datetime',
+    'snowflake_id',
+    "dimension_ref",
+}
+GENERICS = {
+    'collection',
+    'values',
+    'mapping',
+    'code',
+    'type',
+    'attrs',
+    'alias',
+    'exact',
+}
 type EntityKey = tuple[str, str]
 type DeclarationKind = Literal['entity', 'decodes', 'value', 'type_alias', 'decorator']
 
@@ -36,6 +61,7 @@ class World:
     :param parents: Nearest-first business ancestors, excluding Entity.
     :param reserved: Names provided by the selected language definitions.
     :param constants: Result constant meanings from the selected definitions.
+    :param dimensions: Entity-scoped named dimension declarations.
     """
 
     declarations: dict[EntityKey, tuple[Unit, Tree[Token]]] = field(
@@ -49,6 +75,9 @@ class World:
     )
     reserved: set[str] = field(default_factory=set[str])
     constants: dict[str, str] = field(default_factory=dict[str, str])
+    dimensions: dict[EntityKey, dict[str, tuple[Unit, Tree[Token]]]] = field(
+        default_factory=lambda: dict[EntityKey, dict[str, tuple[Unit, Tree[Token]]]]()
+    )
 
 
 @dataclass(frozen=True)
@@ -96,7 +125,7 @@ def header(node: Tree[Token]) -> Tree[Token]:
     :param node: Block declaration.
     :returns: Header excluding metadata and body.
     """
-    return children(node, f'{node.data}_header')[0]
+    return children(node, f"{node.data}_header")[0]
 
 
 def declaration_name(node: Tree[Token]) -> str:
@@ -186,7 +215,9 @@ def resolve_scopes(
             if (name in reserved and not model_definition) or key in symbols:
                 diagnostics.append(
                     diagnostic(
-                        document, header(declaration), f'duplicate or reserved declaration: {name}'
+                        document,
+                        header(declaration),
+                        f"duplicate or reserved declaration: {name}",
                     )
                 )
             kind = cast(DeclarationKind, declaration.data)
@@ -203,10 +234,14 @@ def resolve_scopes(
             name = str(tokens(imported)[-1])
             target = symbols.get(symbol_key(document, name, ns))
             if target is None:
-                diagnostics.append(diagnostic(document, imported, f'unknown import: {ns}.{name}'))
+                diagnostics.append(diagnostic(document, imported, f"unknown import: {ns}.{name}"))
             elif name in scope or name in reserved:
                 diagnostics.append(
-                    diagnostic(document, imported, f'import conflicts with visible name: {name}')
+                    diagnostic(
+                        document,
+                        imported,
+                        f"import conflicts with visible name: {name}",
+                    )
                 )
             else:
                 scope[name] = target
@@ -225,7 +260,10 @@ def resolve_scopes(
                 'type_alias',
                 'decorator',
             ):
-                world.declarations[('builtins', declaration_name(node))] = (builtin, node)
+                world.declarations[('builtins', declaration_name(node))] = (
+                    builtin,
+                    node,
+                )
     for unit in units:
         for node in unit.document.tree.children:
             if isinstance(node, Tree) and node.data in (

@@ -4,9 +4,18 @@ from pathlib import Path
 
 from lark import Token, Tree
 
-from yambl_compiler.ir.model import Call, Definition, Expression, Field, Model, Source, Value
+from yambl_compiler.ir.model import (
+    Call,
+    Definition,
+    Expression,
+    Field,
+    Model,
+    Source,
+    Value,
+)
 from yambl_compiler.semantics.symbols import EntityKey, resolve_scopes
 from yambl_compiler.semantics.validation import Analysis, analyze_units
+from yambl_compiler.syntax.computation import restore_body, restore_expression
 from yambl_compiler.syntax.parser import Diagnostic, Document
 
 
@@ -38,7 +47,9 @@ def scalar(value: Value, source: Source) -> Token:
     """
     if value.kind == 'string':
         return token(
-            "'" + value.text.replace('\\', '\\\\').replace("'", "\\'") + "'", 'STRING', source
+            "'" + value.text.replace('\\', '\\\\').replace("'", "\\'") + "'",
+            'STRING',
+            source,
         )
     kind = {'integer': 'INT', 'decimal': 'NUMBER', 'bool': 'BOOLEAN'}[value.kind]
     return token(value.text, kind, source)
@@ -68,7 +79,7 @@ class Restoring:
             namespace = 'model\0' + namespace
         key = (namespace, name)
         if name in self.bindings and self.bindings[name] != key:
-            raise ValueError(f'{source.path}:{source.line}: conflicting lexical reference: {name}')
+            raise ValueError(f"{source.path}:{source.line}: conflicting lexical reference: {name}")
         self.bindings[name] = key
         return token(name, 'NAME', source)
 
@@ -107,7 +118,7 @@ class Restoring:
                             token(':', 'COLON', source),
                             scalar(
                                 Value(
-                                    'string' if parameter.name == 'regex' else 'integer',
+                                    ('string' if parameter.name == 'regex' else 'integer'),
                                     parameter.value,
                                     '',
                                 ),
@@ -142,7 +153,10 @@ class Restoring:
             parts.append(
                 Tree(
                     'binding',
-                    [token('as', 'AS', source), token(expression.binding, 'NAME', source)],
+                    [
+                        token('as', 'AS', source),
+                        token(expression.binding, 'NAME', source),
+                    ],
                 )
             )
         return Tree('type_expr', parts)
@@ -165,7 +179,11 @@ class Restoring:
                     values.extend(
                         [
                             token(arg.name, 'NAME', arg.expression.source),
-                            token(':' if arg.kind == 'pair' else '=', 'OP', arg.expression.source),
+                            token(
+                                ':' if arg.kind == 'pair' else '=',
+                                'OP',
+                                arg.expression.source,
+                            ),
                         ]
                     )
                 values.append(self.expression(arg.expression))
@@ -195,9 +213,16 @@ class Restoring:
             parts.append(
                 Tree(
                     'default_value',
-                    [token('=', 'EQUAL', field.source), scalar(field.default, field.source)],
+                    [
+                        token('=', 'EQUAL', field.source),
+                        scalar(field.default, field.source),
+                    ],
                 )
             )
+        if field.calculation is not None:
+            for reference in field.calculation.references:
+                self.reference(reference.value, field.source)
+            parts.append(restore_body(field.calculation.body))
         return Tree('field', [*self.calls(field.decorators), Tree('field_body', parts)])
 
     def declaration(
@@ -216,7 +241,10 @@ class Restoring:
         if definition.final and kind == 'entity':
             header_parts.append(token('final', 'FINAL', source))
         header_parts.extend(
-            [token(keyword, keyword.upper(), source), self.reference(definition.identity, source)]
+            [
+                token(keyword, keyword.upper(), source),
+                self.reference(definition.identity, source),
+            ]
         )
         if definition.parent and not extension:
             parent = (
@@ -245,7 +273,10 @@ class Restoring:
                     )
                 )
             formals.append(
-                Tree('decorator_parameter' if kind == 'decorator' else 'type_parameter', items)
+                Tree(
+                    'decorator_parameter' if kind == 'decorator' else 'type_parameter',
+                    items,
+                )
             )
         if kind == 'decorator':
             header_parts.extend(formals)
@@ -259,6 +290,47 @@ class Restoring:
         ]
         if not extension and definition.expression:
             body.append(self.expression(definition.expression))
+        if not extension:
+            for dimension in definition.dimensions:
+                p = dimension.source
+                members: list[Token | Tree[Token]] = [
+                    token("dimension", "DIMENSION", p),
+                    token(dimension.name, "NAME", p),
+                ]
+                members.append(
+                    Tree(
+                        "dimension_value",
+                        [
+                            token("value", "VALUE", p),
+                            token(dimension.value_name, "NAME", p),
+                            token(":", "COLON", p),
+                            self.expression(dimension.expression),
+                        ],
+                    )
+                )
+                if dimension.hierarchy_name:
+                    hierarchy: list[Token | Tree[Token]] = [
+                        token("hierarchy", "HIERARCHY", p),
+                        token(dimension.hierarchy_name, "NAME", p),
+                        token(":", "COLON", p),
+                        Tree("type_expr", [self.reference("builtins.Hierarchy", p)]),
+                    ]
+                    if dimension.hierarchy_default is not None:
+                        hierarchy.append(restore_expression(dimension.hierarchy_default))
+                    members.append(Tree("dimension_hierarchy", hierarchy))
+                if dimension.fallback is not None:
+                    members.append(
+                        Tree(
+                            "dimension_fallback",
+                            [
+                                token("fallback_days", "FALLBACK_DAYS", p),
+                                token("=", "EQUAL", p),
+                                restore_expression(dimension.fallback),
+                            ],
+                        )
+                    )
+                members.append(token("}", "RBRACE", p))
+                body.append(Tree("dimension", members))
         body.extend(
             self.field(f)
             for f in (
@@ -328,7 +400,7 @@ def restore(model: Model) -> Analysis:
         for name, key in references.items():
             if key not in symbols:
                 raise ValueError(
-                    f'$.definitions: missing reference {key[0]}.{key[1]} ({unit.document.path})'
+                    f"$.definitions: missing reference {key[0]}.{key[1]} ({unit.document.path})"
                 )
             unit.scope[name] = symbols[key]
     return analyze_units(units, diagnostics)

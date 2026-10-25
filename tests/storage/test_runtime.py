@@ -29,7 +29,8 @@ entity A {
     config attr threshold: decimal
     config attr peer: Other
     config attr peers: collection<Other>
-    @dimension(source: code<'Sources'>)
+    dimension price_sources { value source: code<'Sources'> }
+    @dimension(price_sources)
     @temporal(day: date)
     snapshot attr price: decimal
     @temporal(day: date)
@@ -57,7 +58,10 @@ class RuntimeTests(FilesystemCase):
         self.path = self.root / "example.db"
         self.writer = sqlite3.connect(self.path)
         self.addCleanup(self.writer.close)
-        self.writer.executescript((self.output / "schema.sql").read_text(encoding="utf-8"))
+        self.writer.execute("PRAGMA foreign_keys = ON")
+        self.writer.executescript(
+            "BEGIN;\n" + (self.output / "schema.sql").read_text(encoding="utf-8") + "\nCOMMIT;"
+        )
         for root, values in [
             ("A", [("a", "A"), ("b", "B"), ("c", "C")]),
             ("Other", [("1", "Other")]),

@@ -25,31 +25,33 @@ class BuiltinTests(FilesystemCase):
             'NO_DATA': 'retrieval requirements',
             'ENTITY_NOT_FOUND': 'Dereferencing',
             'ERROR': 'error occurred',
+            "PARTIAL": "usable data",
         }
         self.assertEqual(set(RESULT_CONSTANTS), set(expected))
         for name, meaning in expected.items():
             with self.subTest(name=name):
                 self.assertIn(meaning, RESULT_CONSTANTS[name])
                 for prefix in ['', 'namespace builtins ', 'namespace business ']:
-                    messages = [d.message for d in check([document(f'{prefix}entity {name} {{}}')])]
-                    self.assertIn(f'duplicate or reserved declaration: {name}', messages)
+                    messages = [d.message for d in check([document(f"{prefix}entity {name} {{}}")])]
+                    self.assertIn(f"duplicate or reserved declaration: {name}", messages)
 
     def test_result_constants_are_not_types_or_assignable_literals(self):
         for name in RESULT_CONSTANTS:
             for source in [
-                f'entity A {{ attr x: {name} }}',
-                f'type label = {name}',
-                f'@title({name}) entity A {{}}',
-                f'entity A {{ attr x: exact<{name}> }}',
-                f'entity A {{ attr x: {name} + AttrCats.Static }}',
-                f'@targets(DecoratorTargets.All) decorator @note(text: string = {name})',
+                f"entity A {{ attr x: {name} }}",
+                f"type label = {name}",
+                f"@title({name}) entity A {{}}",
+                f"entity A {{ attr x: exact<{name}> }}",
+                f"entity A {{ attr x: {name} + AttrCats.Static }}",
+                f"@targets(DecoratorTargets.All) decorator @note(text: string = {name})",
             ]:
                 with self.subTest(source=source):
                     messages = [d.message for d in check([document(source)])]
                     self.assertIn(
-                        f'result constant {name} cannot be used in model expressions', messages
+                        f"result constant {name} cannot be used in model expressions",
+                        messages,
                     )
-                    self.assertNotIn(f'unknown type: {name}', messages)
+                    self.assertNotIn(f"unknown type: {name}", messages)
             self.assertEqual(
                 check(
                     [
@@ -91,7 +93,8 @@ class BuiltinTests(FilesystemCase):
                 if not file.is_file():
                     continue
                 self.assertEqual(
-                    file.read_bytes(), (AUTHOR_ROOT / file.relative_to(MODEL_ROOT)).read_bytes()
+                    file.read_bytes(),
+                    (AUTHOR_ROOT / file.relative_to(MODEL_ROOT)).read_bytes(),
                 )
 
     def test_invalid_resource_is_not_silently_accepted(self):
@@ -119,7 +122,9 @@ class BuiltinTests(FilesystemCase):
             ' '.join(run(self.root, 'check').messages),
         )
 
-    def test_builtin_namespace_does_not_export_user_models_or_bypass_other_reserved_names(self):
+    def test_builtin_namespace_does_not_export_user_models_or_bypass_other_reserved_names(
+        self,
+    ):
         for text in [
             'entity Hierarchy {}',
             'namespace business entity Hierarchy {}',

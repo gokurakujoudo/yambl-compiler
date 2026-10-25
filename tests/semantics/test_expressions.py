@@ -6,68 +6,55 @@ from tests.support import document
 from yambl_compiler.semantics.entities import check_entities
 from yambl_compiler.semantics.expressions import Resolver, Term
 from yambl_compiler.semantics.symbols import World, resolve_scopes
-from yambl_compiler.semantics.types import ENTITY, UNKNOWN, Resolved, accepts, common_type
+from yambl_compiler.semantics.types import (
+    ENTITY,
+    UNKNOWN,
+    Resolved,
+    accepts,
+    common_type,
+)
 from yambl_compiler.semantics.validation import check
 from yambl_compiler.syntax.parser import children
 
-VALID = '''
-namespace core
-decodes Currencies { - 100 USD: 'USD' - 200 CNY: 'CNY' }
-type money = decimal[18, 4]
-type selected<t: type<Entity>> = t
-type codes<d: Decodes> = code<d>
-type label = string
-type preference = Hierarchy
-entity Security inherits Entity {
-    id security_id: snowflake_id
-    static attr currency: code<Currencies>
-    config attr size: money = 12.5
-    @dimension(source: label, preference: preference)
-    attr price: money
-    attr related: collection<Security>
-}
-entity Bond inherits Security { @override static attr currency: exact<Currencies.USD> }
-entity Selection {
-    attr kind: type<Security>
-    attr c1: self.kind::value
-    attr c2: self.kind::type
-    attr c3: type<self.kind::value>
-    attr c4: alias<self.kind::value>
-    attr c5: selected<self.kind::value>
-    attr dictionary: Decodes
-    attr code: code<self.dictionary::value>
-    attr codes: codes<Currencies>
-    attr security: Security
-    attr currency: self.security::value.currency::type
-    attr same_currency: alias<self.security::value.currency::value>
-    attr fields: attrs<AttrCats.Static, Security>
-    attr bond_fields: attrs<AttrCats.Static, Bond>
-    attr mapping: mapping<attrs<AttrCats.Static, Security> as Attr, Attr::type>
-    attr shortcut: field_mapping<AttrCats.Static, Security>
-    attr references: mapping<type<Entity>, Security>
-    attr by_code: mapping<code<Currencies>, money>
-    attr by_field: mapping<attrs<AttrCats.Static, Security>, string>
-    attr id_map: mapping<snowflake_id, string>
-    attr aliases: alias<self.mapping::value>
-}
-'''
+VALID = "\nnamespace core\ndecodes Currencies { - 100 USD: 'USD' - 200 CNY: 'CNY' }\ntype money = decimal[18, 4]\ntype selected<t: type<Entity>> = t\ntype codes<d: Decodes> = code<d>\ntype label = string\ntype preference = Hierarchy\nentity Security inherits Entity { dimension dimension_366 { value source: label hierarchy preference: preference } \n    id security_id: snowflake_id\n    static attr currency: code<Currencies>\n    config attr size: money = 12.5\n    @dimension(dimension_366)\n    attr price: money\n    attr related: collection<Security>\n}\nentity Bond inherits Security { @override static attr currency: exact<Currencies.USD> }\nentity Selection {\n    attr kind: type<Security>\n    attr c1: self.kind::value\n    attr c2: self.kind::type\n    attr c3: type<self.kind::value>\n    attr c4: alias<self.kind::value>\n    attr c5: selected<self.kind::value>\n    attr dictionary: Decodes\n    attr code: code<self.dictionary::value>\n    attr codes: codes<Currencies>\n    attr security: Security\n    attr currency: self.security::value.currency::type\n    attr same_currency: alias<self.security::value.currency::value>\n    attr fields: attrs<AttrCats.Static, Security>\n    attr bond_fields: attrs<AttrCats.Static, Bond>\n    attr mapping: mapping<attrs<AttrCats.Static, Security> as Attr, Attr::type>\n    attr shortcut: field_mapping<AttrCats.Static, Security>\n    attr references: mapping<type<Entity>, Security>\n    attr by_code: mapping<code<Currencies>, money>\n    attr by_field: mapping<attrs<AttrCats.Static, Security>, string>\n    attr id_map: mapping<snowflake_id, string>\n    attr aliases: alias<self.mapping::value>\n}\n"
 
 INVALID = [
-    ('entity A { attr a: exact<1<string>> }', 'a value expression does not accept type arguments'),
-    ('entity A { attr a: self<A> }', 'a value expression does not accept type arguments'),
+    (
+        'entity A { attr a: exact<1<string>> }',
+        'a value expression does not accept type arguments',
+    ),
+    (
+        'entity A { attr a: self<A> }',
+        'a value expression does not accept type arguments',
+    ),
     ('entity A { attr a: string as X }', 'as binding is only allowed on a mapping key'),
     ('entity A { attr a: Decodes[1] }', 'invalid parameters for Decodes'),
     ('type loop = loop', 'type dependency cycle'),
     ('type first = second type second = first', 'type dependency cycle'),
-    ('type bad<t: type<Entity>> = t<string>', 'a bound parameter does not accept arguments'),
-    ('type bad<T: type<Entity>, T: type<Entity>> = T', 'duplicate or invalid type parameter: T'),
+    (
+        'type bad<t: type<Entity>> = t<string>',
+        'a bound parameter does not accept arguments',
+    ),
+    (
+        'type bad<T: type<Entity>, T: type<Entity>> = T',
+        'duplicate or invalid type parameter: T',
+    ),
     ('type bad = self.kind::value', 'self requires an instance context'),
     ('entity A { attr a: self.b::type attr b: self.a::type }', 'type dependency cycle'),
     ('entity A { attr a: string::type }', ':: requires a field description'),
     ('entity A { attr a: string.nope }', 'field access requires an entity'),
-    ('entity A { attr a: string attr b: self.a::nope }', ':: requires a field description'),
-    ('entity A { attr a: string attr b: self.a.type }', 'field access requires an entity'),
-    ('entity A { attr a: string attr b: A.a::value }', 'field value requires an instance origin'),
+    (
+        'entity A { attr a: string attr b: self.a::nope }',
+        ':: requires a field description',
+    ),
+    (
+        'entity A { attr a: string attr b: self.a.type }',
+        'field access requires an entity',
+    ),
+    (
+        'entity A { attr a: string attr b: A.a::value }',
+        'field value requires an instance origin',
+    ),
     (
         'entity A { attr a: mapping<attrs<AttrCats.Static, A> as Attr, Attr::value> }',
         'field value requires an instance origin',
@@ -80,11 +67,17 @@ INVALID = [
     ('entity A { attr a: alias<string> }', 'alias requires an instance field value'),
     ('entity A { attr a: alias<1> }', 'alias requires an instance field value'),
     ('entity A { attr a: attrs<string, A> }', 'attrs requires an AttrCats code'),
-    ('entity A { attr a: attrs<AttrCats.Static, string> }', 'attrs requires an entity type value'),
+    (
+        'entity A { attr a: attrs<AttrCats.Static, string> }',
+        'attrs requires an entity type value',
+    ),
     ('entity A { attr a: attrs<AttrCats.absent, A> }', 'unknown Decodes code'),
     ('entity A {} entity B { attr a: A.absent::type }', 'unknown field: absent'),
     ('entity A { attr a: Entity[1] }', 'invalid parameters for Entity'),
-    ('type money = decimal entity A { attr a: money[1] }', 'invalid type arguments for money'),
+    (
+        'type money = decimal entity A { attr a: money[1] }',
+        'invalid type arguments for money',
+    ),
 ]
 
 
@@ -147,7 +140,7 @@ class ExpressionTests(unittest.TestCase):
             ('exact<Currencies.CNY>', False),
             ('code<Currencies>', False),
         ]:
-            source = prefix + f' entity C inherits B {{ @override attr x: {spelling} }}'
+            source = prefix + f" entity C inherits B {{ @override attr x: {spelling} }}"
             self.assertEqual(not check([document(source)]), valid)
         for primitive, constant in [
             ('string', "'x'"),
@@ -157,7 +150,7 @@ class ExpressionTests(unittest.TestCase):
             ('type<Entity>', 'A'),
             ('Decodes', 'Currencies'),
         ]:
-            source = f'decodes Currencies {{}} entity A {{ attr x: {primitive} }} entity B inherits A {{ @override attr x: exact<{constant}> }}'
+            source = f"decodes Currencies {{}} entity A {{ attr x: {primitive} }} entity B inherits A {{ @override attr x: exact<{constant}> }}"
             self.assertEqual(check([document(source)]), [], source)
 
     def test_singleton_defaults_and_alias_literals(self):
@@ -197,7 +190,8 @@ class ExpressionTests(unittest.TestCase):
         self.assertEqual(common_type([bond, Resolved('Other', 'reference')], world), ENTITY)
         self.assertEqual(
             common_type(
-                [Resolved('type', args=(bond,)), Resolved('type', args=(security,))], world
+                [Resolved('type', args=(bond,)), Resolved('type', args=(security,))],
+                world,
             ),
             Resolved('type', args=(security,)),
         )

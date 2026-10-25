@@ -9,14 +9,19 @@ from typing import Literal, cast
 
 from lark import Token, Tree
 
+from yambl_compiler.computation.records import Expression as CalculationExpression
 from yambl_compiler.ir.codec import encode, seal, semantic
 from yambl_compiler.ir.expansion import expand
 from yambl_compiler.ir.model import (
     Access,
     Argument,
     Bound,
+    Calculation,
+    CalculationAccess,
+    CalculationInput,
     Call,
     Definition,
+    Dimension,
     Effective,
     Entry,
     Expression,
@@ -33,9 +38,17 @@ from yambl_compiler.ir.model import (
 )
 from yambl_compiler.semantics.decodes import is_flags
 from yambl_compiler.semantics.decorators import bind_call, parameters
+from yambl_compiler.semantics.dimensions import resolve_dimension
 from yambl_compiler.semantics.expressions import Resolver, Term, integer_text
 from yambl_compiler.semantics.fields import field_name
-from yambl_compiler.semantics.symbols import GENERICS, VALUES, EntityKey, Unit, header, namespace
+from yambl_compiler.semantics.symbols import (
+    GENERICS,
+    VALUES,
+    EntityKey,
+    Unit,
+    header,
+    namespace,
+)
 from yambl_compiler.semantics.types import Resolved, common_type
 from yambl_compiler.semantics.validation import Analysis
 from yambl_compiler.syntax.parser import annotations, children, string_value, tokens
@@ -179,7 +192,7 @@ class Lowering:
                         else (
                             'integer'
                             if resolved.name in ('integer', 'snowflake_id')
-                            else 'decimal' if resolved.name in ('decimal', 'float') else 'string'
+                            else ('decimal' if resolved.name in ('decimal', 'float') else 'string')
                         )
                     )
                 )
@@ -305,7 +318,10 @@ class Lowering:
                         selected = self.identity(scope_key, member)
                 accesses.append(
                     Access(
-                        cast('AccessOperator', operator), member, selected, self.source(unit, child)
+                        cast('AccessOperator', operator),
+                        member,
+                        selected,
+                        self.source(unit, child),
                     )
                 )
             prefix.append(child)
@@ -340,7 +356,9 @@ class Lowering:
             if evaluated.exact is not None:
                 selected_codes = evaluated.exact.split('+') if evaluated.exact else ['None']
                 result = replace(
-                    result, accesses=(replace(accesses[0], name=selected_codes[0]),), operations=()
+                    result,
+                    accesses=(replace(accesses[0], name=selected_codes[0]),),
+                    operations=(),
                 )
                 result = replace(
                     result,
@@ -348,7 +366,9 @@ class Lowering:
                         Operation(
                             '+',
                             replace(
-                                result, accesses=(replace(accesses[0], name=code),), binding=''
+                                result,
+                                accesses=(replace(accesses[0], name=code),),
+                                binding='',
                             ),
                         )
                         for code in selected_codes[1:]
@@ -388,8 +408,105 @@ class Lowering:
                 )
             )
         return tuple(
-            sorted(result, key=lambda call: json.dumps(semantic(encode(call)), sort_keys=True))
+            sorted(
+                result,
+                key=lambda call: json.dumps(semantic(encode(call)), sort_keys=True),
+            )
         )
+
+    def calculation(self, key: EntityKey, name: str, unit: Unit) -> Calculation | None:
+        """Lower inferred computation contracts and lexical references.
+
+        :param key: Declaring entity identity.
+        :param name: Local field name.
+        :param unit: Original lexical scope.
+        :returns: Portable calculation, absent for stored fields.
+        """
+        checked = self.analysis.calculations.get((key, name))
+        if checked is None:
+            return None
+        references: dict[str, str] = {}
+
+        def visit(expression: CalculationExpression) -> None:
+            """Collect resolved lexical constants without retaining unused imports.
+
+            :param expression: Calculation subtree.
+            :returns: None.
+            """
+            if expression.kind == "name":
+                symbol = unit.scope.get(expression.value)
+                if symbol is not None:
+                    references[expression.value] = qualified(symbol.key)
+            for operand in expression.operands:
+                visit(operand)
+            for argument in expression.arguments:
+                visit(argument.expression)
+            for case in expression.cases:
+                visit(case.expression)
+
+        for binding in checked.body.bindings:
+            visit(binding.expression)
+        visit(checked.body.result)
+        return Calculation(
+            checked.body,
+            tuple(
+                CalculationInput(
+                    p.name,
+                    self.type(p.type),
+                    p.required,
+                    p.default,
+                    tuple(
+                        replace(
+                            self.source(scope, scope.document.tree),
+                            line=site.line,
+                            column=site.column,
+                            end_line=site.end_line,
+                            end_column=site.end_column,
+                        )
+                        for scope, site in p.sites
+                    ),
+                )
+                for p in checked.inputs
+            ),
+            tuple(
+                CalculationAccess(
+                    a.span,
+                    self.identity(a.owner, a.name),
+                    qualified(a.owner) + "." + a.name,
+                    cast("CalculationOperation", a.operation),
+                )
+                for a in checked.accesses
+            ),
+            tuple(qualified(owner) + "." + local for owner, local in checked.dependencies),
+            tuple(Text(n, t) for n, t in sorted(references.items())),
+        )
+
+    def dimensions(self, key: EntityKey, unit: Unit) -> tuple[Dimension, ...]:
+        """Lower entity-local dimension definitions, including extensions.
+
+        :param key: Entity identity.
+        :param unit: Declaration context.
+        :returns: Sorted portable dimension declarations.
+        """
+        result: list[Dimension] = []
+        for name in sorted(self.world.dimensions.get(key, {})):
+            dimension = resolve_dimension(unit, key, name, [])
+            assert dimension is not None
+            syntax = children(children(dimension.node, "dimension_value")[0], "type_expr")[0]
+            resolver = Resolver(dimension.unit, [], self.analysis.entities.field_types(key))
+            result.append(
+                Dimension(
+                    name,
+                    dimension.value_name,
+                    self.expression(syntax, dimension.unit, resolver),
+                    self.type(dimension.value_type),
+                    dimension.hierarchy_name,
+                    dimension.hierarchy_default,
+                    dimension.fallback,
+                    self.source(dimension.unit, dimension.node),
+                )
+            )
+        return tuple(result)
 
     def definition(self, key: EntityKey, unit: Unit, node: Tree[Token]) -> Definition:
         """Lower a declaration and all merged implementations it owns.
@@ -468,6 +585,7 @@ class Lowering:
                     self.calls(field, scope, field_resolver),
                     id(field) in self.extensions,
                     self.source(scope, body),
+                    self.calculation(key, name, scope),
                 )
             )
         effective: list[Effective] = []
@@ -475,7 +593,9 @@ class Lowering:
             owner, local_name = self.owners[id(site.declaration)]
             effective.append(
                 Effective(
-                    name, qualified(owner) + '.' + local_name, self.identity(owner, local_name)
+                    name,
+                    qualified(owner) + '.' + local_name,
+                    self.identity(owner, local_name),
                 )
             )
         entries: list[Entry] = []
@@ -483,7 +603,13 @@ class Lowering:
             parts = tokens(entry)
             order = str(int(str(parts[1]), 2)) if '0b' in parts[1] else integer_text(str(parts[1]))
             entries.append(
-                Entry(str(parts[2]), order, string_value(parts[4]), False, self.source(unit, entry))
+                Entry(
+                    str(parts[2]),
+                    order,
+                    string_value(parts[4]),
+                    False,
+                    self.source(unit, entry),
+                )
             )
         if node.data == 'decodes' and is_flags(node):
             entries.extend(
@@ -522,6 +648,7 @@ class Lowering:
             tuple(effective),
             tuple(sorted(entries, key=lambda entry: entry.code)),
             self.source(unit, header(node)),
+            self.dimensions(key, unit),
         )
 
     def model(self) -> Model:
@@ -564,7 +691,8 @@ class Lowering:
                     else cast(
                         Resolved,
                         common_type(
-                            [self.resolved_fields[f.implementation] for f in group], self.world
+                            [self.resolved_fields[f.implementation] for f in group],
+                            self.world,
                         ),
                     )
                 ),
@@ -586,7 +714,7 @@ class Lowering:
         )
         return seal(
             Model(
-                2,
+                3,
                 self.version,
                 self.prefix,
                 primitives,
@@ -595,7 +723,13 @@ class Lowering:
                 logical_fields,
                 tuple(
                     External(
-                        k, tuple(sorted(set(v), key=lambda s: (s.origin, s.path, s.line, s.column)))
+                        k,
+                        tuple(
+                            sorted(
+                                set(v),
+                                key=lambda s: (s.origin, s.path, s.line, s.column),
+                            )
+                        ),
                     )
                     for k, v in sorted(self.external.items())
                 ),
@@ -607,7 +741,15 @@ class Lowering:
 
 # Static aliases keep constructors precise without duplicating runtime dispatch tables.
 type LiteralValueKind = Literal[
-    'string', 'integer', 'decimal', 'bool', 'reference', 'type', 'dictionary', 'code', 'flags'
+    'string',
+    'integer',
+    'decimal',
+    'bool',
+    'reference',
+    'type',
+    'dictionary',
+    'code',
+    'flags',
 ]
 type AccessOperator = Literal['.', '::']
 type FlagOperator = Literal['+', '-']
@@ -615,5 +757,6 @@ type ExpressionKind = Literal[
     'primitive', 'generic', 'reference', 'parameter', 'self', 'literal', 'external'
 ]
 type ArgumentKind = Literal['positional', 'keyword', 'pair']
-type FieldCategory = Literal['id', 'static', 'config', 'snapshot', 'scd']
+type FieldCategory = Literal['id', 'static', 'config', 'snapshot', 'scd', "computed"]
+type CalculationOperation = Literal["at", "best_available", "value"]
 type DefinitionKind = Literal['entity', 'value', 'type_alias', 'decorator', 'decodes']

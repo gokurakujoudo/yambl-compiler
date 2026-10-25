@@ -45,16 +45,25 @@ VALID = [
 
 INVALID = [
     (
-        'entity A { @dimension(source: Hierarchy) attr x: string }',
+        "entity A { dimension d { value source: Hierarchy } @dimension(d) attr x: string }",
         'dimension value must be string or code',
     ),
-    ('entity A { @dimension(source: Missing) attr x: string }', 'unknown type: Missing'),
-    ('entity A { @dimension() attr x: string }', 'missing decorator argument: variation'),
+    (
+        "entity A { dimension d { value source: Missing } @dimension(d) attr x: string }",
+        'unknown type: Missing',
+    ),
+    (
+        'entity A { @dimension() attr x: string }',
+        "@dimension requires one named dimension reference on a field",
+    ),
     (
         'namespace builtins @allow_multiple @allow_multiple @targets(DecoratorTargets.All) decorator @allow_multiple()',
         'duplicate decorator: allow_multiple',
     ),
-    ('@targets(DecoratorTargets.All) decorator @Bad()', 'decorator names must use snake_case'),
+    (
+        '@targets(DecoratorTargets.All) decorator @Bad()',
+        'decorator names must use snake_case',
+    ),
     (
         '@targets(DecoratorTargets.All) decorator @tag(Bad: string)',
         'decorator parameter names must use snake_case',
@@ -84,7 +93,10 @@ INVALID = [
         "@targets(DecoratorTargets.All) decorator @tag(a: integer = 'x')",
         'incompatible decorator argument',
     ),
-    ('@targets(DecoratorTargets.All) decorator @tag(a: Missing)', 'unknown type: Missing'),
+    (
+        '@targets(DecoratorTargets.All) decorator @tag(a: Missing)',
+        'unknown type: Missing',
+    ),
     ('@missing entity A {}', 'unknown decorator: missing'),
     ('type tag = string @tag entity A {}', 'unknown decorator: tag'),
     (
@@ -147,13 +159,19 @@ INVALID = [
         '@targets(DecoratorTargets.All) decorator @tag() @tag @tag entity A {}',
         'duplicate decorator: tag',
     ),
-    ('@allow_multiple entity A {}', 'decorator allow_multiple does not allow this target'),
+    (
+        '@allow_multiple entity A {}',
+        'decorator allow_multiple does not allow this target',
+    ),
     (
         '@allow_multiple @allow_multiple @targets(DecoratorTargets.All) decorator @tag()',
         'duplicate decorator: allow_multiple',
     ),
     ('@flags type label = string', 'decorator flags does not allow this target'),
-    ('entity A { @flags attr x: string }', 'decorator flags does not allow this target'),
+    (
+        'entity A { @flags attr x: string }',
+        'decorator flags does not allow this target',
+    ),
     ('@override entity A {}', 'decorator override does not allow this target'),
     (
         '@targets(DecoratorTargets.All) decorator @tag(a: type<self::entity>) @tag(A) entity A {}',
@@ -209,12 +227,12 @@ TARGET_SITES = {
     'ValueAttr': 'value item { @tag attr item: string }',
 }
 VALID.extend(
-    f'@targets(DecoratorTargets.{kind}) decorator @tag() {site}'
+    f"@targets(DecoratorTargets.{kind}) decorator @tag() {site}"
     for kind, site in TARGET_SITES.items()
 )
 INVALID.extend(
     (
-        f'@targets(DecoratorTargets.{kind}) decorator @tag() {site}',
+        f"@targets(DecoratorTargets.{kind}) decorator @tag() {site}",
         'decorator tag does not allow this target',
     )
     for kind in TARGET_SITES
@@ -267,7 +285,10 @@ INVALID.extend(
             '@targets(DecoratorTargets.All) @targets(DecoratorTargets.Entity) decorator @tag()',
             'duplicate decorator: targets',
         ),
-        ('@targets() decorator @tag() @tag entity A {}', 'missing decorator argument: targets'),
+        (
+            '@targets() decorator @tag() @tag entity A {}',
+            'missing decorator argument: targets',
+        ),
         (
             '@targets(AttrCats.All) decorator @tag() @tag entity A {}',
             'incompatible decorator argument',
@@ -276,7 +297,10 @@ INVALID.extend(
             '@targets(DecoratorTargets.All, categories=DecoratorTargets.All) decorator @tag() @tag entity A {}',
             'incompatible decorator argument',
         ),
-        ("@targets('Entity') decorator @tag() @tag entity A {}", 'incompatible decorator argument'),
+        (
+            "@targets('Entity') decorator @tag() @tag entity A {}",
+            'incompatible decorator argument',
+        ),
         (
             '@targets(DecoratorTargets.Missing) decorator @tag() @tag entity A {}',
             'unknown Decodes code',
@@ -365,10 +389,19 @@ STORAGE_INVALID = [
     ("entity A { @sparse('x') scd attr x: string }", 'does not allow this target'),
     ("entity A { @dense('x') id key: string }", 'does not allow this target'),
     ("entity A { @sparse('x') attr x: collection<A> }", 'non-collection'),
-    ("type items = values<string> entity A { @dense('x') attr x: items }", 'non-collection'),
+    (
+        "type items = values<string> entity A { @dense('x') attr x: items }",
+        'non-collection',
+    ),
     ("entity A { @sparse('x') attr x: mapping<string, string> }", 'non-collection'),
-    ("entity A { @sparse('x') @dimension(source: string) attr x: string }", 'mutually exclusive'),
-    ("entity A { @dense('x') @dimension(source: string) attr x: string }", 'mutually exclusive'),
+    (
+        "entity A { @sparse('x') @dimension(source: string) attr x: string }",
+        'mutually exclusive',
+    ),
+    (
+        "entity A { @dense('x') @dimension(source: string) attr x: string }",
+        'mutually exclusive',
+    ),
     ("entity A { @sparse('x') @dense('x') attr x: string }", 'mutually exclusive'),
     ("entity A { @sparse('x') @sparse('x') attr x: string }", 'duplicate decorator'),
     (

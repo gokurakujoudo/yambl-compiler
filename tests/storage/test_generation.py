@@ -73,14 +73,14 @@ class GenerationTests(FilesystemCase):
                     'PRAGMA foreign_key_list(' + quote(table.name) + ')'
                 ):
                     self.assertIn(
-                        f'{nodes[table.name]}::{child_col} --> {nodes[parent]}::{parent_col} : FK (',
+                        f"{nodes[table.name]}::{child_col} --> {nodes[parent]}::{parent_col} : FK (",
                         diagram,
                     )
                 block = diagram.split(' as ' + nodes[table.name] + ' {\n')[1].split('\n}')[0]
                 for _, name, sql_type, required, _, pk in columns:
                     nullable = 'NOT NULL' if required else 'NULL'
-                    primary = f' <<PK {pk}>>' if pk else ''
-                    self.assertIn(f'    {name} : {sql_type} {nullable}{primary}', block)
+                    primary = f" <<PK {pk}>>" if pk else ''
+                    self.assertIn(f"    {name} : {sql_type} {nullable}{primary}", block)
                 for column in table.columns:
                     self.assertIn("| " + column.name + " |", reference)
                 for check in table.checks:
@@ -89,7 +89,7 @@ class GenerationTests(FilesystemCase):
                     self.assertIn(table.name + "__index_" + str(i), reference)
             self.assertEqual(
                 dict(db.execute("SELECT * FROM tb_yambl_metadata")),
-                {"layout_revision": "4", "model_digest": self.model.model_digest},
+                {"layout_revision": "5", "model_digest": self.model.model_digest},
             )
         self.assertEqual(len(manifest["tables"]), len(layout.tables))
         self.assertIn("model default: 20", reference)
@@ -141,19 +141,9 @@ class GenerationTests(FilesystemCase):
         self.assertEqual(list(output.parent.iterdir()), [])
 
     def test_readable_names_wide_identity_and_collisions(self):
-        model = self.compile("""namespace core
-            entity Portfolio { id portfolio_id: string attr title: string }
-            entity Fund inherits Portfolio { snapshot attr holdings: collection<HoldingEntry> }
-            entity HoldingEntry { id holding_entry_id: integer }
-            entity Security {
-                id security_id: string
-                static attr name: string
-                @dimension(source: string) snapshot attr price: decimal
-                @dimension(source: string) attr a: string
-                @dimension(source: code<'Sources'>) attr b: string
-                @dimension(source: string) attr c: string
-            }
-        """)
+        model = self.compile(
+            "namespace core\n            entity Portfolio { id portfolio_id: string attr title: string }\n            entity Fund inherits Portfolio { snapshot attr holdings: collection<HoldingEntry> }\n            entity HoldingEntry { id holding_entry_id: integer }\n            entity Security { dimension dimension_378 { value source: string } dimension dimension_450 { value source: string } dimension dimension_508 { value source: code<'Sources'> } dimension dimension_575 { value source: string } \n                id security_id: string\n                static attr name: string\n                @dimension(dimension_378) snapshot attr price: decimal\n                @dimension(dimension_450) attr a: string\n                @dimension(dimension_508) attr b: string\n                @dimension(dimension_575) attr c: string\n            }\n        "
+        )
         layout = build_layout(model)
         self.assertEqual(layout.fields["core.Portfolio.title"].table, "tb_core_portfolio")
         holdings = layout.fields["core.Portfolio.holdings"]
@@ -210,7 +200,7 @@ class GenerationTests(FilesystemCase):
                         ("builtins.AttrCats", "None", "All"),
                     )
                 ),
-                {"None": "0", "All": "30"},
+                {"None": "0", "All": "62"},
             )
             self.assertEqual(
                 db.execute(
@@ -308,7 +298,7 @@ class GenerationTests(FilesystemCase):
             ),
             ("entity A { id x: string attr id: string }", "collision"),
             (
-                "entity A { id x: string @dimension(class: string) attr v: string }",
+                "entity A { dimension dimension_24 { value class: string }  id x: string @dimension(dimension_24) attr v: string }",
                 "collision",
             ),
         ]
@@ -329,11 +319,11 @@ class GenerationTests(FilesystemCase):
                 'property collision',
             ),
             (
-                'entity A { id key: string @dimension(value: string) attr x: string }',
+                "entity A { dimension dimension_26 { value value: string }  id key: string @dimension(dimension_26) attr x: string }",
                 'record member collision',
             ),
             (
-                'entity A { id key: string @dimension(valid_from: string) scd attr x: string }',
+                "entity A { dimension dimension_26 { value valid_from: string }  id key: string @dimension(dimension_26) scd attr x: string }",
                 'record member collision',
             ),
             ("entity Reader { id x: string }", "public-name collision"),
@@ -359,7 +349,7 @@ class GenerationTests(FilesystemCase):
                 "time parameter collision",
             ),
             (
-                "entity A { id x: string @dimension(start_date: string) snapshot attr price: decimal }",
+                "entity A { dimension dimension_24 { value start_date: string }  id x: string @dimension(dimension_24) snapshot attr price: decimal }",
                 "time parameter collision",
             ),
         ]
@@ -367,17 +357,15 @@ class GenerationTests(FilesystemCase):
             with self.subTest(source=source), self.assertRaisesRegex(ValueError, message):
                 layout = build_layout(self.compile(source))
                 python_package(layout, "sample_model")
-        model = self.compile("""entity A { id x: string
-            @dimension(left: string) attr a: string
-            @dimension(right: string) attr b: string
-            @dimension(left: string) attr c: string
-        }""")
+        model = self.compile(
+            "entity A { dimension dimension_36 { value left: string } dimension dimension_88 { value right: string } dimension dimension_141 { value left: string }  id x: string\n            @dimension(dimension_36) attr a: string\n            @dimension(dimension_88) attr b: string\n            @dimension(dimension_141) attr c: string\n        }"
+        )
         layout = build_layout(model)
         self.assertEqual(layout.fields["A.a"].table, layout.fields["A.c"].table)
         self.assertNotEqual(layout.fields["A.a"].table, layout.fields["A.b"].table)
         static_names = build_layout(
             self.compile(
-                "entity A { id key: string @dimension(start_date: string) @dimension(as_of_date: string) attr text: string }"
+                "entity A { dimension dimension_26 { value start_date: string } dimension dimension_57 { value as_of_date: string }  id key: string @dimension(dimension_26) @dimension(dimension_57) attr text: string }"
             )
         )
         self.assertIn("start_date: str", python_package(static_names, "sample_model"))
@@ -433,7 +421,7 @@ class GenerationTests(FilesystemCase):
             json.loads(schema_path.read_text(encoding="utf-8"))["$defs"]["Model"]["properties"][
                 "format_revision"
             ]["const"],
-            2,
+            3,
         )
         self.assertFalse(run_generation(replace(schema_args, output=""), False).ok)
         self.assertFalse(run_generation(replace(schema_args, output="schema.txt"), False).ok)
@@ -451,12 +439,12 @@ class GenerationTests(FilesystemCase):
         with self.assertRaisesRegex(ValueError, "share its root ID"):
             build_layout(broken)
         model = self.compile(
-            "@flags decodes Codes { - 1 One: 'One' } entity A { id key: string @dimension(source: code<Codes>) attr value: string }"
+            "@flags decodes Codes { - 1 One: 'One' } entity A { dimension dimension_66 { value source: code<Codes> }  id key: string @dimension(dimension_66) attr value: string }"
         )
         with self.assertRaisesRegex(ValueError, "unsupported dimension"):
             build_layout(model)
         model = self.compile(
-            "entity A { id key: string @dimension(source: string) attr dim_source: string }"
+            "entity A { dimension dimension_26 { value source: string }  id key: string @dimension(dimension_26) attr dim_source: string }"
         )
         with self.assertRaisesRegex(ValueError, "SQL column collision"):
             build_layout(model)

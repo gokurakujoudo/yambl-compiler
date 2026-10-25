@@ -17,7 +17,8 @@ class DocumentationTests(unittest.TestCase):
             tree = ast.parse(path.read_text(encoding='utf-8'))
             for node in ast.walk(tree):
                 if not isinstance(
-                    node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+                    node,
+                    (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef),
                 ):
                     continue
                 with self.subTest(path=path.name, name=getattr(node, 'name', '<module>')):
@@ -74,6 +75,11 @@ class DocumentationTests(unittest.TestCase):
                         expected = [
                             item.target.id
                             for item in node.body
-                            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
+                            if isinstance(item, ast.AnnAssign)
+                            and isinstance(item.target, ast.Name)
+                            and not (
+                                isinstance(item.annotation, ast.Subscript)
+                                and ast.unparse(item.annotation.value) == "ClassVar"
+                            )
                         ]
                     self.assertCountEqual(actual, expected)

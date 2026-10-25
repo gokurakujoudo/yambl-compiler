@@ -5,5 +5,6 @@
   "NO_ENTRY": "The corresponding record does not exist in storage.",
   "NO_DATA": "No data satisfies the retrieval requirements, for example a Hierarchy lookup.",
   "ENTITY_NOT_FOUND": "Dereferencing an entity reference cannot find the corresponding instance.",
-  "ERROR": "An error occurred while retrieving data or computing a value."
+  "ERROR": "An error occurred while retrieving data or computing a value.",
+  "PARTIAL": "A computation produced usable data while omitting contributions; the result carries its value and issue details."
 }

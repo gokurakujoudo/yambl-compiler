@@ -9,7 +9,13 @@ from lark import Token, Tree
 from yambl_compiler.semantics.expressions import Resolver, Term
 from yambl_compiler.semantics.symbols import EntityKey, Unit, declaration_name, header
 from yambl_compiler.semantics.types import UNKNOWN, Resolved, accepts
-from yambl_compiler.syntax.parser import Diagnostic, annotations, children, diagnostic, tokens
+from yambl_compiler.syntax.parser import (
+    Diagnostic,
+    annotations,
+    children,
+    diagnostic,
+    tokens,
+)
 
 
 @dataclass(frozen=True)
@@ -122,7 +128,11 @@ def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Dia
     """
     if not annotations(declaration, 'targets'):
         diagnostics.append(
-            diagnostic(unit.document, header(declaration), 'decorator requires explicit @targets')
+            diagnostic(
+                unit.document,
+                header(declaration),
+                'decorator requires explicit @targets',
+            )
         )
     seen: set[str] = set()
     pair_seen = optional_seen = False
@@ -131,11 +141,12 @@ def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Dia
         if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', formal.name):
             resolver.issue(formal.node, 'decorator parameter names must use snake_case')
         if formal.name in seen:
-            resolver.issue(formal.node, f'duplicate decorator parameter: {formal.name}')
+            resolver.issue(formal.node, f"duplicate decorator parameter: {formal.name}")
         seen.add(formal.name)
         if (pair_seen and not formal.pair) or (optional_seen and not formal.optional):
             resolver.issue(
-                formal.node, 'ordinary parameters precede pairs; optional pairs come last'
+                formal.node,
+                'ordinary parameters precede pairs; optional pairs come last',
             )
         if (formal.optional and not formal.pair) or (formal.pair and formal.default is not None):
             resolver.issue(formal.node, 'only pairs use ?; only ordinary parameters use defaults')
@@ -171,8 +182,36 @@ def bind_call(
     actual_resolver = Resolver(unit, diagnostics, {}, bindings={'self': capture(node, unit)})
     symbol = unit.scope.get(name)
     if symbol is None or symbol.kind != 'decorator':
-        actual_resolver.issue(call, f'unknown decorator: {name}')
+        actual_resolver.issue(call, f"unknown decorator: {name}")
         return ''
+    if name == "dimension" and symbol.key == unit.scope["dimension"].key:
+        from yambl_compiler.semantics.computation import structural
+        from yambl_compiler.semantics.dimensions import field_dimension
+
+        dimension = field_dimension(unit, node, call, diagnostics)
+        if dimension is None:
+            return ""
+        dimension_bound = [("variation", dimension.value_name, dimension.value_type)]
+        if dimension.hierarchy_name:
+            dimension_bound.append(
+                (
+                    "selector",
+                    dimension.hierarchy_name,
+                    Resolved("Hierarchy", "reference", key=unit.scope["Hierarchy"].key),
+                )
+            )
+        if bound_arguments is not None:
+            bound_arguments.extend(dimension_bound)
+        if values is not None:
+            values.update((n, t) for n, _, t in dimension_bound)
+        return repr(
+            (
+                symbol.key,
+                dimension_bound,
+                structural(dimension.hierarchy_default),
+                structural(dimension.fallback),
+            )
+        )
     scope, declaration = unit.world.declarations[symbol.key]
     formal_resolver = Resolver(scope, diagnostics, {}, bindings=actual_resolver.bindings)
     formals = parameters(declaration)
@@ -190,7 +229,7 @@ def bind_call(
             if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', key):
                 actual_resolver.issue(argument, 'pair keys must use snake_case')
             if key in keys:
-                actual_resolver.issue(argument, f'duplicate pair key: {key}')
+                actual_resolver.issue(argument, f"duplicate pair key: {key}")
             keys.add(key)
             formal = pairs[pair_position] if pair_position < len(pairs) else None
             pair_position += 1
@@ -206,9 +245,9 @@ def bind_call(
         if pair_seen and kind != 'pair_argument':
             actual_resolver.issue(argument, 'new pairs must follow ordinary arguments')
         if formal is None:
-            actual_resolver.issue(argument, f'unexpected argument for decorator: {name}')
+            actual_resolver.issue(argument, f"unexpected argument for decorator: {name}")
         elif formal.name in supplied:
-            actual_resolver.issue(argument, f'duplicate decorator argument: {formal.name}')
+            actual_resolver.issue(argument, f"duplicate decorator argument: {formal.name}")
         else:
             supplied[formal.name] = argument
     bound: list[tuple[str, str, Resolved]] = []
@@ -222,7 +261,7 @@ def bind_call(
                 actual = argument_type(formal_resolver, formal.default, expected)
                 bound.append((formal.name, '', actual))
             elif not formal.optional:
-                actual_resolver.issue(call, f'missing decorator argument: {formal.name}')
+                actual_resolver.issue(call, f"missing decorator argument: {formal.name}")
             continue
         syntax = children(provided, 'type_expr')[0]
         if formal.pair:
@@ -285,7 +324,7 @@ def check_target(
         allowed &= mode.capitalize() in (values.get('categories', UNKNOWN).exact or '').split('+')
     if not allowed:
         diagnostics.append(
-            diagnostic(unit.document, call, f'decorator {name} does not allow this target')
+            diagnostic(unit.document, call, f"decorator {name} does not allow this target")
         )
 
 
@@ -322,7 +361,7 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
                             or not annotations(definition, 'allow_multiple')
                         ):
                             diagnostics.append(
-                                diagnostic(unit.document, call, f'duplicate decorator: {name}')
+                                diagnostic(unit.document, call, f"duplicate decorator: {name}")
                             )
                     seen.add(name)
                     if name in ('sparse', 'dense'):
@@ -397,7 +436,10 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
                             first = Resolver(
                                 unit, [], {}, bindings={'self': capture(node, unit)}
                             ).resolve(children(pairs[0], 'type_expr')[0])
-                            if first.kind != 'unknown' and first.name not in ('string', 'code'):
+                            if first.kind != 'unknown' and first.name not in (
+                                'string',
+                                'code',
+                            ):
                                 diagnostics.append(
                                     diagnostic(
                                         unit.document,
@@ -409,6 +451,10 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
                             key = str(tokens(pair)[0])
                             if key in dimensions:
                                 diagnostics.append(
-                                    diagnostic(unit.document, pair, f'duplicate dimension: {key}')
+                                    diagnostic(
+                                        unit.document,
+                                        pair,
+                                        f"duplicate dimension: {key}",
+                                    )
                                 )
                             dimensions.add(key)

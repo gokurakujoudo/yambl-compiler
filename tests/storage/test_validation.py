@@ -13,22 +13,7 @@ from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status
 from yambl_compiler.storage.validation import cycles
 
-SOURCE = """entity Node {
- id key: string
- attr parent: Node
- attr other: Node
- attr foreign: Other
- attr narrow: Child
- attr children: collection<Node>
- config attr limit: integer = 1
- config attr active: bool = true
- @dimension(source: string) attr dim: Node
- snapshot attr snap: Node
- scd attr period: Node
-}
-entity Child inherits Node { @override attr parent: Node attr extra: string }
-entity Other { id key: string attr parent: Node }
-"""
+SOURCE = "entity Node { dimension dimension_207 { value source: string } \n id key: string\n attr parent: Node\n attr other: Node\n attr foreign: Other\n attr narrow: Child\n attr children: collection<Node>\n config attr limit: integer = 1\n config attr active: bool = true\n @dimension(dimension_207) attr dim: Node\n snapshot attr snap: Node\n scd attr period: Node\n}\nentity Child inherits Node { @override attr parent: Node attr extra: string }\nentity Other { id key: string attr parent: Node }\n"
 
 
 class ValidationTests(FilesystemCase):
@@ -52,7 +37,10 @@ class ValidationTests(FilesystemCase):
         )
         self.db.executemany(
             'INSERT INTO tb_node_config(id,field,state,int,bool) VALUES (?,?,?,?,?)',
-            [('a', 'Node.limit', 'VALUE', '1', None), ('a', 'Node.active', 'VALUE', None, 1)],
+            [
+                ('a', 'Node.limit', 'VALUE', '1', None),
+                ('a', 'Node.active', 'VALUE', None, 1),
+            ],
         )
         self.db.commit()
 

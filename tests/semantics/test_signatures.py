@@ -13,10 +13,10 @@ class SignatureTests(unittest.TestCase):
     def test_dimension_selector_association_is_part_of_signature(self):
         from yambl_compiler.semantics.validation import check
 
-        shared = 'entity Base {} entity A inherits Base { @overload @dimension(x: string, a: Hierarchy) @dimension(y: string, b: Hierarchy) attr z: string } '
-        same = 'entity B inherits Base { @overload @dimension(y: string, b: Hierarchy) @dimension(x: string, a: Hierarchy) attr z: string }'
-        different = same.replace('y: string, b:', 'y: string, a:').replace(
-            'x: string, a:', 'x: string, b:'
+        shared = "entity Base {} entity A inherits Base { dimension dimension_50 { value x: string hierarchy a: Hierarchy } dimension dimension_86 { value y: string hierarchy b: Hierarchy }  @overload @dimension(dimension_50) @dimension(dimension_86) attr z: string } "
+        same = "entity B inherits Base { dimension dimension_35 { value y: string hierarchy b: Hierarchy } dimension dimension_71 { value x: string hierarchy a: Hierarchy }  @overload @dimension(dimension_35) @dimension(dimension_71) attr z: string }"
+        different = same.replace("y: string hierarchy b:", "y: string hierarchy a:").replace(
+            "x: string hierarchy a:", "x: string hierarchy b:"
         )
         self.assertEqual(check([document(shared + same)]), [])
         self.assertTrue(
@@ -30,33 +30,28 @@ class SignatureTests(unittest.TestCase):
             (large + ', 4', 'scale: 4, precision: 0' + large),
         ]:
             source = document(
-                f'entity Base {{}} entity A inherits Base {{ @overload attr x: decimal[{left}] }} entity B inherits Base {{ @overload attr x: decimal[{right}] }}'
+                f"entity Base {{}} entity A inherits Base {{ @overload attr x: decimal[{left}] }} entity B inherits Base {{ @overload attr x: decimal[{right}] }}"
             )
             diagnostics = []
             check_entities(resolve_scopes([source], diagnostics), diagnostics)
             self.assertEqual(diagnostics, [])
 
     def test_equivalent_parameter_spelling_metadata_order_and_default(self):
-        source = document("""entity A {
-            @title('Price') @description('Daily')
-            @dimension(source: string) @dimension(unit: string)
-            attr x: decimal[18, 4]
-            @dimension(unit: string) @dimension(source: string)
-            @description('Daily') @title('Price')
-            attr y: decimal[scale: 4, precision: 18]
-            attr z: string['a\\\\b']
-            attr w: string[regex: 'a\\\\b']
-        }""")
+        source = document(
+            "entity A { dimension dimension_73 { value source: string } dimension dimension_100 { value unit: string } dimension dimension_172 { value unit: string } dimension dimension_197 { value source: string } \n            @title('Price') @description('Daily')\n            @dimension(dimension_73) @dimension(dimension_100)\n            attr x: decimal[18, 4]\n            @dimension(dimension_172) @dimension(dimension_197)\n            @description('Daily') @title('Price')\n            attr y: decimal[scale: 4, precision: 18]\n            attr z: string['a\\\\b']\n            attr w: string[regex: 'a\\\\b']\n        }"
+        )
         from yambl_compiler.semantics.validation import check
 
         self.assertEqual(check([source]), [])
         units = resolve_scopes([source], [])
         fields = children(children(source.tree, 'entity')[0], 'field')
         self.assertEqual(
-            field_signature(fields[0], units[0], {}), field_signature(fields[1], units[0], {})
+            field_signature(fields[0], units[0], {}),
+            field_signature(fields[1], units[0], {}),
         )
         self.assertEqual(
-            field_signature(fields[2], units[0], {}), field_signature(fields[3], units[0], {})
+            field_signature(fields[2], units[0], {}),
+            field_signature(fields[3], units[0], {}),
         )
 
     def test_configuration_defaults_do_not_change_signatures(self):
@@ -82,7 +77,8 @@ class SignatureTests(unittest.TestCase):
         ]
         self.assertNotEqual(*signatures)
         node = children(
-            children(index.fields[('a', 'A')]['x'].declaration, 'field_body')[0], 'type_expr'
+            children(index.fields[('a', 'A')]['x'].declaration, 'field_body')[0],
+            'type_expr',
         )[0]
         self.assertNotEqual(
             type_signature(node, units[0], {}),

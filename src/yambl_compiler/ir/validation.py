@@ -6,9 +6,18 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from typing import cast
 
+from yambl_compiler.computation.records import CalculationExpression, CalculationSpan
 from yambl_compiler.ir.codec import JSON, IRValue, decode, encode, seal, semantic
 from yambl_compiler.ir.lowering import Lowering
-from yambl_compiler.ir.model import Definition, Expression, Model, Record, Source, Value
+from yambl_compiler.ir.model import (
+    Definition,
+    Expression,
+    Field,
+    Model,
+    Record,
+    Source,
+    Value,
+)
 from yambl_compiler.ir.restoring import restore
 from yambl_compiler.syntax.parser import Diagnostic
 
@@ -39,6 +48,7 @@ CONSTANTS = {
     'NO_DATA',
     'ENTITY_NOT_FOUND',
     'ERROR',
+    "PARTIAL",
 }
 
 
@@ -56,7 +66,7 @@ def walk(value: IRValue, path: str = '$') -> list[tuple[str, Record]]:
             result.extend(walk(cast(IRValue, getattr(value, field.name)), path + '.' + field.name))
     elif isinstance(value, tuple):
         for i, item in enumerate(value):
-            result.extend(walk(item, f'{path}[{i}]'))
+            result.extend(walk(item, f"{path}[{i}]"))
     return result
 
 
@@ -78,9 +88,9 @@ def differences(expected: JSON, actual: JSON, path: str = '$') -> list[str]:
         return [
             issue
             for i, (left, right) in enumerate(zip(expected, actual, strict=True))
-            for issue in differences(left, right, f'{path}[{i}]')
+            for issue in differences(left, right, f"{path}[{i}]")
         ]
-    return [] if expected == actual else [f'{path}: inconsistent semantic value']
+    return [] if expected == actual else [f"{path}: inconsistent semantic value"]
 
 
 def structural(model: Model) -> list[str]:
@@ -99,13 +109,75 @@ def structural(model: Model) -> list[str]:
     if not REQUIRED <= builtin_names:
         issues.append('$.definitions: incomplete embedded builtins')
     if {c.name for c in model.constants} != CONSTANTS or len(model.constants) != len(CONSTANTS):
-        issues.append('$.constants: expected the seven result constants')
+        issues.append("$.constants: expected the eight result constants")
     if model.prefix and not re.fullmatch(
         r'[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*', model.prefix
     ):
         issues.append('$.prefix: invalid repository prefix')
     for path, item in walk(model):
-        if isinstance(item, Source):
+        if isinstance(item, CalculationSpan):
+            if (
+                item.start < 0
+                or item.end < item.start
+                or min(item.line, item.column, item.end_line, item.end_column) < 1
+                or (item.end_line, item.end_column) < (item.line, item.column)
+            ):
+                issues.append(path + ": invalid calculation span")
+        elif isinstance(item, CalculationExpression):
+            arity = {
+                "name": 0,
+                "string": 0,
+                "integer": 0,
+                "decimal": 0,
+                "bool": 0,
+                "member": 1,
+                "descriptor": 1,
+                "call": 1,
+                "unary": 1,
+                "binary": 2,
+                "conditional": 3,
+                "lambda": 1,
+                "recover": 1,
+            }[item.kind]
+            if len(item.operands) != arity:
+                issues.append(path + ".operands: invalid calculation operand count")
+            if item.arguments and item.kind != "call":
+                issues.append(path + ".arguments: only calls accept arguments")
+            if item.cases and item.kind != "recover":
+                issues.append(path + ".cases: only recover accepts cases")
+            if item.kind == "unary" and item.value not in ("+", "-", "not"):
+                issues.append(path + ".value: unsupported unary operator")
+            if item.kind == "binary" and item.value not in (
+                "+",
+                "-",
+                "*",
+                "and",
+                "or",
+                "==",
+                "!=",
+                "<",
+                "<=",
+                ">",
+                ">=",
+            ):
+                issues.append(path + ".value: unsupported binary operator")
+            if item.kind in ("integer", "decimal"):
+                try:
+                    valid = Decimal(item.value).is_finite() and (
+                        item.kind != "integer" or bool(re.fullmatch(r"[0-9]+", item.value))
+                    )
+                except InvalidOperation:
+                    valid = False
+                if not valid:
+                    issues.append(path + ".value: invalid calculation number")
+            if item.kind == "bool" and item.value not in ("true", "false"):
+                issues.append(path + ".value: invalid calculation boolean")
+        elif isinstance(item, Field):
+            if (item.category == "computed") != (item.calculation is not None):
+                issues.append(
+                    path + ".calculation: only computed fields require a calculation body"
+                )
+        elif isinstance(item, Source):
             source_path = PurePosixPath(item.path)
             if (
                 not item.path
@@ -146,11 +218,16 @@ def structural(model: Model) -> list[str]:
                 issues.append(path + '.parameters: unsupported declaration parameters')
             for i, entry in enumerate(item.entries):
                 if not re.fullmatch(r'-?(?:0|[1-9][0-9]*)', entry.ordering):
-                    issues.append(f'{path}.entries[{i}].ordering: invalid integer')
+                    issues.append(f"{path}.entries[{i}].ordering: invalid integer")
         elif isinstance(item, Expression):
             if (item.kind == 'literal') != (item.literal is not None):
                 issues.append(path + '.literal: invalid literal discriminator')
-            if item.literal and item.literal.kind not in ('string', 'integer', 'decimal', 'bool'):
+            if item.literal and item.literal.kind not in (
+                'string',
+                'integer',
+                'decimal',
+                'bool',
+            ):
                 issues.append(path + '.literal: expression requires a scalar literal')
             if (item.kind in ('reference', 'external')) != bool(item.target):
                 issues.append(path + '.target: invalid resolved reference')
@@ -207,7 +284,7 @@ def located(model: Model, diagnostic: Diagnostic) -> str:
         if matches
         else '$.definitions'
     )
-    return f'{path}: {diagnostic}'
+    return f"{path}: {diagnostic}"
 
 
 def validate_ir(model: Model) -> tuple[str, ...]:
@@ -218,7 +295,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
     """
     try:
         decode(encode(model), Model)
-        if model.format_revision != 2:
+        if model.format_revision != 3:
             return ('$.format_revision: unsupported IR revision; recompile the model repository',)
         issues = structural(model)
         if issues:
@@ -239,7 +316,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
         sealed = seal(model)
         for name in ('builtins_digest', 'model_digest'):
             if getattr(model, name) != getattr(sealed, name):
-                issues.append(f'$.{name}: content digest mismatch')
+                issues.append(f"$.{name}: content digest mismatch")
         return tuple(issues)
     except (ValueError, KeyError, IndexError, RecursionError) as error:
-        return (f'$: invalid embedded model: {error}',)
+        return (f"$: invalid embedded model: {error}",)

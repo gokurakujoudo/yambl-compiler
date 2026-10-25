@@ -7,6 +7,15 @@ from yambl_compiler.formatting.formatter import format_document
 
 
 class FormattingTests(unittest.TestCase):
+    def test_calculation_dimension_and_internal_comments(self):
+        source = """entity E { dimension prices { value source:string hierarchy hierarchy:Hierarchy='Local' fallback_days = self.days+1 } config attr days:integer=2 @dimension(prices) snapshot attr price:decimal computed attr value:decimal { let p=self.price::at(as_of_date=input.day) return if p>0 then p*2 # chosen branch
+else 0 } }"""
+        formatted = format_document(document(source))
+        self.assertIn("        fallback_days = self.days + 1", formatted)
+        self.assertIn("let p = self.price::at(as_of_date=input.day)", formatted)
+        self.assertIn("p > 0 then p * 2  # chosen branch", formatted)
+        self.assertEqual(format_document(document(formatted)), formatted)
+
     def test_markdown_body_is_opaque_and_preserves_whitespace(self):
         source = '---\r\n# Heading  \r\n\r\n\r\n    code { } \' @dimensions\r\n---\r\nvalue a{\r\n    ---\r\n  body  \r\n\r\n    ---\r\nattr x:string #note\r\n}\r\n'
         expected = '---\n# Heading  \n\n\n    code { } \' @dimensions\n---\nvalue a {\n    ---\n  body  \n\n    ---\n    attr x: string  # note\n}\n'

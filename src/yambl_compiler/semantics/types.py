@@ -10,7 +10,7 @@ from yambl_compiler.syntax.parser import Diagnostic
 
 type Kind = Literal['value', 'string', 'reference', 'collection', 'unknown']
 type FieldTypes = dict[str, tuple[Unit, Tree[Token]]]
-MODES = {'attr', 'static', 'config', 'snapshot', 'scd'}
+MODES = {'attr', 'static', 'config', 'snapshot', 'scd', "computed"}
 
 
 @dataclass(frozen=True)

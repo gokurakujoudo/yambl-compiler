@@ -19,7 +19,7 @@ class SchemaTests(FilesystemCase):
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write(
             'model.yambl',
-            'entity A { @dimension(source: string) attr label: string } entity B inherits A { @override @dimension(source: string) static attr label: string }',
+            "entity A { dimension dimension_11 { value source: string }  @dimension(dimension_11) attr label: string } entity B inherits A { dimension dimension_91 { value source: string }  @override @dimension(dimension_91) static attr label: string }",
         )
         model = compile_repository(self.root)
         fields = [f for d in model.definitions if d.source.origin == 'model' for f in d.fields]
@@ -42,7 +42,10 @@ class SchemaTests(FilesystemCase):
         for mutate, path in [
             (lambda d: d.update(extra=True), '$'),
             (lambda d: d.update(prefix=1), '$.prefix'),
-            (lambda d: d['definitions'][0].update(kind='execute'), '$.definitions[0].kind'),
+            (
+                lambda d: d['definitions'][0].update(kind='execute'),
+                '$.definitions[0].kind',
+            ),
             (lambda d: d.update(format_revision=1), '$.format_revision'),
         ]:
             value = json.loads(text)

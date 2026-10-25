@@ -12,7 +12,7 @@ class FieldTests(unittest.TestCase):
             check(
                 [
                     document(
-                        "entity A { @temporal(as_of_date: date) @dimension(source: string['x'], preference: Hierarchy) @dimension(kind: string) snapshot attr x: decimal }"
+                        "entity A { dimension dimension_39 { value source: string['x'] hierarchy preference: Hierarchy } dimension dimension_94 { value kind: string }  @temporal(as_of_date: date) @dimension(dimension_39) @dimension(dimension_94) snapshot attr x: decimal }"
                     )
                 ]
             ),
@@ -20,74 +20,50 @@ class FieldTests(unittest.TestCase):
         )
         for field, message in [
             (
-                '@dimension(source: integer) attr x: string',
-                'incompatible decorator pair type',
+                "dimension dimension_11 { value source: integer }  @dimension(dimension_11) attr x: string",
+                "dimension value must be string or code",
             ),
             (
-                '@dimension(source: string, selector: string) attr x: string',
-                'incompatible decorator pair type',
+                "dimension dimension_11 { value source: string hierarchy selector: string }  @dimension(dimension_11) attr x: string",
+                "dimension hierarchy requires Hierarchy",
             ),
             (
-                '@dimension(source: string, selector: Hierarchy<string>) attr x: string',
+                "dimension dimension_11 { value source: string hierarchy selector: Hierarchy<string> }  @dimension(dimension_11) attr x: string",
                 'Hierarchy does not accept generic arguments',
             ),
             (
                 '@dimension(source: string, selector: Hierarchy, extra: string) attr x: string',
-                'unexpected argument for decorator: dimension',
+                "inline @dimension is no longer supported; declare dimension name { ... } and use @dimension(name)",
             ),
             (
-                '@dimension(source: string) config attr x: string',
+                "dimension dimension_11 { value source: string }  @dimension(dimension_11) config attr x: string",
                 'decorator dimension does not allow this target',
             ),
             (
-                '@dimension(source: string) config attr x: string',
+                "dimension dimension_11 { value source: string }  @dimension(dimension_11) config attr x: string",
                 'decorator dimension does not allow this target',
             ),
             (
-                '@dimension(source: string) id x: string',
+                "dimension dimension_11 { value source: string }  @dimension(dimension_11) id x: string",
                 'decorator dimension does not allow this target',
             ),
             (
-                '@temporal(as_of_date: date) @dimension(as_of_date: string) snapshot attr x: string',
+                "dimension dimension_39 { value as_of_date: string }  @temporal(as_of_date: date) @dimension(dimension_39) snapshot attr x: string",
                 'duplicate dimension: as_of_date',
             ),
             (
-                '@dimension(source: string, h: Hierarchy) @dimension(other: string, h: Hierarchy) attr x: string',
+                "dimension dimension_11 { value source: string hierarchy h: Hierarchy } dimension dimension_52 { value other: string hierarchy h: Hierarchy }  @dimension(dimension_11) @dimension(dimension_52) attr x: string",
                 'duplicate dimension: h',
             ),
         ]:
             with self.subTest(field=field):
                 self.assertIn(
-                    message, [d.message for d in check([document('entity A { ' + field + ' }')])]
+                    message,
+                    [d.message for d in check([document('entity A { ' + field + ' }')])],
                 )
 
     def test_metadata_modes_and_defaults(self):
-        source = r"""@title('Security')
-@description('Security\'s fields')
-entity Security {
-    id security_id: string
-    @title('Price')
-    @description('A # in a string')
-    @dimension(source: code<Sources>) @dimension(market: string)
-    @temporal(as_of_date: date)
-    snapshot attr price: decimal
-    @temporal(as_of_date: date)
-    scd attr notional_value: decimal
-    config attr days: integer = 20
-    config attr negative: integer = -1
-    config attr fraction: decimal[18, 4] = -1.25
-    config attr estimate: float = 1.2e-3
-    config attr large: float = 2e3
-    config attr whole: decimal = 2
-    config attr active: bool = true
-    config attr inactive: bool = false
-    config attr label: string = 'Bob\'s # label'
-    config attr seed: snowflake_id = 123
-    config attr no_default: integer
-}
-@title('Sources')
-decodes Sources { - 1 PRIMARY: 'Main' }
-"""
+        source = "@title('Security')\n@description('Security\\'s fields')\nentity Security { dimension dimension_159 { value source: code<Sources> } dimension dimension_193 { value market: string } \n    id security_id: string\n    @title('Price')\n    @description('A # in a string')\n    @dimension(dimension_159) @dimension(dimension_193)\n    @temporal(as_of_date: date)\n    snapshot attr price: decimal\n    @temporal(as_of_date: date)\n    scd attr notional_value: decimal\n    config attr days: integer = 20\n    config attr negative: integer = -1\n    config attr fraction: decimal[18, 4] = -1.25\n    config attr estimate: float = 1.2e-3\n    config attr large: float = 2e3\n    config attr whole: decimal = 2\n    config attr active: bool = true\n    config attr inactive: bool = false\n    config attr label: string = 'Bob\\'s # label'\n    config attr seed: snowflake_id = 123\n    config attr no_default: integer\n}\n@title('Sources')\ndecodes Sources { - 1 PRIMARY: 'Main' }\n"
         self.assertEqual(check([document(source)]), [])
 
     def test_invalid_field_annotations_and_defaults(self):
@@ -105,13 +81,16 @@ decodes Sources { - 1 PRIMARY: 'Main' }
                 '@temporal(as_of_date: date) config attr x: decimal',
                 'decorator temporal does not allow this target',
             ),
-            ('@dimension(Bad: string) attr x: string', 'pair keys must use snake_case'),
             (
-                '@dimension(source: string, source: string) attr x: string',
+                "dimension dimension_11 { value Bad: string }  @dimension(dimension_11) attr x: string",
+                "dimension names must use snake_case",
+            ),
+            (
+                "dimension dimension_11 { value source: string hierarchy source: string }  @dimension(dimension_11) attr x: string",
                 'duplicate dimension: source',
             ),
             (
-                '@dimension(source: string) @dimension(source: string) attr x: string',
+                "dimension dimension_11 { value source: string } dimension dimension_38 { value source: string }  @dimension(dimension_11) @dimension(dimension_38) attr x: string",
                 'duplicate dimension: source',
             ),
             ('attr x: integer = 1', 'only on config attr'),

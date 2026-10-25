@@ -7,16 +7,20 @@ import tempfile
 from pathlib import Path
 
 from yambl_compiler.ir.codec import dumps
-from yambl_compiler.ir.model import Model, Type
+from yambl_compiler.ir.model import CalculationInput, Field, Model, Type
 from yambl_compiler.storage.backends import Row, repository_contents
 from yambl_compiler.storage.contract import dumps as contract_json
 from yambl_compiler.storage.documentation import (
     docstring,
     entity_documentation,
     field_documentation,
+    literal_section,
+    metadata,
 )
 from yambl_compiler.storage.extras import python_reference, relations
 from yambl_compiler.storage.layout import Layout, build_layout, snake
+from yambl_compiler.storage.programs import programs
+from yambl_compiler.storage.records import LAYOUT_REVISION
 from yambl_compiler.storage.rendering import ddl, manifest, reference
 
 
@@ -38,7 +42,9 @@ def python_package(layout: Layout, package: str) -> str:
         :returns: Python annotation.
         """
         if type_.kind == "reference":
-            return f"EntityRef[{names[type_.target]}]"
+            return f"EntityRef[{names.get(type_.target, 'object')}]"
+        if type_.name == "mapping":
+            return f"Mapping[{python_type(type_.arguments[0])}, {python_type(type_.arguments[1])}]"
         if type_.name == "collection":
             return f"frozenset[{python_type(type_.arguments[0])}]"
         if type_.name == "code":
@@ -53,6 +59,7 @@ def python_package(layout: Layout, package: str) -> str:
             "integer": "int",
             "snowflake_id": "int",
             "decimal": "Decimal",
+            "float": "float",
             "date": "date",
         }[type_.name]
 
@@ -62,6 +69,96 @@ def python_package(layout: Layout, package: str) -> str:
         python_type(stored.field.type)
         for dim in stored.dimensions:
             python_type(dim.type)
+    computed: dict[str, Field] = {}
+    roots: dict[str, str] = {}
+    for entity in layout.entities.values():
+        for field in entity.fields:
+            if field.calculation is not None:
+                computed.setdefault(field.identity, field)
+                roots[field.identity] = layout.roots[entity.identity]
+                python_type(field.type)
+                for parameter in field.calculation.inputs:
+                    python_type(parameter.type)
+    requests = {
+        key: names[f.implementation.rsplit(".", 1)[0]]
+        + "".join(p.capitalize() for p in f.name.split("_"))
+        + "Request"
+        for key, f in computed.items()
+    }
+
+    def parameter_type(parameter: CalculationInput) -> str:
+        """Represent omission explicitly in generated public signatures.
+
+        :param parameter: Inferred input contract.
+        :returns: Strong Python annotation, including Omitted for optional inputs.
+        """
+        annotation = python_type(parameter.type)
+        if parameter.type.kind == "reference":
+            annotation += " | str"
+        if not parameter.required or parameter.default is not None:
+            annotation += " | Omitted"
+        return annotation
+
+    def parameters(field: Field) -> list[str]:
+        """Render keyword-only inferred arguments.
+
+        :param field: Checked computed declaration.
+        :returns: Annotated arguments with omission defaults.
+        """
+        assert field.calculation is not None
+        return [
+            p.name
+            + ": "
+            + parameter_type(p)
+            + (" = UNSET" if not p.required or p.default is not None else "")
+            for p in field.calculation.inputs
+        ]
+
+    def computed_doc(field: Field) -> list[str]:
+        """Describe inferred parameters, provenance and computation caching.
+
+        :param field: Checked computed declaration.
+        :returns: Method documentation prose.
+        """
+        assert field.calculation is not None
+        owners = sorted(
+            {
+                f.implementation.rsplit(".", 1)[0]
+                for d in layout.model.definitions
+                for f in d.fields
+                if f.identity == field.identity
+            }
+        )
+        text = [
+            f"Calculate {field.identity}.",
+            "",
+            *metadata(field.decorators),
+            *literal_section("Declaring entities", "\n".join(owners)),
+            "Shared dependencies are read in batches. Queries cache by instance, normalized parameters and best_effort; ERROR is not cached.",
+            "",
+            ":param best_effort: Keep successful contributions with PARTIAL when non-error rows fail; defaults to false.",
+        ]
+        for p in field.calculation.inputs:
+            sources = ", ".join(sorted({f"{s.path}:{s.line}:{s.column}" for s in p.sites}))
+            default = (
+                (" Defaults to input." + p.default.value + " when omitted.")
+                if p.default and p.default.kind == "member"
+                else (" Uses the declared default when omitted." if p.default else "")
+            )
+            text.extend(
+                [
+                    f":param {p.name}: Inferred dependency parameter.{default} Sources: {sources}.",
+                    f":type {p.name}: {parameter_type(p)}",
+                ]
+            )
+        text.extend(
+            [
+                ":returns: Immutable computed payload, PARTIAL with issues, or a native non-normal result.",
+                f":rtype: ReadResult[{python_type(field.type)}]",
+            ]
+        )
+        return text
+
     reader_name = (
         "".join(word.capitalize() for word in package.removesuffix("_model").split("_")) + "Reader"
     )
@@ -70,7 +167,13 @@ def python_package(layout: Layout, package: str) -> str:
         for key, s in layout.fields.items()
         if s.root in names and (s.dimensions or s.field.category in ("snapshot", "scd"))
     }
-    public_names = [*names.values(), *codes.values(), *records.values(), reader_name]
+    public_names = [
+        *names.values(),
+        *codes.values(),
+        *records.values(),
+        *requests.values(),
+        reader_name,
+    ]
     reader_methods = [
         "get_" + snake(name) + suffix for name in names.values() for suffix in ("", "_many")
     ]
@@ -92,6 +195,13 @@ def python_package(layout: Layout, package: str) -> str:
         "dataclass",
         "ValidationReport",
         "ValidationIssue",
+        "Partial",
+        "CalculationIssue",
+        "Omitted",
+        "UNSET",
+        "PROGRAMS",
+        "Mapping",
+        "Sequence",
     }
     if len(set(public_names)) != len(public_names) or set(public_names) & reserved:
         raise ValueError("generated Python public-name collision")
@@ -101,13 +211,16 @@ def python_package(layout: Layout, package: str) -> str:
         "from __future__ import annotations",
         "",
         "from datetime import date",
+        "from collections.abc import Mapping, Sequence",
         "from dataclasses import dataclass",
         "from decimal import Decimal",
         "from enum import StrEnum",
         "from pathlib import Path",
         "from typing import cast",
         "",
-        "from ._results import EntityRef, NonNormalResult, ReadResult, Status, Success",
+        "from ._results import CalculationIssue, EntityRef, NonNormalResult, Partial, ReadResult, Status, Success",
+        "from ._computing import Omitted, UNSET",
+        "from ._calculations import PROGRAMS",
         "from ._runtime import EntityHandle, Reader",
         "from ._validation import ValidationReport, ValidationIssue",
         "",
@@ -161,6 +274,36 @@ def python_package(layout: Layout, package: str) -> str:
         )
         lines.extend(f"    {k}: {t}" for k, t in coordinates)
         lines.append(f"    value: ReadResult[{python_type(f.type)}]")
+    for identity, name in requests.items():
+        field = computed[identity]
+        assert field.calculation is not None
+        reserved_parameters = {"self", "id_value", "best_effort"}
+        if any(
+            keyword.iskeyword(p.name) or p.name in reserved_parameters
+            for p in field.calculation.inputs
+        ):
+            raise ValueError(f"{identity}: generated calculation parameter collision")
+        lines.extend(
+            [
+                "",
+                "",
+                "@dataclass(frozen=True, kw_only=True)",
+                f"class {name}:",
+                *docstring(
+                    [
+                        f"One request for {identity}.",
+                        "",
+                        ":param id_value: Requested entity ID.",
+                        "",
+                        *computed_doc(field)[2:],
+                    ],
+                    4,
+                ),
+                f"    id_value: {python_type(layout.ids[roots[identity]].type)}",
+                *(f"    {p}" for p in parameters(field)),
+                "    best_effort: bool = False",
+            ]
+        )
     ordered = sorted(layout.entities, key=lambda k: len(_ancestors(layout, k)))
     for key in ordered:
         entity = layout.entities[key]
@@ -182,6 +325,27 @@ def python_package(layout: Layout, package: str) -> str:
         for f in root_fields:
             if f.name in {"reader", "entity_type", "id", "_cache", "_full"} | method_names:
                 raise ValueError(f"{f.identity}: generated property collision")
+        for identity, field in computed.items():
+            if roots[identity] != key:
+                continue
+            assert field.calculation is not None
+            method = "read_" + field.name
+            if method in method_names or {method, field.name} & {f.name for f in root_fields}:
+                raise ValueError(f"{identity}: generated calculation method collision")
+            methods.add(method)
+            args = ", ".join([*parameters(field), "best_effort: bool = False"])
+            values = (
+                "{" + ", ".join(f"{p.name!r}: {p.name}" for p in field.calculation.inputs) + "}"
+            )
+            output = python_type(field.type)
+            lines.extend(
+                [
+                    "",
+                    f"    def {method}(self, *, {args}) -> ReadResult[{output}]:",
+                    *docstring(computed_doc(field), 8),
+                    f"        return cast(ReadResult[{output}], self.reader.calculate(self, {identity!r}, {values}, best_effort))",
+                ]
+            )
         for stored in layout.fields.values():
             if stored.root != key:
                 continue
@@ -256,8 +420,36 @@ def python_package(layout: Layout, package: str) -> str:
             "    record_types = {" + ", ".join(f"{k!r}: {v}" for k, v in records.items()) + "}",
             "    entity_types = {" + ", ".join(f"{k!r}: {v}" for k, v in names.items()) + "}",
             "    code_types = {" + ", ".join(f"{k!r}: {v}" for k, v in codes.items()) + "}",
+            "    calculation_programs = PROGRAMS",
         ]
     )
+    for identity, name in requests.items():
+        field = computed[identity]
+        assert field.calculation is not None
+        owner = field.implementation.rsplit(".", 1)[0]
+        method = "read_" + snake(names[owner]) + "_" + field.name + "_many"
+        result = f"ReadResult[tuple[ReadResult[{python_type(field.type)}], ...]]"
+        values = (
+            "{" + ", ".join(f"{p.name!r}: request.{p.name}" for p in field.calculation.inputs) + "}"
+        )
+        lines.extend(
+            [
+                "",
+                f"    def {method}(self, requests: Sequence[{name}]) -> {result}:",
+                *docstring(
+                    [
+                        f"Calculate {identity} for an ordered batch.",
+                        "",
+                        ":param requests: Independent request parameters; order and repeated requests are preserved.",
+                        ":returns: Per-request results; whole-backend failures return outer ERROR.",
+                        f":rtype: {result}",
+                    ],
+                    8,
+                ),
+                f"        batch = tuple((request.id_value, {values}, request.best_effort) for request in requests)",
+                f"        return cast({result}, self.calculate_many({owner!r}, {identity!r}, batch))",
+            ]
+        )
     for key, name in names.items():
         id_type = python_type(layout.ids[layout.roots[key]].type)
         method = "get_" + snake(name)
@@ -306,6 +498,10 @@ def python_package(layout: Layout, package: str) -> str:
                         "Success",
                         "NonNormalResult",
                         "Status",
+                        "Partial",
+                        "CalculationIssue",
+                        "Omitted",
+                        "UNSET",
                         "ValidationReport",
                         "ValidationIssue",
                     ]
@@ -361,11 +557,18 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         package + "/runtime-contract.json": contract_json(layout),
         package + "/py.typed": "",
         package + "/model.yambl-ir.json": dumps(model),
+        package + "/_calculations.py": programs(model),
     }
     modules = [
         "records",
         "contract",
         "backends",
+        "batch",
+        "configuration",
+        "arithmetic",
+        "selection",
+        "computing",
+        "session",
         "results",
         "runtime",
         "validation",
@@ -378,9 +581,13 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
             else Path(__file__).parents[1] / "ir/model.py"
         )
         text = path.read_text(encoding="utf-8").replace("yambl_compiler.ir.model", "._ir_model")
+        text = text.replace("yambl_compiler.computation.records", "._computation_records")
         for module in modules:
             text = text.replace("yambl_compiler.storage." + module, "._" + module)
         contents[package + "/_" + name + ".py"] = text
+    contents[package + "/_computation_records.py"] = (
+        Path(__file__).parents[1] / "computation/records.py"
+    ).read_text(encoding="utf-8")
     reader_name = (
         "".join(word.capitalize() for word in package.removesuffix("_model").split("_")) + "Reader"
     )
@@ -392,7 +599,7 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         for t in layout.tables
     }
     tables["tb_yambl_metadata"] = [
-        {"key": "layout_revision", "value": "4"},
+        {"key": "layout_revision", "value": str(LAYOUT_REVISION)},
         {"key": "model_digest", "value": model.model_digest},
     ]
     contents.update(

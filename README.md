@@ -71,7 +71,7 @@ it does not read YAMBL sources or installed language resources. Validation rejec
 duplicate JSON keys, unsupported nodes or revisions, broken references, invalid
 cycles and constraints, and inconsistent derived views, even if hashes were recomputed.
 
-The current `format_revision` is `2`. Compatibility is not promised until the
+The current `format_revision` is `3`. Compatibility is not promised until the
 format is frozen; unsupported revisions require recompilation. Output is deterministic
 compact UTF-8 JSON with LF and one final newline. Semantic SHA-256
 digests exclude source positions and compiler version. Integer and decimal payloads
@@ -79,7 +79,7 @@ are strings to preserve precision. The full contract is documented in
 [JSON IR](https://github.com/gokurakujoudo/yambl/blob/feat/language-foundations/lang/syntex/ir.md).
 
 SQLite generation and typed direct reads are available as described below.
-Hierarchy, ConfigGroup and general result propagation remain unimplemented.
+Computed fields execute Hierarchy selection, effective ConfigGroup overrides and explicit result recovery.
 
 ## Checks
 
@@ -128,13 +128,11 @@ The combination keeps its dictionary's code type and can be passed to aliases,
 The checker validates these expressions without executing model instances.
 
 `@title('...')` and `@description('...')` attach metadata to entities, Decodes
-declarations, values, fields, type aliases, or decorator declarations. Each `@dimension(source: string, preference: Hierarchy)`
-defines one independent dimension and an optional alternative lookup parameter.
-The first parameter accepts string or code types; the second accepts Hierarchy.
-Dimensions apply to static (including ordinary attr), snapshot, and scd attributes. Parameter names,
-including temporal names, must be distinct within a field. Direct values take
-precedence over Hierarchy references. Hierarchy tries existing data in ascending
-ordering; priorities must be unique. Lookup execution is not implemented. `@temporal(as_of_date: date)` applies to `snapshot` or `scd`.
+declarations, values, fields, type aliases, or decorator declarations. `@dimension(prices)`
+references a named dimension declared inside an entity or extend block. Its value is
+string/code; hierarchy and snapshot fallback_days are optional. Old inline pair syntax
+reports a migration diagnostic. `@temporal(as_of_date: date)` applies to snapshot/scd.
+Computed fields infer their dates and dimensions from dependencies.
 `config` attributes are time-independent and may declare a default with `= literal`.
 Supported defaults are integer literals for `integer` and `snowflake_id`, numeric
 literals for `float` and `decimal`, single-quoted strings for `string`, and
@@ -164,8 +162,7 @@ to override/overload contracts. An inherited singleton cannot change or widen.
 Overloads retain branch constraints and expose their compatible common type.
 
 The checker retains effective fields, overload identities and declaration locations.
-It does not accept configuration-group instance syntax or evaluate mappings,
-conditions, configuration precedence, or computed fields.
+Configuration groups are supplied as typed storage records. Generated computation programs evaluate their conditions and priorities; no general instance-construction syntax is added.
 
 Checking a file or subdirectory searches upward for the nearest `yambl-root.lclcfg`
 and checks the whole repository. Nested roots fail the parent check. Without a root,
@@ -215,12 +212,12 @@ Current implementation limits:
 - The language defines seven result constants: `NOT_DEFINED`, `NOT_APPLICABLE`,
   `EMPTY`, `NO_ENTRY`, `NO_DATA`, `ENTITY_NOT_FOUND`, and `ERROR`.
   Their names and meanings come from `lang/builtins/result-constants.json`.
-  The checker reserves these declaration names and diagnoses their use in model
-  expressions. They are not types or accepted configuration default literals;
-  quoted strings with the same spelling remain strings. Explicit assignment,
-  fallback, comparison, and operation propagation rules are not defined.
-  The static checker does not read instances. SQLite and JSONL readers support
-  SCD history; configuration override execution remains unimplemented.
+  The checker reserves these declaration names. Computations can propagate them
+  or handle them explicitly with `recover`; physical fields and configuration
+  defaults do not accept them as ordinary literals. Quoted spellings remain strings.
+  `Partial[T]` carries a usable calculation payload and immutable issue details;
+  it has no physical field encoding. SQLite and JSONL readers share SCD selection,
+  effective configuration and calculation result handling.
 
 ## Formatting
 
@@ -378,7 +375,7 @@ unsupported business fields before writing. `--dryrun` validates and renders
 without creating output directories. Database migrations and production writes
 are not provided.
 
-Storage layout revision 4 uses names such as `tb_core_portfolio` and
+Storage layout revision 5 uses names such as `tb_core_portfolio` and
 `tb_core_security_price`. Ungrouped dimensionless static fields, including per-field states,
 share the root identity table. Collection members use the field table name;
 separate collection headers add `_status`. Readers reject databases with an older
@@ -403,12 +400,13 @@ The schema also includes Decodes, Hierarchy and ConfigGroup tables. Declared
 dictionaries and their entries are initialized from the bundled IR, including
 flags None/All entries. ConfigGroup mappings use child tables keyed by group ID
 and logical field name, with a typed JSON value. SQL checks the JSON envelope;
-mapping type compatibility and built-in read methods are not implemented.
-The manifest marks these storage-only fields with `readable: false`.
+the effective-config evaluator checks mapping types against the actual field implementation.
+Generic public read methods for these mapping fields remain unavailable; the manifest
+marks them with `readable: false`.
 
-IR revision 2 uses compact JSON. The packaged Draft 2020-12 schema validates
+IR revision 3 uses compact JSON. The packaged Draft 2020-12 schema validates
 structure offline; semantic validation also checks references and derived views.
-Recompile revision 1 artifacts. Ordinary `attr` now means `static attr`, and
+Recompile revision 1 and 2 artifacts. Ordinary `attr` now means `static attr`, and
 `AttrCats.Attr` has been removed in favor of `AttrCats.Static`.
 
 Generated packages require only Python 3.14+ and the standard library. They carry
@@ -425,7 +423,7 @@ successful empty tuple. References remain explicit EntityRef values.
 
 Methods cache normalized queries and reuse complete property caches. Cached data
 survives close; new reads return ERROR. Errors are never cached. Range lists are
-copied before returning. No Hierarchy, ConfigGroup or price fallback is executed.
+copied before returning. Computed methods execute named-dimension selection and effective per-instance configuration.
 
 The language repository's `lang/syntex/storage.md` documents storage rules and
 tracks implemented and pending capabilities. The FMC repository includes an
@@ -454,7 +452,7 @@ PlantUML source; displaying it as a diagram requires a PlantUML renderer. All th
 outputs use the same physical model.
 
 JSONL repositories contain `repository.json` and `tables/<table>.jsonl` for every
-table. Metadata pins format revision 1, layout revision 4, the model digest and
+table. Metadata pins format revision 1, layout revision 5, the model digest and
 each file's SHA-256. Tables are loaded and indexed on first use. Every new backend
 read checks file identity, size and timestamps; table loads also verify hashes
 and check file state before and after reading. Once changes are detected, reopen
@@ -472,3 +470,26 @@ witness. `python -m fmc_model check-data --backend sqlite|files --path PATH` ret
 Keep the latest full generation under `build/latest/`. The FMC initializer accepts
 `--backend files` for JSONL and validates either backend after seeding. Generation
 still refuses nonempty destinations and does not provide a production writer.
+
+## Computed fields and batched reads
+
+`computed attr name: Type { let local = expression return expression }` declares a
+read-only calculation. Its inferred inputs, defaults and dependency identities are
+stored in IR revision 3. Runtime contract 2 and storage layout 5 require regenerated
+artifacts; JSONL format remains 1. Computed fields add no physical columns.
+
+The generated package exposes frozen request classes and `read_*_many` methods.
+Requests retain input order and duplicates while dependency reads are batched.
+SQLite filters identities and date windows in SQL; Python performs exact decimal
+arithmetic. JSONL tables load once per session and reuse key/date indexes.
+
+The result union includes `Partial[T]`. Strict mode preserves failures; outer
+`best_effort=True` may omit non-error contributions while retaining their issues.
+`recover` is explicit and lazy. ConfigGroup priority overrides instance config,
+which overrides the actual subtype's model default. Cached field data can serve
+calculations after close when no new backend read is needed.
+
+See the [calculation contract](../yambl/lang/syntex/computations.md) and the
+[capability matrix](../yambl/lang/syntex/storage.md#能力清单). General functions,
+write APIs, migrations, division, FX conversion and automatic combinations of
+multiple Hierarchies are outside this release.

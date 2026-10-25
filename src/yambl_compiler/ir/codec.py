@@ -44,27 +44,27 @@ def decode(value: JSON, expected: object, path: str = '$') -> IRValue:
         return decode(value, arguments[0], path)
     if origin is Literal:
         if type(value) is not str or value not in arguments:
-            raise ValueError(f'{path}: unsupported discriminator {value!r}')
+            raise ValueError(f"{path}: unsupported discriminator {value!r}")
         return value
     if origin is tuple:
         if not isinstance(value, list):
-            raise ValueError(f'{path}: expected an array')
-        return tuple(decode(item, arguments[0], f'{path}[{i}]') for i, item in enumerate(value))
+            raise ValueError(f"{path}: expected an array")
+        return tuple(decode(item, arguments[0], f"{path}[{i}]") for i, item in enumerate(value))
     if expected is str or expected is int or expected is bool:
         if type(value) is not expected:
-            raise ValueError(f'{path}: expected {cast(type[object], expected).__name__}')
+            raise ValueError(f"{path}: expected {cast(type[object], expected).__name__}")
         return value
     cls = cast(type[Record], expected)
     if not isinstance(value, dict):
-        raise ValueError(f'{path}: expected an object')
+        raise ValueError(f"{path}: expected an object")
     annotations = cast(dict[str, object], get_type_hints(cls))
     if set(value) != set(annotations):
         raise ValueError(
-            f'{path}: missing fields {sorted(set(annotations) - set(value))}; '
-            f'unknown fields {sorted(set(value) - set(annotations))}'
+            f"{path}: missing fields {sorted(set(annotations) - set(value))}; "
+            f"unknown fields {sorted(set(value) - set(annotations))}"
         )
     members = {
-        name: decode(value[name], annotation, f'{path}.{name}')
+        name: decode(value[name], annotation, f"{path}.{name}")
         for name, annotation in annotations.items()
     }
     return cast(Callable[..., Record], cls)(**members)
@@ -80,7 +80,7 @@ def object_pairs(pairs: list[tuple[str, JSON]]) -> dict[str, JSON]:
     result: dict[str, JSON] = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError(f'$: duplicate JSON key: {key}')
+            raise ValueError(f"$: duplicate JSON key: {key}")
         result[key] = value
     return result
 
@@ -92,7 +92,7 @@ def nonstandard_number(value: str) -> None:
     :returns: Never returns.
     :raises ValueError: Always, because these are not JSON numbers.
     """
-    raise ValueError(f'$: nonstandard JSON number: {value}')
+    raise ValueError(f"$: nonstandard JSON number: {value}")
 
 
 def loads(text: str) -> Model:
@@ -103,12 +103,13 @@ def loads(text: str) -> Model:
     :raises ValueError: If JSON, shape or revision is unsupported.
     """
     data = cast(
-        JSON, json.loads(text, object_pairs_hook=object_pairs, parse_constant=nonstandard_number)
+        JSON,
+        json.loads(text, object_pairs_hook=object_pairs, parse_constant=nonstandard_number),
     )
     if (
         not isinstance(data, dict)
         or type(data.get('format_revision')) is not int
-        or data['format_revision'] != 2
+        or data['format_revision'] != 3
     ):
         raise ValueError(
             '$.format_revision: unsupported IR revision; recompile the model repository'
@@ -137,7 +138,14 @@ def semantic(value: JSON) -> JSON:
     if isinstance(value, list):
         return [semantic(item) for item in value]
     if isinstance(value, dict):
-        removed = {'source', 'sites', 'compiler_version', 'builtins_digest', 'model_digest'}
+        removed = {
+            'source',
+            "span",
+            'sites',
+            'compiler_version',
+            'builtins_digest',
+            'model_digest',
+        }
         if 'bound' in value:
             removed.add('arguments')
         return {key: semantic(item) for key, item in value.items() if key not in removed}

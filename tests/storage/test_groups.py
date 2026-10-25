@@ -46,7 +46,7 @@ class GroupTests(FilesystemCase):
     def test_dictionary_names_cannot_select_storage_layout(self):
         self.write(
             "main.yambl",
-            "entity A { id key: string @dimension(source: code<'x:sparse:y'>) attr quote: string }",
+            "entity A { dimension dimension_26 { value source: code<'x:sparse:y'> }  id key: string @dimension(dimension_26) attr quote: string }",
         )
         model = compile_repository(self.root)
         layout = build_layout(model)

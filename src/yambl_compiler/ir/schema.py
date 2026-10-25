@@ -41,7 +41,7 @@ def schema() -> Schema:
             hints = cast(dict[str, object], get_type_hints(cls))
             properties = {name: annotation(value) for name, value in hints.items()}
             if cls is Model:
-                properties['format_revision'] = {'type': 'integer', 'const': 2}
+                properties['format_revision'] = {'type': 'integer', 'const': 3}
             definitions[cls.__name__] = {
                 'type': 'object',
                 'properties': properties,
@@ -51,7 +51,11 @@ def schema() -> Schema:
         return {'$ref': '#/$defs/' + cls.__name__}
 
     root = annotation(Model)
-    return {'$schema': 'https://json-schema.org/draft/2020-12/schema', **root, '$defs': definitions}
+    return {
+        '$schema': 'https://json-schema.org/draft/2020-12/schema',
+        **root,
+        '$defs': definitions,
+    }
 
 
 def validate_schema(value: object) -> None:
@@ -62,6 +66,9 @@ def validate_schema(value: object) -> None:
     :raises ValueError: On the first structural error, including its JSON path.
     """
     try:
-        cast(Callable[[object], None], getattr(Draft202012Validator(schema()), 'validate'))(value)
+        cast(
+            Callable[[object], None],
+            getattr(Draft202012Validator(schema()), 'validate'),
+        )(value)
     except ValidationError as error:
-        raise ValueError(f'{error.json_path}: {error.message}') from error
+        raise ValueError(f"{error.json_path}: {error.message}") from error

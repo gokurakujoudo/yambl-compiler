@@ -3,15 +3,33 @@
 import hashlib
 import json
 import sqlite3
-from collections.abc import Mapping
+from bisect import bisect_left, bisect_right
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from yambl_compiler.storage.contract import loads
 from yambl_compiler.storage.records import LAYOUT_REVISION, Layout, Table, quote
 
 type Row = dict[str, object]
+
+
+@dataclass(frozen=True)
+class Selection:
+    """Describe one equality and optional temporal selection in a batch.
+
+    :param keys: Trusted column names and encoded scalar values.
+    :param temporal: No time filter, snapshot dates or intersecting SCD intervals.
+    :param start: Inclusive ISO lower date bound.
+    :param end: Inclusive ISO upper date bound.
+    """
+
+    keys: tuple[tuple[str, object], ...]
+    temporal: Literal["", "snapshot", "scd"] = ""
+    start: str = ""
+    end: str = ""
 
 
 class Backend(Protocol):
@@ -30,6 +48,18 @@ class Backend(Protocol):
         """Release resources.
 
         :returns: None.
+        """
+        ...
+
+    def rows_many(
+        self, table: str, selections: Sequence[Selection], columns: tuple[str, ...] = ()
+    ) -> list[list[Row]]:
+        """Read a batch without one backend operation per entity.
+
+        :param table: Trusted physical table.
+        :param selections: Independent requests, retaining duplicates and order.
+        :param columns: Projection, or empty for all columns.
+        :returns: Detached row groups in request order.
         """
         ...
 
@@ -83,6 +113,67 @@ class SQLiteBackend:
         :returns: None.
         """
         self.connection.close()
+
+    def rows_many(
+        self, table: str, selections: Sequence[Selection], columns: tuple[str, ...] = ()
+    ) -> list[list[Row]]:
+        """Join parameter batches to a table within SQLite's variable limit.
+
+        :param table: Trusted physical table.
+        :param selections: Equality and date-window requests.
+        :param columns: Required payload columns, or all when empty.
+        :returns: Detached rows grouped by original request index.
+        """
+        result: list[list[Row]] = [[] for _ in selections]
+        groups: dict[tuple[tuple[str, ...], str], list[int]] = {}
+        for i, selection in enumerate(selections):
+            groups.setdefault((tuple(k for k, _ in selection.keys), selection.temporal), []).append(
+                i
+            )
+        limit = self.connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+        for (keys, temporal), indexes in groups.items():
+            width = 1 + len(keys) + (2 if temporal else 0)
+            chunk_size = limit // width
+            if not chunk_size:
+                raise ValueError("SQLite parameter limit cannot accommodate one batch request")
+            labels = [
+                "request",
+                *(f"k{i}" for i in range(len(keys))),
+                *(["start", "end"] if temporal else []),
+            ]
+            conditions = [f't.{quote(k)} = q.{quote(f"k{i}")}' for i, k in enumerate(keys)]
+            if temporal == "snapshot":
+                conditions.extend(['t."date" >= q."start"', 't."date" <= q."end"'])
+            elif temporal == "scd":
+                conditions.extend(['t."valid_from" <= q."end"', 't."valid_to" > q."start"'])
+            projection = ", ".join("t." + quote(c) for c in columns) if columns else "t.*"
+            for offset in range(0, len(indexes), chunk_size):
+                chunk = indexes[offset : offset + chunk_size]
+                parameters: list[object] = []
+                for i in chunk:
+                    selection = selections[i]
+                    parameters.extend([i, *(v for _, v in selection.keys)])
+                    if temporal:
+                        parameters.extend([selection.start, selection.end])
+                values = ", ".join("(" + ", ".join("?" for _ in labels) + ")" for _ in chunk)
+                sql = (
+                    "WITH q ("
+                    + ", ".join(quote(k) for k in labels)
+                    + ") AS (VALUES "
+                    + values
+                    + ") "
+                    + 'SELECT q."request" AS "__yambl_request", '
+                    + projection
+                    + " FROM q JOIN "
+                    + quote(table)
+                    + " AS t ON "
+                    + (" AND ".join(conditions) or "1")
+                )
+                for raw in self.connection.execute(sql, parameters):
+                    row = dict(raw)
+                    request = int(row.pop("__yambl_request"))
+                    result[request].append(row)
+        return result
 
 
 def validate_row(layout: Layout, table: Table, row: Row) -> None:
@@ -217,6 +308,9 @@ class FileBackend:
         self.hashes = cast(dict[str, str], hashes)
         self.cache: dict[str, list[Row]] = {}
         self.indexes: dict[tuple[str, tuple[str, ...]], dict[tuple[object, ...], list[Row]]] = {}
+        self.time_indexes: dict[
+            tuple[str, tuple[tuple[str, object], ...], str], tuple[list[str], list[Row]]
+        ] = {}
         self.failed = False
         self._check()
 
@@ -256,6 +350,15 @@ class FileBackend:
         :raises OSError: On file access failure.
         """
         self._check()
+        self._load(table)
+        return self._select(table, tuple(keys.items()))
+
+    def _load(self, table: str) -> None:
+        """Load and validate a table once per pinned session.
+
+        :param table: Trusted physical table.
+        :returns: None; populates the immutable row snapshot.
+        """
         if table not in self.cache:
             path = self.files[table]
             content = path.read_bytes()
@@ -280,14 +383,63 @@ class FileBackend:
                 except ValueError as error:
                     raise ValueError(f"{path}:{line}: {table}: {error}") from error
             self.cache[table] = rows
-        columns = tuple(keys)
+
+    def _select(self, table: str, keys: tuple[tuple[str, object], ...]) -> list[Row]:
+        """Use a shared equality index without repeating repository stat calls.
+
+        :param table: Loaded table.
+        :param keys: Encoded equality filters.
+        :returns: Detached matching rows.
+        """
+        columns = tuple(k for k, _ in keys)
         index_key = (table, columns)
         if index_key not in self.indexes:
             index: dict[tuple[object, ...], list[Row]] = {}
             for row in self.cache[table]:
                 index.setdefault(tuple(row[k] for k in columns), []).append(row)
             self.indexes[index_key] = index
-        return [dict(r) for r in self.indexes[index_key].get(tuple(keys.values()), [])]
+        return [dict(r) for r in self.indexes[index_key].get(tuple(v for _, v in keys), [])]
+
+    def rows_many(
+        self, table: str, selections: Sequence[Selection], columns: tuple[str, ...] = ()
+    ) -> list[list[Row]]:
+        """Check the snapshot once and share loaded tables and equality indexes.
+
+        :param table: Trusted physical table.
+        :param selections: Independent equality and temporal selections.
+        :param columns: Projection, empty for complete rows.
+        :returns: Detached rows in request order.
+        """
+        if not selections:
+            return []
+        self._check()
+        self._load(table)
+        result: list[list[Row]] = []
+        for selection in selections:
+            if selection.temporal:
+                index_key = (table, selection.keys, selection.temporal)
+                if index_key not in self.time_indexes:
+                    time_column = "date" if selection.temporal == "snapshot" else "valid_from"
+                    ordered = sorted(
+                        self._select(table, selection.keys),
+                        key=lambda row: str(row[time_column]),
+                    )
+                    self.time_indexes[index_key] = (
+                        [str(row[time_column]) for row in ordered],
+                        ordered,
+                    )
+                dates, ordered = self.time_indexes[index_key]
+                end = bisect_right(dates, selection.end)
+                if selection.temporal == "snapshot":
+                    rows = ordered[bisect_left(dates, selection.start) : end]
+                else:
+                    rows = [r for r in ordered[:end] if str(r["valid_to"]) > selection.start]
+            else:
+                rows = self._select(table, selection.keys)
+            result.append(
+                [{c: r[c] for c in columns} for r in rows] if columns else [dict(r) for r in rows]
+            )
+        return result
 
     def close(self) -> None:
         """Discard table indexes and invalidate future backend reads.
@@ -297,3 +449,4 @@ class FileBackend:
         self.failed = True
         self.cache.clear()
         self.indexes.clear()
+        self.time_indexes.clear()

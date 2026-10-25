@@ -52,21 +52,37 @@ def check_field(
             diagnostic(unit.document, body, 'extend may add attributes, not id fields')
         )
     type_node = children(body, 'type_expr')[0]
+    if any(str(token) == "dimension_ref" for token in tokens(type_node)):
+        diagnostics.append(
+            diagnostic(
+                unit.document,
+                type_node,
+                "dimension_ref is only a metadata declaration reference",
+            )
+        )
     check_type(
-        type_node, unit, diagnostics, self_fields, bool(annotations(field, 'overload', 'override'))
+        type_node,
+        unit,
+        diagnostics,
+        self_fields,
+        bool(annotations(field, 'overload', 'override')),
     )
     markers = annotations(field, 'overload', 'override')
     if len(markers) > 1:
         diagnostics.append(
             diagnostic(
-                unit.document, markers[-1], 'only one overload or override marker is allowed'
+                unit.document,
+                markers[-1],
+                'only one overload or override marker is allowed',
             )
         )
     for default in children(body, 'default_value'):
         if mode != 'config':
             diagnostics.append(
                 diagnostic(
-                    unit.document, default, 'defaults are currently supported only on config attr'
+                    unit.document,
+                    default,
+                    'defaults are currently supported only on config attr',
                 )
             )
         resolved_default = Resolver(unit, [], self_fields or {}, bool(markers)).resolve(type_node)
@@ -88,6 +104,6 @@ def check_field(
                 diagnostic(
                     unit.document,
                     default,
-                    f'unsupported or incompatible config default for {type_name}',
+                    f"unsupported or incompatible config default for {type_name}",
                 )
             )
