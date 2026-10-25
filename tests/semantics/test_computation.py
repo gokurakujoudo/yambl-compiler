@@ -10,6 +10,63 @@ from yambl_compiler.semantics.validation import analyze
 
 
 class ComputationTests(unittest.TestCase):
+    def test_explicit_retrieval_and_removed_at(self):
+        prefix = "entity E { id key: string static attr n: integer static attr child: E static attr items: collection<E> "
+        for body in (
+            "let x = self.n return x",
+            "return self.n",
+            "return self.n + 1",
+            "return self.n.recover(case EMPTY -> 0)",
+            "return self.items::value().sum_by(h -> h.n)",
+            "let x = self.child return x.n::value()",
+            "return to_integer(self.n)",
+        ):
+            with self.subTest(body=body):
+                self.assertIn(
+                    "field retrieval requires ::value(...) or ::best_available(...)",
+                    self.errors(prefix + "computed attr result: integer { " + body + " } }"),
+                )
+        self.assertIn(
+            "field retrieval requires ::value(...) or ::best_available(...)",
+            self.errors(
+                "entity E { snapshot attr n: integer computed attr result: integer { return self.n } }"
+            ),
+        )
+        navigation = self.analyze(
+            "entity E { snapshot attr child: E static attr n: integer computed attr result: integer { return self.child.n::value() } }"
+        )
+        self.assertEqual([d for d in navigation.diagnostics if d.severity == "error"], [])
+        self.assertEqual(
+            [p.name for p in navigation.calculations[(("", "E"), "result")].inputs], ["as_of_date"]
+        )
+        for category in ("static", "computed"):
+            declaration = (
+                "static attr n: integer"
+                if category == "static"
+                else "computed attr n: integer { return 1 }"
+            )
+            self.assertEqual(
+                self.errors(
+                    "entity E { "
+                    + declaration
+                    + " computed attr result: integer { return self.n::at() } }"
+                ),
+                ["::at(...) was removed; use ::value(...) instead"],
+            )
+        self.assertEqual(
+            self.errors(
+                prefix
+                + "computed attr result: integer { let x = self.child::value() return self.child.n::value() + x.n::value() } }"
+            ),
+            [],
+        )
+        self.assertEqual(
+            self.errors(
+                "value pair { static attr n: integer } entity E { computed attr result: integer { let x: pair = {n: 1} return x.n } }"
+            ),
+            [],
+        )
+
     def test_division_result_types(self):
         self.assertEqual(
             self.errors(
@@ -35,7 +92,7 @@ class ComputationTests(unittest.TestCase):
             @extra_input_params(enabled: bool = true)
             @extra_input_params(label: string = 'x')
             computed attr result: integer {
-                return self.value::at(as_of_date=input.day ?? input.unused_date) + input.count
+                return self.value::value(as_of_date=input.day ?? input.unused_date) + input.count
             }
         }"""
         result = self.analyze(source)
@@ -70,11 +127,11 @@ class ComputationTests(unittest.TestCase):
 
     def test_default_local_expansion_and_shared_dependency_graph(self):
         result = self.analyze(
-            "entity E { static attr day: date snapshot attr x: integer computed attr y: integer { let d = self.day return self.x::at(as_of_date=input.day ?? d) } }"
+            'entity E { static attr day: date snapshot attr x: integer computed attr y: integer { let d = self.day::value() return self.x::value(as_of_date=input.day ?? d) } }'
         )
         self.assertEqual([d.message for d in result.diagnostics if d.severity == "error"], [])
         calculation = result.calculations[(("", "E"), "y")]
-        self.assertEqual(calculation.inputs[0].default.value, "day")
+        self.assertEqual(calculation.inputs[0].default.operands[0].operands[0].value, "day")
         checker = Checker(Computations(result.entities, []), ("", "E"), result.units[-1])
         node = calculation.body.result
         checker.issue(node, "duplicate")
@@ -121,7 +178,7 @@ class ComputationTests(unittest.TestCase):
     def test_inference_binding_and_reuse(self):
         analysis = self.analyze("""
             entity Security {
-                dimension prices { value source: code<'Sources'> hierarchy hierarchy: Hierarchy = 'Local' fallback_days = self.days }
+                dimension prices { value source: code<'Sources'> hierarchy hierarchy: Hierarchy = 'Local' fallback_days = self.days::value() }
                 config attr days: integer = 20
                 @temporal(as_of_date: date) @dimension(prices)
                 snapshot attr price: decimal
@@ -129,12 +186,12 @@ class ComputationTests(unittest.TestCase):
             entity Holding {
                 static attr security: Security
                 static attr quantity: decimal
-                computed attr amount: decimal { return self.quantity * self.security.price::best_available() }
+                computed attr amount: decimal { return self.quantity::value() * self.security.price::best_available() }
             }
             entity Fund {
                 @temporal(as_of_date: date) snapshot attr holdings: collection<Holding>
                 computed attr amount: decimal {
-                    let holdings = self.holdings::at()
+                    let holdings = self.holdings::value()
                     return holdings.sum_by(h -> h.amount::value(as_of_date=input.price_date ?? input.as_of_date))
                 }
             }
@@ -153,7 +210,7 @@ class ComputationTests(unittest.TestCase):
             entity E {
                 dimension industries { value industry: code<Industries> }
                 @temporal(day: date) @dimension(industries) scd attr industry: string
-                computed attr primary: string { return self.industry::at(industry=Industries.Primary) }
+                computed attr primary: string { return self.industry::value(industry=Industries.Primary) }
             }
         """)
         self.assertEqual([d.message for d in analysis.diagnostics if d.severity == "error"], [])
@@ -165,11 +222,11 @@ class ComputationTests(unittest.TestCase):
     def test_cycles_and_contracts(self):
         cases = [
             (
-                "entity E { computed attr a: integer { return self.b } computed attr b: integer { return self.a } }",
+                'entity E { computed attr a: integer { return self.b::value() } computed attr b: integer { return self.a::value() } }',
                 "dependency cycle",
             ),
             (
-                "entity E { @temporal(day: date) snapshot attr x: integer computed attr a: integer { return self.x::at(day=input.day ?? input.day) } }",
+                "entity E { @temporal(day: date) snapshot attr x: integer computed attr a: integer { return self.x::value(day=input.day ?? input.day) } }",
                 "default cycle",
             ),
             (
@@ -177,7 +234,7 @@ class ComputationTests(unittest.TestCase):
                 None,
             ),
             (
-                "entity E { @temporal(day: date) snapshot attr x: integer computed attr a: integer { return self.x } } entity F inherits E { @override computed attr a: integer { return 2 } }",
+                'entity E { @temporal(day: date) snapshot attr x: integer computed attr a: integer { return self.x::value() } } entity F inherits E { @override computed attr a: integer { return 2 } }',
                 "parameter signature mismatch",
             ),
             (
@@ -198,13 +255,19 @@ class ComputationTests(unittest.TestCase):
         cases = [
             (
                 "mapping<string, integer>",
-                "self.items.filter(i -> i.n > 0).group_by(i -> i.label).sum_by(i -> i.n)",
+                "self.items::value().filter(i -> i.n::value() > 0).group_by(i -> i.label::value()).sum_by(i -> i.n::value())",
             ),
-            ("integer", "self.items.map(i -> i.n * 2).sum_by(n -> n)"),
-            ("integer", "self.items.flat_map(i -> i.children).sum_by(i -> i.n)"),
+            ("integer", "self.items::value().map(i -> i.n::value() * 2).sum_by(n -> n)"),
+            (
+                "integer",
+                "self.items::value().flat_map(i -> i.children::value()).sum_by(i -> i.n::value())",
+            ),
             ("integer", "if true then 1 else 2"),
             ("decimal", "1 + 2.5"),
-            ("integer", "self.items.sum_by(i -> if i.n > 0 then i.n else 0)"),
+            (
+                "integer",
+                "self.items::value().sum_by(i -> if i.n::value() > 0 then i.n::value() else 0)",
+            ),
         ]
         for result, expression in cases:
             with self.subTest(expression=expression):
@@ -216,7 +279,7 @@ class ComputationTests(unittest.TestCase):
                 )
 
     def test_recover(self):
-        source = "entity E { static attr amount: decimal computed attr total: decimal { return self.amount.recover(case EMPTY -> 0, case NO_ENTRY, NO_DATA -> 0, case PARTIAL as p -> p.value, case ERROR -> -1) } }"
+        source = 'entity E { static attr amount: decimal computed attr total: decimal { return self.amount::value().recover(case EMPTY -> 0, case NO_ENTRY, NO_DATA -> 0, case PARTIAL as p -> p.value, case ERROR -> -1) } }'
         self.assertEqual(self.errors(source), [])
         self.assertTrue(
             any(
@@ -248,9 +311,9 @@ class ComputationTests(unittest.TestCase):
             ("self.items.sum_by(i -> true)", "numeric contributions"),
             ("self.items.filter(i -> i.n).sum_by(i -> i.n)", "predicate requires bool"),
             ("self.items.flat_map(i -> i.n).sum_by(i -> i.n)", "flat_map requires"),
-            ("self.x::value()", "stored fields support"),
-            ("1::at()", "requires a field descriptor"),
-            ("self.x::at(day=1)", "unknown or duplicate field argument"),
+            ("self.x::unsupported()", "stored fields support"),
+            ("1::value()", "requires a field descriptor"),
+            ("self.x::value(day=1)", "unknown or duplicate field argument"),
             ("self.x.recover()", "recover requires"),
             ("self.x.recover(case UNKNOWN -> 0)", "unknown recovery status"),
             ("self.x.recover(case EMPTY as p -> 0)", "unique PARTIAL"),
@@ -269,23 +332,23 @@ class ComputationTests(unittest.TestCase):
                 "duplicate or invalid local",
             ),
             (
-                "entity E { snapshot attr x: integer computed attr y: integer { return self.x::at(as_of_date=input.best_effort) } }",
+                "entity E { snapshot attr x: integer computed attr y: integer { return self.x::value(as_of_date=input.best_effort) } }",
                 "reserved calculation parameter",
             ),
             (
-                "entity E { dimension d { value as_of_date: string } @dimension(d) static attr x: integer snapshot attr y: integer computed attr z: integer { return self.x + self.y } }",
+                'entity E { dimension d { value as_of_date: string } @dimension(d) static attr x: integer snapshot attr y: integer computed attr z: integer { return self.x::value() + self.y::value() } }',
                 "conflicting inferred parameter",
             ),
             (
-                "entity E { snapshot attr x: integer computed attr y: integer { return self.x::at(as_of_date=input.day.default()) } }",
+                "entity E { snapshot attr x: integer computed attr y: integer { return self.x::value(as_of_date=input.day.default()) } }",
                 "unknown calculation method",
             ),
             (
-                "entity E { snapshot attr x: integer computed attr y: integer { return self.x::at(as_of_date=1) } }",
+                "entity E { snapshot attr x: integer computed attr y: integer { return self.x::value(as_of_date=1) } }",
                 "incompatible binding",
             ),
             (
-                "entity E { computed attr x: integer { return 1 } computed attr y: integer { return self.x::at() } }",
+                "entity E { computed attr x: integer { return 1 } computed attr y: integer { return self.x::best_available() } }",
                 "computed fields support",
             ),
             (
@@ -297,15 +360,15 @@ class ComputationTests(unittest.TestCase):
                 "binding or method context",
             ),
             (
-                "entity E { static attr items: collection<E> computed attr y: integer { return self.items.group_by(x -> x.items).sum_by(x -> 1) } }",
+                'entity E { static attr items: collection<E> computed attr y: integer { return self.items::value().group_by(x -> x.items::value()).sum_by(x -> 1) } }',
                 "scalar key",
             ),
             (
-                "entity E { static attr items: collection<E> computed attr y: integer { return self.items.group_by(x -> 1).filter(x -> true).sum_by(x -> 1) } }",
+                'entity E { static attr items: collection<E> computed attr y: integer { return self.items::value().group_by(x -> 1).filter(x -> true).sum_by(x -> 1) } }',
                 "grouped values support",
             ),
             (
-                "entity E { static attr items: collection<E> computed attr y: integer { let row = 0 return self.items.sum_by(row -> 1) } }",
+                'entity E { static attr items: collection<E> computed attr y: integer { let row = 0 return self.items::value().sum_by(row -> 1) } }',
                 "unique snake_case",
             ),
             (
@@ -313,7 +376,7 @@ class ComputationTests(unittest.TestCase):
                 "integer expression",
             ),
             (
-                "entity E { snapshot attr x: integer dimension d { value source: string fallback_days = self.x } }",
+                'entity E { snapshot attr x: integer dimension d { value source: string fallback_days = self.x::value() } }',
                 "without external parameters",
             ),
         ]
@@ -332,7 +395,7 @@ class ComputationTests(unittest.TestCase):
             [],
         )
         analysis = self.analyze(
-            "entity Root { computed attr x: integer { return self.only_child } } entity Child inherits Root { static attr only_child: integer }"
+            'entity Root { computed attr x: integer { return self.only_child::value() } } entity Child inherits Root { static attr only_child: integer }'
         )
         self.assertEqual([d.message for d in analysis.diagnostics if d.severity == "error"], [])
 
@@ -340,14 +403,14 @@ class ComputationTests(unittest.TestCase):
         source = """entity E {
             static attr date_value: date
             snapshot attr x: integer
-            computed attr child: integer { return self.x::at(as_of_date=input.other ?? input.day) }
-            computed attr parent: integer { return self.child::value(day=self.date_value, other=input.valuation_date) }
+            computed attr child: integer { return self.x::value(as_of_date=input.other ?? input.day) }
+            computed attr parent: integer { return self.child::value(day=self.date_value::value(), other=input.valuation_date) }
         }"""
         result = self.analyze(source)
         self.assertEqual([d.message for d in result.diagnostics if d.severity == "error"], [])
         inputs = result.calculations[(("", "E"), "parent")].inputs
         self.assertEqual([p.name for p in inputs], ["valuation_date"])
-        self.assertEqual(inputs[0].default.value, "date_value")
+        self.assertEqual(inputs[0].default.operands[0].operands[0].value, "date_value")
 
 
 if __name__ == "__main__":

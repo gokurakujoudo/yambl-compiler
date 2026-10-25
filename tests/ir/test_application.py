@@ -174,7 +174,7 @@ print(model.model_digest)
         from tests.support import document
         from yambl_compiler.semantics.validation import check
 
-        fixtures = Path(__file__).parents[3] / 'yambl/tools/lsp/tests'
+        fixtures = Path(__file__).parents[3] / 'yambl/tools/vscode/lsp/tests'
         count = 0
         for filename in [
             'cases.json',

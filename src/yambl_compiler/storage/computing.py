@@ -144,6 +144,9 @@ class Computing:
         self.configuration = configuration
         self.programs = programs
         self.available = Available(batch)
+        self.computed_fields = {
+            field.identity for field in reader.implementations.values() if field.calculation
+        }
         self.cache: dict[tuple[object, ...], tuple[Lane, ReadResult[object]]] = {}
 
     def annotated(
@@ -503,11 +506,11 @@ class Computing:
         :param frame: Calculation context.
         :param source: Scalar entity references.
         :param identity: Resolved logical field identity.
-        :param operation: at, best_available or value.
+        :param operation: value or best_available.
         :param arguments: Explicit subtree bindings.
         :returns: Aligned field results with contribution locations.
         """
-        if operation == "value":
+        if identity in self.computed_fields:
             return self.compute(frame, source, identity, arguments)
         owners = self._owners(frame, source)
         output: Vector = {}

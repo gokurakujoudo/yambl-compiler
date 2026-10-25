@@ -193,6 +193,14 @@ class Emitter:
             """
             if node.kind == "name" and node.value == "self":
                 return owner
+            if node.kind == "call" and node.operands[0].kind == "descriptor":
+                receiver = node.operands[0].operands[0]
+                target = visit(receiver)
+                access = self.accesses[receiver.span]
+                self.accesses[node.span] = CalculationAccess(
+                    node.span, access.identity, access.implementation, "value"
+                )
+                return target
             if node.kind == "member":
                 target = visit(node.operands[0])
                 definition = definitions.get(target)
@@ -211,7 +219,7 @@ class Emitter:
                         f"{field.identity}: fallback requires stored static or config dependencies"
                     )
                 self.accesses[node.span] = CalculationAccess(
-                    node.span, field.identity, field.implementation, "at"
+                    node.span, field.identity, field.implementation, "value"
                 )
                 return field.type.target
             for child in (*node.operands, *(a.expression for a in node.arguments)):

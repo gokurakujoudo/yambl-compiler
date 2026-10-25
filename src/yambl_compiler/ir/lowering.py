@@ -733,7 +733,7 @@ class Lowering:
         )
         return seal(
             Model(
-                5,
+                6,
                 self.version,
                 self.prefix,
                 primitives,
@@ -777,5 +777,5 @@ type ExpressionKind = Literal[
 ]
 type ArgumentKind = Literal['positional', 'keyword', 'pair']
 type FieldCategory = Literal['id', 'static', 'config', 'snapshot', 'scd', "computed"]
-type CalculationOperation = Literal["at", "best_available", "value"]
+type CalculationOperation = Literal["best_available", "value"]
 type DefinitionKind = Literal['entity', 'value', 'type_alias', 'decorator', 'decodes', 'constant']

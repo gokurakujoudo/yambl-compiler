@@ -60,7 +60,7 @@ class Access:
     :param span: Original field expression.
     :param owner: Declaring entity identity.
     :param name: Local field name.
-    :param operation: at, best_available or computed value.
+    :param operation: Unified value retrieval or stored-field best_available selection.
     """
 
     span: Span
@@ -588,6 +588,9 @@ class Checker:
         :returns: Required and optional dependencies.
         """
         assert value.site is not None and value.owner is not None
+        if operation == "at":
+            self.issue(node, "::at(...) was removed; use ::value(...) instead")
+            operation = "value"
         site = value.site
         body = children(site.declaration, "field_body")[0]
         mode = str(tokens(body)[0])
@@ -600,8 +603,8 @@ class Checker:
             self.dependencies.add((owner, value.name))
             calculation = self.computations.analyze(owner, value.name, site)
             return list(calculation.inputs) if calculation else []
-        if operation not in ("at", "best_available"):
-            self.issue(node, "stored fields support ::at or ::best_available")
+        if operation not in ("value", "best_available"):
+            self.issue(node, "stored fields support ::value or ::best_available")
         result: list[Input] = []
         if mode in ("snapshot", "scd") and not annotations(site.declaration, "temporal"):
             result.append(
@@ -654,18 +657,18 @@ class Checker:
                 )
         return result
 
-    def read(self, value: Value, node: Expression) -> Value:
-        """Consume a plain field in value position and infer its unbound inputs.
+    def read(self, value: Value, node: Expression, navigation: bool = False) -> Value:
+        """Require explicit retrieval except for intermediate scalar reference navigation.
 
         :param value: Expression or unconsumed field descriptor.
         :param node: Use site.
+        :param navigation: Whether this is the receiver of a member selection.
         :returns: Value with dependencies collected.
         """
         if value.site is not None:
-            mode = str(tokens(children(value.site.declaration, "field_body")[0])[0])
-            for parameter in self.field_parameters(
-                value, "value" if mode == "computed" else "at", node
-            ):
+            if not (navigation and value.type.kind == "reference"):
+                self.issue(node, "field retrieval requires ::value(...) or ::best_available(...)")
+            for parameter in self.field_parameters(value, "value", node):
                 self.add_input(parameter, node)
         return Value(value.type)
 
@@ -780,7 +783,7 @@ class Checker:
                 return Value(
                     Resolver(self.unit, self.computations.diagnostics, {}).evaluate(syntax).type
                 )
-            parent = self.read(self.infer(receiver, environment), receiver)
+            parent = self.read(self.infer(receiver, environment), receiver, navigation=True)
             if parent.type.name == "partial" and node.value in ("value", "issues"):
                 return Value(
                     parent.type.args[0]

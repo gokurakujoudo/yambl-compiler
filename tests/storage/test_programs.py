@@ -46,17 +46,17 @@ entity Security {
     dimension prices {
         value source: code<'Sources'>
         hierarchy hierarchy: Hierarchy = 'Local'
-        fallback_days = self.days
+        fallback_days = self.days::value()
     }
     @dimension(prices) @temporal(as_of_date: date)
     snapshot attr price: decimal
-    computed attr industry: string { return self.issuer.industry::at(industry_type=Industries.Primary) }
+    computed attr industry: string { return self.issuer.industry::value(industry_type=Industries.Primary) }
 }
 entity Holding {
     id key: string
     static attr security: Security
     static attr quantity: decimal
-    computed attr amount: decimal { return self.quantity * self.security.price::best_available() }
+    computed attr amount: decimal { return self.quantity::value() * self.security.price::best_available() }
 }
 entity Bond inherits Security {}
 entity Fund {
@@ -64,7 +64,7 @@ entity Fund {
     scd attr members: collection<Holding>
     @temporal(as_of_date: date) snapshot attr holdings: collection<Holding>
     computed attr amount: mapping<string, decimal> {
-        let holdings = self.holdings::at()
+        let holdings = self.holdings::value()
         return holdings.group_by(h -> h.security.industry::value(as_of_date=input.industry_date ?? input.as_of_date).recover(case NO_ENTRY -> 'Other')).sum_by(h -> h.amount::value(as_of_date=input.price_date ?? input.as_of_date))
     }
 }
@@ -73,19 +73,19 @@ extend Security {
     computed attr declared_price: decimal { return self.price::best_available(as_of_date=input.day ?? input.unused_day) }
     @extra_input_params(count: integer)
     computed attr input_value: integer { return input.count ?? 7 }
-    computed attr identity_text: string { return self.key }
-    computed attr safe: integer { return if true and not false then -2 + 3 * 4 else self.days }
+    computed attr identity_text: string { return self.key::value() }
+    computed attr safe: integer { return if true and not false then -2 + 3 * 4 else self.days::value() }
     computed attr recovered: integer { return ERROR.recover(case ERROR -> 42) }
     computed attr preserved: integer { return EMPTY.recover(case NO_ENTRY -> 0) }
     computed attr overflow: decimal[3, 1] { return 123.45 }
-    computed attr choose: integer { return if false or false then self.days else 8 }
+    computed attr choose: integer { return if false or false then self.days::value() else 8 }
 }
 extend Fund {
     computed attr filtered: decimal {
-        return self.holdings::at().filter(h -> h.quantity >= 3).map(h -> h.quantity).sum_by(q -> q)
+        return self.holdings::value().filter(h -> h.quantity::value() >= 3).map(h -> h.quantity::value()).sum_by(q -> q)
     }
     computed attr expanded: decimal {
-        return self.holdings::at().flat_map(h -> self.holdings::at()).sum_by(h -> h.quantity)
+        return self.holdings::value().flat_map(h -> self.holdings::value()).sum_by(h -> h.quantity::value())
     }
     computed attr accepted: mapping<string, decimal> {
         return self.amount::value().recover(case PARTIAL as p -> p.value)
@@ -555,7 +555,7 @@ class ProgramTests(FilesystemCase):
             )
             self.assertEqual(result[lane].status, status)
         self.assertEqual(
-            engine.field(frame, {lane: Success(1)}, "Security.days", "at", {})[lane].status,
+            engine.field(frame, {lane: Success(1)}, "Security.days", "value", {})[lane].status,
             Status.ERROR,
         )
         self.assertEqual(
@@ -563,13 +563,13 @@ class ProgramTests(FilesystemCase):
                 frame,
                 {lane: NonNormalResult(Status.NO_ENTRY)},
                 "Security.days",
-                "at",
+                "value",
                 {},
             )[lane].status,
             Status.NO_ENTRY,
         )
         self.assertEqual(
-            engine.field(frame, owner, "Security.absent", "at", {})[lane].status,
+            engine.field(frame, owner, "Security.absent", "value", {})[lane].status,
             Status.NOT_DEFINED,
         )
         self.assertEqual(
@@ -842,7 +842,7 @@ class ProgramTests(FilesystemCase):
             programs(model)
         for declarations, message in [
             (
-                "entity E { id key: string snapshot attr x: integer computed attr y: integer { return self.x::at(as_of_date=input.id_value) } }",
+                "entity E { id key: string snapshot attr x: integer computed attr y: integer { return self.x::value(as_of_date=input.id_value) } }",
                 "parameter collision",
             ),
             (

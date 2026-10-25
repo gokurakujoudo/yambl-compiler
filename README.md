@@ -71,7 +71,7 @@ it does not read YAMBL sources or installed language resources. Validation rejec
 duplicate JSON keys, unsupported nodes or revisions, broken references, invalid
 cycles and constraints, and inconsistent derived views, even if hashes were recomputed.
 
-The current `format_revision` is `5`. Constant declarations and contextual literal
+The current `format_revision` is `6`. Constant declarations and contextual literal
 types are retained as structured records and checked on independent loading.
 Compatibility is not promised until the
 format is frozen; unsupported revisions require recompilation. Output is deterministic
@@ -296,13 +296,13 @@ The current business example lives in
 ## VS Code language server
 
 The companion [YAMBL extension](https://github.com/gokurakujoudo/yambl/tree/feat/language-foundations/tools/vscode)
-bundles a JavaScript LSP in `yambl/tools/lsp/`. It runs with VS Code's own Node
+bundles a JavaScript LSP in `yambl/tools/vscode/lsp/`. It runs with VS Code's own Node
 runtime and never invokes this Python package. The Python CLI remains available
 for repository checks and automation.
 
 When changing syntax, keywords, annotations, built-ins, or validation rules, update
 the LSP and TextMate grammar in the language repository too. From this repository,
-run `node ../yambl/tools/lsp/tests/parity.cjs` to compare syntax acceptance,
+run `node ../yambl/tools/vscode/lsp/tests/parity.cjs` to compare syntax acceptance,
 core diagnostics, and formatting against the editor regression corpus and FMC sources.
 That development check uses this repository's venv; installed editor users do not
 need Python. The server's implementation limits are documented with its source.
@@ -406,7 +406,7 @@ the effective-config evaluator checks mapping types against the actual field imp
 Generic public read methods for these mapping fields remain unavailable; the manifest
 marks them with `readable: false`.
 
-IR revision 5 uses compact JSON. The packaged Draft 2020-12 schema validates
+IR revision 6 uses compact JSON. The packaged Draft 2020-12 schema validates
 structure offline; semantic validation also checks references and derived views.
 Recompile revision 1 and 2 artifacts. Ordinary `attr` now means `static attr`, and
 `AttrCats.Attr` has been removed in favor of `AttrCats.Static`.
@@ -477,8 +477,20 @@ still refuses nonempty destinations and does not provide a production writer.
 
 `computed attr name: Type { let local = expression return expression }` declares a
 read-only calculation. Its inferred inputs, defaults and dependency identities are
-stored in IR revision 5. Runtime contract 4 and storage layout 5 require regenerated
+stored in IR revision 6. Runtime contract 5 and storage layout 5 require regenerated
 artifacts; JSONL format remains 1. Computed fields add no physical columns.
+
+Stored and computed fields use `field::value(...)` in calculation expressions.
+Stored reads select an exact date and dimension coordinate; computed reads bind
+their inferred inputs. `::best_available(...)` remains a stored-field selection
+operation. `::at(...)` now reports a migration error.
+
+Terminal field reads must be explicit in locals, returns, operators, lambdas and
+arguments: use `self.quantity::value()`, not `self.quantity`. Intermediate reference
+paths such as `self.security.price::value()` remain transparent. Input members,
+local values and structured-value members keep ordinary member access. Type-level
+`self.field::value` expressions are unchanged. Generated Python `read_*` methods,
+stored-field properties and batch APIs retain their existing behavior.
 
 The generated package exposes frozen request classes and `read_*_many` methods.
 Requests retain input order and duplicates while dependency reads are batched.
@@ -493,7 +505,7 @@ calculations after close when no new backend read is needed.
 
 See the [calculation contract](../yambl/lang/syntex/computations.md) and the
 [capability matrix](../yambl/lang/syntex/storage.md#能力清单). General functions,
-write APIs, migrations, division, FX conversion and automatic combinations of
+write APIs, migrations, FX conversion and automatic combinations of
 multiple Hierarchies are outside this release.
 
 Optional calculation inputs can be declared with
@@ -502,5 +514,5 @@ Caller values override declaration defaults. `input.day ?? input.as_of_date` use
 its right operand only when the input is omitted; `.default(...)` is no longer
 accepted. Native non-normal results still require `recover`.
 Decorator calls accept optional trailing description metadata without adding a
-formal parameter to each declaration. IR revision 5 preserves pair defaults;
-runtime contract 4 carries the same checked metadata into generated packages.
+formal parameter to each declaration. IR revision 6 preserves pair defaults;
+runtime contract 5 carries the same checked metadata into generated packages.

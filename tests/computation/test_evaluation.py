@@ -50,7 +50,7 @@ class EvaluationTests(unittest.TestCase):
         ]:
             with self.subTest(source=source):
                 self.assertEqual(evaluate(self.node(source), lambda name: 5), expected)
-        for source in ("{'a': 1, 'a': 2}", 'x -> x', 'self.x::at()'):
+        for source in ("{'a': 1, 'a': 2}", 'x -> x', 'self.x::value()'):
             with self.assertRaises(ValueError):
                 evaluate(self.node(source), lambda name: 1)
         binary = replace(self.node('1 + 1'), value='%')

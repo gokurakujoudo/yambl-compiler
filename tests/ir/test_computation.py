@@ -1,5 +1,6 @@
 """Validate portable calculation structure and inferred dependency contracts."""
 
+import json
 from dataclasses import replace
 
 from tests.support import FilesystemCase
@@ -15,7 +16,7 @@ class ComputationIRTests(FilesystemCase):
         self.write("yambl-root.lclcfg", "prefix: ''\n")
         self.write(
             "a.yambl",
-            "entity E { id key: string snapshot attr price: decimal computed attr total: decimal { return self.price::at(as_of_date=input.day) + 1 } }",
+            "entity E { id key: string snapshot attr price: decimal computed attr total: decimal { return self.price::value(as_of_date=input.day) + 1 } }",
         )
         self.model = compile_repository(self.root)
         self.entity = next(d for d in self.model.definitions if d.identity == "E")
@@ -38,6 +39,17 @@ class ComputationIRTests(FilesystemCase):
 
     def test_portable_sources_and_independent_validation(self):
         self.assertEqual(validate_ir(loads(dumps(self.model))), ())
+        self.assertEqual({a.operation for a in self.field.calculation.accesses}, {"value"})
+        wire = json.loads(dumps(self.model))
+        for definition in wire["definitions"]:
+            for field in definition["fields"]:
+                if field["calculation"]:
+                    field["calculation"]["accesses"][0]["operation"] = "at"
+        with self.assertRaisesRegex(ValueError, r"\$.definitions\[0\].fields\[2\].calculation"):
+            loads(json.dumps(wire))
+        wire["format_revision"] = 5
+        with self.assertRaisesRegex(ValueError, "unsupported IR revision; recompile"):
+            loads(json.dumps(wire))
         self.assertEqual(self.field.calculation.inputs[0].sites[0].path, "a.yambl")
         self.assertNotIn(str(self.root), dumps(self.model))
         self.write("a.yambl", "invalid source after compilation")
@@ -46,7 +58,7 @@ class ComputationIRTests(FilesystemCase):
     def test_pair_defaults_and_description_round_trip_without_sources(self):
         self.write(
             'a.yambl',
-            "entity E { id key: string snapshot attr price: decimal @extra_input_params(day: date = '2026-01-01', 'Valuation day') computed attr total: decimal { return self.price::at(as_of_date=input.day ?? input.other_day) } }",
+            "entity E { id key: string snapshot attr price: decimal @extra_input_params(day: date = '2026-01-01', 'Valuation day') computed attr total: decimal { return self.price::value(as_of_date=input.day ?? input.other_day) } }",
         )
         model = compile_repository(self.root)
         self.write('a.yambl', 'source intentionally unavailable')
