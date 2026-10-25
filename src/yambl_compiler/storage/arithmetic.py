@@ -3,6 +3,7 @@
 import math
 from collections.abc import Callable, Sequence
 from decimal import MAX_EMAX, MIN_EMIN, Decimal, DecimalException, localcontext
+from fractions import Fraction
 from typing import cast
 
 from yambl_compiler.storage.results import (
@@ -39,12 +40,14 @@ def failure(results: Sequence[NonNormalResult]) -> NonNormalResult:
 def numeric(operator: str, left: Number, right: Number) -> Number:
     """Calculate with input-derived precision rather than ambient Decimal context.
 
-    :param operator: One of ``+``, ``-`` or ``*``.
+    :param operator: One of ``+``, ``-``, ``*``, ``/`` or ``//``.
     :param left: Finite numeric operand, excluding bool.
     :param right: Finite numeric operand, excluding bool.
     :returns: Exact integer/decimal or finite float result.
     :raises ValueError: On unsupported operands, operators or nonfinite values.
     :raises DecimalException: On an unrepresentable Decimal result.
+    :raises ZeroDivisionError: If division has a zero denominator.
+    :raises OverflowError: If division cannot produce a finite float.
     """
     if type(left) not in (int, Decimal, float) or type(right) not in (
         int,
@@ -52,8 +55,12 @@ def numeric(operator: str, left: Number, right: Number) -> Number:
         float,
     ):
         raise ValueError("arithmetic requires numeric operands, not bool")
-    if operator not in ("+", "-", "*"):
+    if operator not in ("+", "-", "*", '/', '//'):
         raise ValueError("unsupported calculation arithmetic operator")
+    if operator in ('/', '//'):
+        # Ratios preserve large integer/Decimal operands until the final float conversion.
+        quotient = Fraction(left) / Fraction(right)
+        return float(quotient) if operator == '/' else quotient.numerator // quotient.denominator
     if isinstance(left, float) or isinstance(right, float):
         a, b = float(left), float(right)
         result = a + b if operator == "+" else a - b if operator == "-" else a * b
@@ -100,7 +107,7 @@ def lift(
     try:
         payload = operation(*payloads)
         return Partial(payload, issues) if issues else Success(payload, "computation")
-    except (ValueError, TypeError, OverflowError, DecimalException) as error:
+    except (ValueError, TypeError, OverflowError, ZeroDivisionError, DecimalException) as error:
         return NonNormalResult(Status.ERROR, str(error))
 
 

@@ -10,7 +10,11 @@ from yambl_compiler.computation.records import (
     Body,
     Case,
     Expression,
+    HintAccess,
+    HintOperation,
+    HintParameter,
     Span,
+    TypeHint,
 )
 from yambl_compiler.syntax.parser import children, string_value, tokens
 
@@ -41,6 +45,101 @@ def branches(node: Tree[Token]) -> list[Tree[Token]]:
     return [item for item in node.children if isinstance(item, Tree)]
 
 
+def type_hint(node: Tree[Token]) -> TypeHint:
+    """Lower a local type annotation into generic and primitive constraints.
+
+    :param node: Annotation syntax.
+    :returns: Independent type structure.
+    """
+    parameters: list[HintParameter] = []
+    for group in children(node, 'parameters'):
+        for item in group.children:
+            if isinstance(item, Tree):
+                ts = tokens(item)
+                parameters.append(HintParameter(str(ts[0]), str(ts[-1])))
+            elif item.type in ('INT', 'STRING'):
+                parameters.append(HintParameter('', str(item)))
+    return TypeHint(
+        str(tokens(node)[0]),
+        tuple(type_hint(a) for g in children(node, 'arguments') for a in children(g, 'type_expr')),
+        tuple(parameters),
+        tuple(
+            HintAccess(cast(Literal['.', '::'], str(tokens(a)[0])), str(tokens(a)[1]))
+            for a in children(node, 'access')
+        ),
+        span(node),
+        operations=tuple(
+            HintOperation(
+                cast(Literal['+', '-'], str(tokens(o)[0])),
+                type_hint(children(o, 'flag_operand')[0]),
+            )
+            for o in children(node, 'flag_operation')
+        ),
+        binding=str(tokens(children(node, 'binding')[0])[-1]) if children(node, 'binding') else '',
+    )
+
+
+def restore_hint(hint: TypeHint) -> Tree[Token]:
+    """Restore a checked type annotation without parsing source.
+
+    :param hint: Portable type syntax.
+    :returns: Semantic type expression.
+    """
+
+    def literal(value: str) -> Token:
+        """Restore a type atom.
+
+        :param value: Atom spelling.
+        :returns: Positioned token.
+        """
+        kind = (
+            'STRING' if value.startswith("'") else 'INT' if value.lstrip('-').isdigit() else 'NAME'
+        )
+        return located_token(value, kind, hint.span)
+
+    parts: list[Token | Tree[Token]] = [literal(hint.name)]
+    if hint.arguments:
+        parts.append(Tree('arguments', [restore_hint(a) for a in hint.arguments]))
+    if hint.parameters:
+        parts.append(
+            Tree(
+                'parameters',
+                [
+                    (
+                        Tree(
+                            'named_parameter',
+                            [
+                                literal(p.name),
+                                located_token(':', 'COLON', hint.span),
+                                literal(p.value),
+                            ],
+                        )
+                        if p.name
+                        else literal(p.value)
+                    )
+                    for p in hint.parameters
+                ],
+            )
+        )
+    parts.extend(
+        Tree('access', [located_token(a.operator, 'OP', hint.span), literal(a.name)])
+        for a in hint.accesses
+    )
+    parts.extend(
+        Tree(
+            'flag_operation',
+            [
+                located_token(o.operator, 'OP', hint.span),
+                Tree('flag_operand', restore_hint(o.operand).children),
+            ],
+        )
+        for o in hint.operations
+    )
+    if hint.binding:
+        parts.append(Tree('binding', [located_token('as', 'AS', hint.span), literal(hint.binding)]))
+    return Tree('type_expr', parts)
+
+
 def expression(node: Tree[Token]) -> Expression:
     """Lower a calculation without performing name or type resolution.
 
@@ -51,8 +150,38 @@ def expression(node: Tree[Token]) -> Expression:
     parts = branches(node)
     items = tokens(node)
     kind = str(node.data)
+    if kind == 'calculation_sequence':
+        return Expression('sequence', '', tuple(expression(p) for p in parts), (), (), location)
+    if kind == 'calculation_object':
+        return Expression(
+            'object',
+            '',
+            tuple(expression(p) for pair in parts for p in branches(pair)),
+            (),
+            (),
+            location,
+        )
     if kind == "calculation_name":
         return Expression("name", str(items[0]), (), (), (), location)
+    if kind == 'calculation_function':
+        function_arguments = tuple(
+            Argument(
+                str(tokens(argument)[0]) if argument.data == 'calculation_keyword' else '',
+                expression(
+                    branches(argument)[0] if argument.data == 'calculation_keyword' else argument
+                ),
+                span(argument),
+            )
+            for argument in branches(parts[0])
+        )
+        return Expression(
+            'call',
+            '',
+            (Expression('name', str(items[0]), (), (), (), location),),
+            function_arguments,
+            (),
+            location,
+        )
     if kind == "calculation_literal":
         token = items[0]
         if token.type == "STRING":
@@ -134,7 +263,12 @@ def body(node: Tree[Token]) -> Body:
     :returns: Immutable body without parser-specific objects.
     """
     bindings = tuple(
-        Binding(str(tokens(item)[1]), expression(branches(item)[0]), span(item))
+        Binding(
+            str(tokens(item)[1]),
+            expression(branches(item)[-1]),
+            span(item),
+            type_hint(children(item, 'type_expr')[0]) if children(item, 'type_expr') else None,
+        )
         for item in children(node, "let_statement")
     )
     returned = children(node, "return_statement")[0]
@@ -168,6 +302,34 @@ def restore_expression(node: Expression) -> Tree[Token]:
     :returns: Positioned checker syntax without parsing reconstructed source.
     """
     location = node.span
+    if node.kind == 'sequence':
+        return Tree(
+            'calculation_sequence',
+            [
+                located_token('[', 'LSQB', location),
+                *(restore_expression(o) for o in node.operands),
+                located_token(']', 'RSQB', location),
+            ],
+        )
+    if node.kind == 'object':
+        return Tree(
+            'calculation_object',
+            [
+                located_token('{', 'LBRACE', location),
+                *(
+                    Tree[Token](
+                        'calculation_pair',
+                        [
+                            restore_expression(node.operands[i]),
+                            located_token(':', 'COLON', location),
+                            restore_expression(node.operands[i + 1]),
+                        ],
+                    )
+                    for i in range(0, len(node.operands), 2)
+                ),
+                located_token('}', 'RBRACE', location),
+            ],
+        )
     if node.kind in ("name", "string", "integer", "decimal", "bool"):
         value = node.value
         if node.kind == "string":
@@ -226,6 +388,14 @@ def restore_expression(node: Expression) -> Tree[Token]:
                 )
                 arguments.append(Tree("recovery_case", case_parts))
             arguments.append(located_token(")", "RPAR", location))
+            if selected.kind == 'name':
+                return Tree(
+                    'calculation_function',
+                    [
+                        located_token(selected.value, 'NAME', selected.span),
+                        Tree('function_arguments', arguments),
+                    ],
+                )
             suffix.append(Tree("calculation_arguments", arguments))
         return Tree(
             "calculation_postfix",
@@ -285,6 +455,7 @@ def restore_body(computation: Body) -> Tree[Token]:
                 [
                     located_token("let", "LET", binding.span),
                     located_token(binding.name, "NAME", binding.span),
+                    *([restore_hint(binding.annotation)] if binding.annotation else []),
                     located_token("=", "EQUAL", binding.span),
                     restore_expression(binding.expression),
                 ],

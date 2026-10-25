@@ -2,7 +2,9 @@ start: namespace_decl? import_decl* declaration*
 namespace_decl: NAMESPACE qualified_name
 qualified_name: NAME ("." NAME)*
 import_decl: FROM qualified_name IMPORT NAME
-?declaration: entity | decodes | extension | value | type_alias | decorator
+?declaration: entity | decodes | extension | value | type_alias | decorator | constant
+constant: constant_header ":" type_expr "=" calculation
+constant_header: CONST NAME
 decorator: annotation* decorator_header
 decorator_header: DECORATOR "@" NAME "(" [decorator_parameter ("," decorator_parameter)*] ")"
 decorator_parameter: "*"? NAME "?"? ":" type_expr decorator_default?
@@ -26,7 +28,7 @@ dimension_value: VALUE NAME ":" type_expr
 dimension_hierarchy: HIERARCHY NAME ":" type_expr ("=" calculation)?
 dimension_fallback: FALLBACK_DAYS "=" calculation
 computation: "{" let_statement* return_statement "}"
-let_statement: LET NAME "=" calculation
+let_statement: LET NAME (":" type_expr)? "=" calculation
 return_statement: RETURN calculation
 ?calculation: NAME "->" calculation -> lambda_expression
             | IF calculation THEN calculation ELSE calculation -> conditional_expression
@@ -36,18 +38,25 @@ return_statement: RETURN calculation
 ?conjunction: comparison (AND comparison)*
 ?comparison: sum_expression (COMPARISON sum_expression)?
 ?sum_expression: product_expression (("+" | "-") product_expression)*
-?product_expression: unary_expression ("*" unary_expression)*
+?product_expression: unary_expression (("*" | "/" | "//") unary_expression)*
 ?unary_expression: ("-" | NOT) unary_expression -> unary_expression
                  | calculation_postfix
 ?calculation_postfix: calculation_atom calculation_suffix*
-?calculation_atom: NAME -> calculation_name
+?calculation_atom: NAME function_arguments -> calculation_function
+                 | NAME -> calculation_name
                  | SELF -> calculation_name
                  | STRING -> calculation_literal
                  | CALC_NUMBER -> calculation_literal
                  | BOOLEAN -> calculation_literal
+                 | "[" [calculation ("," calculation)*] "]" -> calculation_sequence
+                 | "{" [calculation_pair ("," calculation_pair)*] "}" -> calculation_object
                  | "(" calculation ")" -> calculation_parentheses
+calculation_pair: calculation ":" calculation
 calculation_suffix: ("." | "::") NAME calculation_arguments?
 calculation_arguments: "(" [calculation_argument ("," calculation_argument)*] ")"
+function_arguments: "(" [function_argument ("," function_argument)*] ")"
+?function_argument: NAME "=" calculation -> calculation_keyword
+                  | calculation
 ?calculation_argument: NAME "=" calculation -> calculation_keyword
                      | recovery_case
                      | calculation
@@ -72,6 +81,7 @@ parameters: "[" parameter ("," parameter)* "]"
 named_parameter: NAME ":" literal
 ?literal: INT | STRING
 NAME: /[a-zA-Z_][a-zA-Z_0-9]*/
+CONST: /const\b/
 COMPUTED: /computed\b/
 DIMENSION: /dimension\b/
 HIERARCHY: /hierarchy\b/

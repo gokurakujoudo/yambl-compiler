@@ -22,6 +22,7 @@ from yambl_compiler.storage.layout import Layout, build_layout, snake
 from yambl_compiler.storage.programs import programs
 from yambl_compiler.storage.records import LAYOUT_REVISION
 from yambl_compiler.storage.rendering import ddl, manifest, reference
+from yambl_compiler.storage.value_types import generate_values
 
 
 def python_package(layout: Layout, package: str) -> str:
@@ -34,6 +35,9 @@ def python_package(layout: Layout, package: str) -> str:
     """
     names = {key: entity.name.rsplit(".", 1)[-1] for key, entity in layout.entities.items()}
     codes: dict[str, str] = {}
+    value_names = {
+        d.identity: d.name.rsplit('.', 1)[-1] for d in layout.model.definitions if d.kind == 'value'
+    }
 
     def python_type(type_: Type) -> str:
         """Render a supported Python value annotation.
@@ -41,11 +45,13 @@ def python_package(layout: Layout, package: str) -> str:
         :param type_: Resolved supported IR type.
         :returns: Python annotation.
         """
+        if type_.target in value_names and type_.kind == 'value':
+            return value_names[type_.target]
         if type_.kind == "reference":
             return f"EntityRef[{names.get(type_.target, 'object')}]"
         if type_.name == "mapping":
             return f"Mapping[{python_type(type_.arguments[0])}, {python_type(type_.arguments[1])}]"
-        if type_.name == "collection":
+        if type_.name in ("collection", 'values'):
             return f"frozenset[{python_type(type_.arguments[0])}]"
         if type_.name == "code":
             target = type_.arguments[0].target
@@ -61,8 +67,13 @@ def python_package(layout: Layout, package: str) -> str:
             "decimal": "Decimal",
             "float": "float",
             "date": "date",
+            'datetime': 'datetime',
         }[type_.name]
 
+    for definition in layout.model.definitions:
+        if definition.kind == 'value':
+            for field in definition.fields:
+                python_type(field.type)
     for stored in layout.fields.values():
         if stored.root not in layout.entities:
             continue
@@ -183,6 +194,7 @@ def python_package(layout: Layout, package: str) -> str:
         *codes.values(),
         *records.values(),
         *requests.values(),
+        *value_names.values(),
         reader_name,
     ]
     reader_methods = [
@@ -221,7 +233,7 @@ def python_package(layout: Layout, package: str) -> str:
         "",
         "from __future__ import annotations",
         "",
-        "from datetime import date",
+        "from datetime import date, datetime",
         "from collections.abc import Mapping, Sequence",
         "from dataclasses import dataclass",
         "from decimal import Decimal",
@@ -236,6 +248,7 @@ def python_package(layout: Layout, package: str) -> str:
         "from ._validation import ValidationReport, ValidationIssue",
         "",
     ]
+    lines.append('from ._value_types import ' + ', '.join(sorted(value_names.values())))
     for target, name in sorted(codes.items()):
         dictionary = next((d for d in layout.model.definitions if d.identity == target), None)
         lines.extend(
@@ -457,7 +470,7 @@ def python_package(layout: Layout, package: str) -> str:
                     ],
                     8,
                 ),
-                f"        batch = tuple((request.id_value, {values}, request.best_effort) for request in requests)",
+                f"        batch: tuple[tuple[str | int, dict[str, object], bool], ...] = tuple((request.id_value, {values}, request.best_effort) for request in requests)",
                 f"        return cast({result}, self.calculate_many({owner!r}, {identity!r}, batch))",
             ]
         )
@@ -521,6 +534,8 @@ def python_package(layout: Layout, package: str) -> str:
             "",
         ]
     )
+    if not any(re.search(r'\bdatetime\b', line) for line in lines if not line.startswith('from ')):
+        lines[lines.index('from datetime import date, datetime')] = 'from datetime import date'
     return "\n".join(lines)
 
 
@@ -569,6 +584,7 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         package + "/py.typed": "",
         package + "/model.yambl-ir.json": dumps(model),
         package + "/_calculations.py": programs(model),
+        package + '/_value_types.py': generate_values(model),
     }
     modules = [
         "records",
@@ -577,6 +593,7 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         "batch",
         "configuration",
         "arithmetic",
+        "conversions",
         "selection",
         "computing",
         "session",

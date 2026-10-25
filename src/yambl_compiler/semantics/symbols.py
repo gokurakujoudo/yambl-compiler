@@ -7,6 +7,7 @@ from typing import Literal, cast
 
 from lark import Token, Tree
 
+from yambl_compiler.computation.records import Expression as CalculationExpression
 from yambl_compiler.syntax.parser import (
     Diagnostic,
     Document,
@@ -38,7 +39,7 @@ GENERICS = {
     'exact',
 }
 type EntityKey = tuple[str, str]
-type DeclarationKind = Literal['entity', 'decodes', 'value', 'type_alias', 'decorator']
+type DeclarationKind = Literal['entity', 'decodes', 'value', 'type_alias', 'decorator', 'constant']
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class World:
     :param parents: Nearest-first business ancestors, excluding Entity.
     :param reserved: Names provided by the selected language definitions.
     :param constants: Result constant meanings from the selected definitions.
+    :param constant_expressions: Checked user constant initializers.
     :param dimensions: Entity-scoped named dimension declarations.
     """
 
@@ -76,6 +78,9 @@ class World:
     )
     reserved: set[str] = field(default_factory=set[str])
     constants: dict[str, str] = field(default_factory=dict[str, str])
+    constant_expressions: dict[EntityKey, CalculationExpression] = field(
+        default_factory=dict[EntityKey, CalculationExpression]
+    )
     dimensions: dict[EntityKey, dict[str, tuple[Unit, Tree[Token]]]] = field(
         default_factory=lambda: dict[EntityKey, dict[str, tuple[Unit, Tree[Token]]]]()
     )
@@ -188,13 +193,18 @@ def resolve_scopes(
             *children(document.tree, 'value'),
             *children(document.tree, 'type_alias'),
             *children(document.tree, 'decorator'),
+            *children(document.tree, 'constant'),
         ]:
             name = declaration_name(declaration)
             key = symbol_key(document, name)
             pattern = (
                 r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*'
                 if declaration.data in ('value', 'type_alias', 'decorator')
-                else r'[A-Z][a-zA-Z0-9]*'
+                else (
+                    r'[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*'
+                    if declaration.data == 'constant'
+                    else r'[A-Z][a-zA-Z0-9]*'
+                )
             )
             if not re.fullmatch(pattern, name):
                 diagnostics.append(
@@ -208,7 +218,11 @@ def resolve_scopes(
                                 else 'value names must use snake_case'
                             )
                             if declaration.data in ('value', 'type_alias', 'decorator')
-                            else 'declaration names must use PascalCase'
+                            else (
+                                'constant names must use UPPER_SNAKE_CASE'
+                                if declaration.data == 'constant'
+                                else 'declaration names must use PascalCase'
+                            )
                         ),
                     )
                 )
@@ -260,6 +274,7 @@ def resolve_scopes(
                 'decodes',
                 'type_alias',
                 'decorator',
+                'constant',
             ):
                 world.declarations[('builtins', declaration_name(node))] = (
                     builtin,
@@ -273,6 +288,7 @@ def resolve_scopes(
                 'decodes',
                 'type_alias',
                 'decorator',
+                'constant',
             ):
                 world.declarations[symbol_key(unit.document, declaration_name(node))] = (unit, node)
         for name, symbol in builtin_scope.items():

@@ -2,11 +2,13 @@
 
 import re
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from typing import Literal
 
 from lark import Token, Tree
 
-from yambl_compiler.computation.records import Body, Expression, Span
+from yambl_compiler.computation.evaluation import StructuredConstant, evaluate
+from yambl_compiler.computation.records import Body, Expression, Span, TypeHint
 from yambl_compiler.semantics.decorators import bind_call
 from yambl_compiler.semantics.dimensions import (
     Dimension,
@@ -17,8 +19,16 @@ from yambl_compiler.semantics.entities import EntityIndex, FieldSite
 from yambl_compiler.semantics.expressions import Resolver
 from yambl_compiler.semantics.symbols import EntityKey, Unit, field_owner
 from yambl_compiler.semantics.types import UNKNOWN, Resolved, accepts
+from yambl_compiler.storage.conversions import RETURNS, SIGNATURES
 from yambl_compiler.syntax.computation import body as calculation_body
-from yambl_compiler.syntax.computation import span
+from yambl_compiler.syntax.computation import (
+    branches,
+    restore_hint,
+    span,
+)
+from yambl_compiler.syntax.computation import (
+    expression as calculation_expression,
+)
 from yambl_compiler.syntax.parser import Diagnostic, annotations, children, tokens
 
 NUMBERS = ("integer", "decimal", "float")
@@ -116,6 +126,9 @@ class Computations:
     :param diagnostics: Shared diagnostic output.
     :param calculations: Completed implementation analyses.
     :param active: Implementations currently being analyzed.
+    :param constant_types: Checked constant declaration types.
+    :param constant_values: Successfully evaluated immutable constants.
+    :param constant_active: Constant declarations in the active dependency chain.
     """
 
     entities: EntityIndex
@@ -124,6 +137,107 @@ class Computations:
         default_factory=dict[tuple[EntityKey, str], Calculation]
     )
     active: set[tuple[EntityKey, str]] = field(default_factory=set[tuple[EntityKey, str]])
+    constant_types: dict[EntityKey, Resolved] = field(default_factory=dict[EntityKey, Resolved])
+    constant_values: dict[EntityKey, object] = field(default_factory=dict[EntityKey, object])
+    constant_active: set[EntityKey] = field(default_factory=set[EntityKey])
+
+    def constant(self, key: EntityKey, scope: Unit) -> Resolved:
+        """Check and evaluate a constant once, detecting forward-reference cycles.
+
+        :param key: Resolved declaration identity.
+        :param scope: Scope sharing the declaration index.
+        :returns: Declared type, or unknown after an error.
+        """
+        if key in self.constant_types:
+            return self.constant_types[key]
+        unit, declaration = scope.world.declarations[key]
+        node = calculation_expression(branches(declaration)[-1])
+        checker = Checker(self, key, unit)
+        if key in self.constant_active:
+            checker.issue(node, f'constant dependency cycle: {key[1]}')
+            return UNKNOWN
+        self.constant_active.add(key)
+        expected = Resolver(unit, self.diagnostics, {}).resolve(
+            children(declaration, 'type_expr')[0]
+        )
+        before = len(self.diagnostics)
+        actual = checker.infer(node, {}, expected).type
+
+        def pure(expression: Expression, key_position: bool = False) -> None:
+            """Reject runtime-only syntax even in an unselected constant branch.
+
+            :param expression: Constant subtree.
+            :param key_position: Whether a name denotes a structured field key.
+            :returns: None.
+            """
+            if expression.kind == 'name' and not key_position:
+                symbol = unit.scope.get(expression.value)
+                if expression.value not in SIGNATURES and (
+                    symbol is None or symbol.kind not in ('constant', 'decodes')
+                ):
+                    checker.issue(expression, f'not a pure constant dependency: {expression.value}')
+            if expression.kind in ('descriptor', 'recover', 'lambda') or (
+                expression.kind == 'call' and expression.operands[0].kind != 'name'
+            ):
+                checker.issue(
+                    expression,
+                    'constant expressions cannot read fields, inputs or non-normal results',
+                )
+            for i, child in enumerate(expression.operands):
+                hint = checker.literal_hints.get(expression.span)
+                pure(
+                    child, expression.kind == 'object' and bool(hint and hint.target) and i % 2 == 0
+                )
+            for argument in expression.arguments:
+                pure(argument.expression)
+
+        pure(node)
+        if not checker.compatible(expected, actual):
+            checker.issue(
+                node, f'incompatible constant result: expected {expected.name}, got {actual.name}'
+            )
+
+        def resolve(name: str) -> object:
+            """Resolve compile-time dependencies in the declaration scope.
+
+            :param name: Constant name or dictionary code path.
+            :returns: Evaluated dependency.
+            :raises ValueError: For nonconstant dependencies or a failed constant.
+            """
+            root, dot, code = name.partition('.')
+            symbol = unit.scope.get(root)
+            if symbol is not None and symbol.kind == 'constant':
+                self.constant(symbol.key, unit)
+                if symbol.key in self.constant_values:
+                    payload = self.constant_values[symbol.key]
+                    if not dot:
+                        return payload
+                    assert isinstance(payload, StructuredConstant)
+                    return dict(payload.fields)[code]
+            if symbol is not None and symbol.kind == 'decodes' and dot:
+                return code
+            raise ValueError(f'not a pure constant dependency: {name}')
+
+        if len(self.diagnostics) == before:
+            try:
+                elaborated = checker.elaborate(node)
+                payload = evaluate(elaborated, resolve)
+                if expected.name == 'decimal' and expected.params:
+                    numeric = Decimal(str(payload))
+                    _, digits, exponent = numeric.as_tuple()
+                    assert isinstance(exponent, int)
+                    params = dict(expected.params)
+                    if max(0, -exponent) > int(params['scale']) or max(
+                        0, len(digits) + exponent
+                    ) > int(params['precision']) - int(params['scale']):
+                        raise ValueError('decimal exceeds declared precision or scale')
+                self.constant_values[key] = payload
+                unit.world.constant_expressions[key] = elaborated
+            except (ValueError, ArithmeticError, TypeError) as error:
+                checker.issue(node, f'constant evaluation failed: {error}')
+        self.constant_active.remove(key)
+        self.constant_types[key] = expected
+        return expected
 
     def analyze(self, owner: EntityKey, name: str, site: FieldSite) -> Calculation | None:
         """Analyze one implementation with memoization and cycle detection.
@@ -156,13 +270,26 @@ class Computations:
                     binding.expression,
                     f"duplicate or invalid local binding: {binding.name}",
                 )
-            environment[binding.name] = checker.read(
-                checker.infer(binding.expression, environment), binding.expression
+            declared = (
+                Resolver(site.unit, self.diagnostics, self.entities.field_types(owner)).resolve(
+                    restore_hint(binding.annotation)
+                )
+                if binding.annotation
+                else None
             )
-        actual = checker.read(checker.infer(body.result, environment), body.result).type
+            value = checker.read(
+                checker.infer(binding.expression, environment, declared), binding.expression
+            )
+            if declared is not None and not checker.compatible(declared, value.type):
+                checker.issue(
+                    binding.expression,
+                    f'incompatible local binding: expected {declared.name}, got {value.type.name}',
+                )
+            environment[binding.name] = Value(declared) if declared else value
         expected = Resolver(site.unit, [], self.entities.field_types(owner)).resolve(
             children(field_body, "type_expr")[0]
         )
+        actual = checker.read(checker.infer(body.result, environment, expected), body.result).type
         if not checker.compatible(expected, actual):
             checker.issue(
                 body.result,
@@ -195,7 +322,13 @@ class Computations:
         }
         checker.check_defaults()
         result = Calculation(
-            body,
+            replace(
+                body,
+                bindings=tuple(
+                    replace(b, expression=checker.elaborate(b.expression)) for b in body.bindings
+                ),
+                result=checker.elaborate(body.result),
+            ),
             tuple(checker.inputs[n] for n in sorted(checker.inputs)),
             tuple(checker.accesses),
             tuple(sorted(checker.dependencies)),
@@ -223,6 +356,39 @@ class Checker:
         self.declared: dict[str, Input] = {}
         self.accesses: list[Access] = []
         self.dependencies: set[tuple[EntityKey, str]] = set()
+        self.literal_hints: dict[Span, TypeHint] = {}
+
+    def hint(self, type_: Resolved, location: Span) -> TypeHint:
+        """Describe a contextual literal type for generated conversion.
+
+        :param type_: Resolved expected type.
+        :param location: Literal location.
+        :returns: Portable type description.
+        """
+        target = (
+            '.'.join(part for part in (type_.key[0].split('\0')[-1], type_.key[1]) if part)
+            if type_.key
+            else ''
+        )
+        return TypeHint(
+            type_.name, tuple(self.hint(a, location) for a in type_.args), (), (), location, target
+        )
+
+    def elaborate(self, node: Expression) -> Expression:
+        """Attach checked contextual types to literals without changing source syntax.
+
+        :param node: Original expression.
+        :returns: Contextually typed immutable expression.
+        """
+        return replace(
+            node,
+            annotation=self.literal_hints.get(node.span),
+            operands=tuple(self.elaborate(n) for n in node.operands),
+            arguments=tuple(
+                replace(a, expression=self.elaborate(a.expression)) for a in node.arguments
+            ),
+            cases=tuple(replace(c, expression=self.elaborate(c.expression)) for c in node.cases),
+        )
 
     def declare_inputs(self, declaration: Tree[Token]) -> None:
         """Read explicitly declared optional inputs before dependency inference.
@@ -503,14 +669,78 @@ class Checker:
                 self.add_input(parameter, node)
         return Value(value.type)
 
-    def infer(self, node: Expression, environment: dict[str, Value]) -> Value:
+    def infer(
+        self, node: Expression, environment: dict[str, Value], expected: Resolved | None = None
+    ) -> Value:
         """Infer an expression while preserving lazy branch structure.
 
         :param node: Independent calculation AST.
         :param environment: Immutable local names and lambda parameters.
+        :param expected: Type supplied by a declaration or argument position.
         :returns: Inferred value or unresolved field descriptor.
         """
+        if node.kind in ('sequence', 'object'):
+            return self.literal(node, environment, expected)
         if node.kind in ("string", "integer", "decimal", "bool"):
+            if (
+                expected
+                and (expected.name in ('date', 'datetime', 'code') or expected.kind == 'reference')
+                and node.kind in ('string', 'integer')
+            ):
+                if expected.name in ('date', 'datetime'):
+                    from yambl_compiler.storage.conversions import convert
+
+                    try:
+                        convert('parse_' + expected.name, (node.value,))
+                    except ValueError as error:
+                        self.issue(node, str(error))
+                if (
+                    expected.name == 'code'
+                    and expected.args
+                    and expected.args[0].key in self.unit.world.declarations
+                ):
+                    _, dictionary = self.unit.world.declarations[expected.args[0].key]
+                    valid = {str(tokens(entry)[2]) for entry in children(dictionary, 'entry')}
+                    if annotations(dictionary, 'flags'):
+                        valid.update(('None', 'All'))
+                    if node.value not in valid:
+                        self.issue(
+                            node, f'unknown Decodes code: {expected.args[0].name}.{node.value}'
+                        )
+                self.literal_hints[node.span] = self.hint(expected, node.span)
+                if expected.kind == 'reference':
+                    ids = [
+                        (unit, declaration)
+                        for unit, declaration in self.unit.world.fields.get(
+                            expected.key or ('', ''), {}
+                        ).values()
+                        if str(tokens(children(declaration, 'field_body')[0])[0]) == 'id'
+                    ]
+                    if len(ids) != 1:
+                        self.issue(node, 'reference literal requires one identifiable ID field')
+                    else:
+                        unit, declaration = ids[0]
+                        id_type = Resolver(unit, self.computations.diagnostics, {}).resolve(
+                            children(children(declaration, 'field_body')[0], 'type_expr')[0]
+                        )
+                        if not self.compatible(
+                            id_type,
+                            Resolved(
+                                node.kind,
+                                'string' if node.kind == 'string' else 'value',
+                                exact=node.value,
+                            ),
+                        ):
+                            self.issue(node, 'incompatible reference literal ID type')
+                return Value(expected)
+            if (
+                expected
+                and expected.name in NUMBERS
+                and node.kind in NUMBERS
+                and self.compatible(expected, Resolved(node.kind))
+            ):
+                self.literal_hints[node.span] = self.hint(expected, node.span)
+                return Value(expected)
             return Value(
                 Resolved(
                     node.kind,
@@ -521,6 +751,9 @@ class Checker:
         if node.kind == "name":
             if node.value in environment:
                 return environment[node.value]
+            symbol = self.unit.scope.get(node.value)
+            if symbol is not None and symbol.kind == 'constant':
+                return Value(self.computations.constant(symbol.key, self.unit))
             if node.value in self.unit.world.constants and node.value != "PARTIAL":
                 return Value(Resolved("non_normal", "unknown"))
             self.issue(node, f"unknown calculation name: {node.value}")
@@ -554,6 +787,16 @@ class Checker:
                     if node.value == "value"
                     else Resolved("issues", "collection")
                 )
+            if parent.type.kind == 'value' and parent.type.key is not None:
+                member = self.unit.world.fields.get(parent.type.key, {}).get(node.value)
+                if member is not None:
+                    unit, declaration = member
+                    self.literal_hints[node.span] = self.hint(parent.type, node.span)
+                    return Value(
+                        Resolver(unit, self.computations.diagnostics, {}).resolve(
+                            children(children(declaration, 'field_body')[0], 'type_expr')[0]
+                        )
+                    )
             if parent.type.kind != "reference" or parent.type.key is None:
                 self.issue(node, "member access requires a scalar entity reference")
                 return Value(UNKNOWN)
@@ -582,7 +825,7 @@ class Checker:
             ).resolve(syntax)
             return Value(resolved, site, parent.type.key, node.value)
         if node.kind in ("call", "recover"):
-            return self.invoke(node, environment)
+            return self.invoke(node, environment, expected)
         if node.kind in ("binary", "unary"):
             if node.value == '??':
                 input_node = node.operands[0]
@@ -603,6 +846,13 @@ class Checker:
                     self.issue(node, "boolean operators require bool operands")
                 return Value(Resolved("bool"))
             if node.value in ("==", "!=", "<", "<=", ">", ">="):
+                if node.value not in ('==', '!=') and any(
+                    t.name not in (*NUMBERS, 'string', 'date', 'datetime') and t.kind != 'unknown'
+                    for t in operands
+                ):
+                    self.issue(
+                        node, 'ordered comparison requires numbers, strings, dates or datetimes'
+                    )
                 if len(operands) == 2 and not (
                     self.compatible(operands[0].base(), operands[1])
                     or self.compatible(operands[1].base(), operands[0])
@@ -612,6 +862,8 @@ class Checker:
             if any(t.name not in NUMBERS and t.kind != "unknown" for t in operands):
                 self.issue(node, "arithmetic requires integer, decimal or float operands")
                 return Value(UNKNOWN)
+            if node.value in ('/', '//'):
+                return Value(Resolved('float' if node.value == '/' else 'integer'))
             return Value(
                 Resolved(
                     max(
@@ -625,7 +877,9 @@ class Checker:
             condition = self.read(self.infer(node.operands[0], environment), node.operands[0])
             if condition.type.name != "bool" and condition.type.kind != "unknown":
                 self.issue(node, "if condition requires bool")
-            left, right = [self.read(self.infer(e, environment), e).type for e in node.operands[1:]]
+            left, right = [
+                self.read(self.infer(e, environment, expected), e).type for e in node.operands[1:]
+            ]
             if self.compatible(left.base(), right):
                 return Value(left.base())
             if self.compatible(right.base(), left):
@@ -635,14 +889,159 @@ class Checker:
         self.issue(node, "expression is only valid in its binding or method context")
         return Value(UNKNOWN)
 
-    def invoke(self, node: Expression, environment: dict[str, Value]) -> Value:
+    def literal(
+        self, node: Expression, environment: dict[str, Value], expected: Resolved | None
+    ) -> Value:
+        """Infer collection, mapping and structured value literal members.
+
+        :param node: Sequence or object literal.
+        :param environment: Lexical values.
+        :param expected: Contextual target, when available.
+        :returns: Complete literal type.
+        """
+        if node.kind == 'sequence':
+            if expected and expected.name not in ('collection', 'values', 'sequence'):
+                self.issue(node, 'sequence literal requires collection or values context')
+                return Value(UNKNOWN)
+            element = expected.args[0] if expected and expected.args else None
+            for operand in node.operands:
+                actual = self.read(self.infer(operand, environment, element), operand).type
+                if element is None:
+                    element = actual.base()
+                elif not self.compatible(element, actual):
+                    if expected is None and self.compatible(actual.base(), element):
+                        element = actual.base()
+                    else:
+                        self.issue(operand, 'incompatible sequence literal element')
+            if element is None:
+                self.issue(node, 'empty literal requires a contextual type')
+                return Value(UNKNOWN)
+            if element.kind == 'collection':
+                self.issue(node, 'sequence literals cannot contain collection values')
+            result = expected or Resolved(
+                'collection' if element.kind == 'reference' else 'values',
+                'collection',
+                args=(element,),
+            )
+        elif expected and expected.key and expected.kind == 'value':
+            fields = self.unit.world.fields.get(expected.key, {})
+            supplied: set[str] = set()
+            for i in range(0, len(node.operands), 2):
+                key, value = node.operands[i : i + 2]
+                if (
+                    key.kind not in ('name', 'string')
+                    or key.value not in fields
+                    or key.value in supplied
+                ):
+                    self.issue(key, f'unknown or duplicate value field: {key.value}')
+                    continue
+                supplied.add(key.value)
+                field_unit, declaration = fields[key.value]
+                field_type = Resolver(field_unit, self.computations.diagnostics, {}).resolve(
+                    children(children(declaration, 'field_body')[0], 'type_expr')[0]
+                )
+                actual = self.read(self.infer(value, environment, field_type), value).type
+                if not self.compatible(field_type, actual):
+                    self.issue(value, f'incompatible value field: {key.value}')
+            for name in fields.keys() - supplied:
+                self.issue(node, f'missing value field: {name}')
+            result = expected
+        else:
+            if expected and expected.name != 'mapping':
+                self.issue(node, 'object literal requires mapping or structured value context')
+                return Value(UNKNOWN)
+            key_type, value_type = expected.args if expected else (None, None)
+            for i in range(0, len(node.operands), 2):
+                for offset, constraint in ((0, key_type), (1, value_type)):
+                    operand = node.operands[i + offset]
+                    actual = self.read(self.infer(operand, environment, constraint), operand).type
+                    if constraint and not self.compatible(constraint, actual):
+                        self.issue(operand, 'incompatible mapping literal entry')
+                    if offset == 0 and key_type is None:
+                        key_type = actual.base()
+                    if offset == 1 and value_type is None:
+                        value_type = actual.base()
+            if key_type is None or value_type is None:
+                self.issue(node, 'empty literal requires a contextual type')
+                return Value(UNKNOWN)
+            if not key_type.string_like() or value_type.kind == 'collection':
+                self.issue(
+                    node,
+                    'mapping requires string-compatible or reference keys and non-collection values',
+                )
+            literal_keys = [
+                (n.kind, n.value)
+                for n in node.operands[::2]
+                if n.kind in ('string', 'integer', 'decimal', 'bool')
+            ]
+            if len(literal_keys) != len(set(literal_keys)):
+                self.issue(node, 'duplicate mapping literal key')
+            result = expected or Resolved('mapping', 'collection', args=(key_type, value_type))
+        self.literal_hints[node.span] = self.hint(result, node.span)
+        return Value(result)
+
+    def invoke(
+        self, node: Expression, environment: dict[str, Value], expected: Resolved | None = None
+    ) -> Value:
         """Check field operations, collection methods and recovery branches.
 
         :param node: Call or recovery node.
         :param environment: Local values.
+        :param expected: Contextual result type for recovery literals.
         :returns: Method result type.
         """
         selected = node.operands[0]
+        if selected.kind == 'name':
+            signature = SIGNATURES.get(selected.value)
+            if signature is None:
+                self.issue(node, f'unknown calculation builtin: {selected.value}')
+                return Value(UNKNOWN)
+            builtin_supplied: set[str] = set()
+            named = False
+            for index, argument in enumerate(node.arguments):
+                name = argument.name or (signature[index][0] if index < len(signature) else '')
+                if (
+                    (not argument.name and named)
+                    or name in builtin_supplied
+                    or name not in dict(signature)
+                ):
+                    self.issue(
+                        argument.expression,
+                        f'invalid, duplicate or out-of-order builtin argument: {name}',
+                    )
+                    continue
+                named = named or bool(argument.name)
+                builtin_supplied.add(name)
+                argument_type = dict(signature)[name]
+                actual = self.read(
+                    self.infer(argument.expression, environment), argument.expression
+                ).type
+                allowed = (
+                    actual.string_like() or actual.name in (*NUMBERS, 'bool', 'date', 'datetime')
+                    if argument_type == 'scalar'
+                    else (
+                        actual.name in (*NUMBERS, 'string')
+                        if argument_type == 'number_or_string'
+                        else (
+                            actual.name in NUMBERS
+                            if argument_type == 'number'
+                            else actual.name == argument_type
+                        )
+                    )
+                )
+                if not allowed and actual.kind != 'unknown':
+                    self.issue(
+                        argument.expression, f'{selected.value}.{name} requires {argument_type}'
+                    )
+            for name, _ in signature:
+                if name not in builtin_supplied:
+                    self.issue(node, f'missing builtin argument: {name}')
+            return Value(
+                Resolved(
+                    RETURNS[selected.value],
+                    'string' if RETURNS[selected.value] == 'string' else 'value',
+                )
+            )
         if selected.kind not in ("member", "descriptor") or not selected.operands:
             self.issue(node, "expression is only valid in its binding or method context")
             return Value(UNKNOWN)
@@ -710,8 +1109,13 @@ class Checker:
                         "best_available supports one automatic Hierarchy; bind the other dimension values",
                     )
             return Value(value.type)
-        value = self.read(self.infer(receiver, environment), receiver)
+        value = self.read(
+            self.infer(receiver, environment, expected if method == 'recover' else None), receiver
+        )
         if method == "recover":
+            result_type = (
+                expected if value.type.kind == 'unknown' and expected else value.type.base()
+            )
             if node.arguments or not node.cases:
                 self.issue(node, "recover requires case branches")
             seen: set[str] = set()
@@ -730,10 +1134,12 @@ class Checker:
                             "recovery binding requires a unique PARTIAL case variable",
                         )
                     local[case.binding] = Value(Resolved("partial", args=(value.type,)))
-                alternative = self.read(self.infer(case.expression, local), case.expression)
+                alternative = self.read(
+                    self.infer(case.expression, local, result_type), case.expression
+                )
                 if not self.compatible(value.type.base(), alternative.type):
                     self.issue(case.expression, "incompatible recovery branch result")
-            return Value(value.type.base())
+            return Value(result_type)
         if method not in ("map", "filter", "flat_map", "group_by", "sum_by"):
             self.issue(node, f"unknown calculation method: {method}")
             return Value(UNKNOWN)
@@ -795,6 +1201,10 @@ def check_computations(
     :returns: Computed implementations with inferred signatures.
     """
     analyzer = Computations(entities, diagnostics)
+    for unit in units:
+        for symbol in unit.scope.values():
+            if symbol.kind == 'constant':
+                analyzer.constant(symbol.key, unit)
     visited: set[tuple[EntityKey, str]] = set()
     for unit in units:
         for owner, dimensions in unit.world.dimensions.items():

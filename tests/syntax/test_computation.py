@@ -3,11 +3,31 @@
 import unittest
 
 from tests.support import document
-from yambl_compiler.syntax.computation import body
+from yambl_compiler.syntax.computation import body, restore_body, restore_hint, type_hint
 from yambl_compiler.syntax.parser import Diagnostic, children, parse
 
 
 class CalculationSyntaxTests(unittest.TestCase):
+    def test_complete_local_type_annotations_round_trip(self):
+        for annotation in [
+            'decimal[18, 4]',
+            'decimal[precision: 18, scale: 4]',
+            "string['x']",
+            "string[regex: 'x']",
+            'collection<E>',
+            "code<'External'>",
+            'mapping<attrs<AttrCats.Static + AttrCats.Config, E> as Attr, Attr::type>',
+            'type<self.kind::value>',
+        ]:
+            with self.subTest(annotation=annotation):
+                calculation = self.calculation('let x: ' + annotation + ' = 1 return x')
+                hint = calculation.bindings[0].annotation
+                restored = restore_hint(hint)
+                self.assertEqual(type_hint(restored).name, hint.name)
+                self.assertEqual(
+                    body(restore_body(calculation)).bindings[0].annotation.name, hint.name
+                )
+
     def calculation(self, text):
         doc = document("entity E { computed attr amount: decimal { " + text + " } }")
         field = children(children(doc.tree, "entity")[0], "field")[0]
@@ -60,7 +80,7 @@ class CalculationSyntaxTests(unittest.TestCase):
             "return 1 return 2",
             "return 1 let x = 2",
             "x = 1 return x",
-            "return 1 / 2",
+            "return 1 % 2",
             "for x in self.a return x",
         ):
             with self.subTest(contents=contents):

@@ -96,7 +96,7 @@ class ComputationIRTests(FilesystemCase):
                 replace(node, kind="unary", value="/", operands=(literal,)),
                 "unary operator",
             ),
-            (replace(node, value="/"), "binary operator"),
+            (replace(node, value="%"), "binary operator"),
             (replace(literal, kind="decimal", value="NaN"), "calculation number"),
             (replace(literal, kind="decimal", value="broken"), "calculation number"),
             (replace(literal, kind="integer", value="1.2"), "calculation number"),

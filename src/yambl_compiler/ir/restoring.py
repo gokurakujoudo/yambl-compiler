@@ -243,7 +243,7 @@ class Restoring:
         """
         source = extension[0].source if extension else definition.source
         kind = 'extension' if extension else definition.kind
-        keyword = {'type_alias': 'type', 'extension': 'extend'}.get(kind, kind)
+        keyword = {'type_alias': 'type', 'extension': 'extend', 'constant': 'const'}.get(kind, kind)
         header_parts: list[Token | Tree[Token]] = []
         if definition.final and kind == 'entity':
             header_parts.append(token('final', 'FINAL', source))
@@ -297,6 +297,10 @@ class Restoring:
         ]
         if not extension and definition.expression:
             body.append(self.expression(definition.expression))
+        if not extension and definition.initializer is not None:
+            for reference in definition.references:
+                self.reference(reference.value, definition.source)
+            body.append(restore_expression(definition.initializer))
         if not extension:
             for dimension in definition.dimensions:
                 p = dimension.source

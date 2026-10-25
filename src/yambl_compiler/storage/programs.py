@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 from yambl_compiler.computation.records import Expression
 from yambl_compiler.ir.model import CalculationAccess, Dimension, Field, Model
+from yambl_compiler.storage.conversions import SIGNATURES
 
 
 class Emitter:
@@ -57,7 +58,28 @@ class Emitter:
                 "decimal": f"Decimal({node.value!r})",
                 "bool": str(node.value == "true"),
             }[node.kind]
+            hint = node.annotation
+            if hint is not None:
+                if hint.name == 'code' and hint.arguments:
+                    return f'engine.code({frame}, {hint.arguments[0].target or hint.arguments[0].name!r}, {node.value!r})'
+                if hint.name in ('date', 'datetime'):
+                    literal = f'convert({"parse_" + hint.name!r}, ({node.value!r},))'
+                elif hint.name in ('decimal', 'float'):
+                    literal = f'{"Decimal" if hint.name == "decimal" else "float"}({node.value!r})'
+                elif hint.target and any(
+                    d.identity == hint.target and d.kind == 'entity' for d in self.model.definitions
+                ):
+                    literal = f'EntityRef[object]({hint.target!r}, {literal})'
             return f"engine.literal({frame}, {literal})"
+        if node.kind in ('sequence', 'object'):
+            hint = node.annotation
+            if node.kind == 'sequence':
+                return f'engine.construct({frame}, lambda *values: frozenset(values), [{", ".join(emit(n) for n in node.operands)}])'
+            if hint is not None and hint.target:
+                names = tuple(n.value for n in node.operands[::2])
+                values = ', '.join(emit(n) for n in node.operands[1::2])
+                return f'engine.construct({frame}, lambda *values: _value_{hint.name}(**dict(zip({names!r}, values, strict=True))), [{values}])'
+            return f'engine.construct({frame}, literal_mapping, [{", ".join(emit(n) for n in node.operands)}])'
         if node.kind == "name":
             if node.value == "self":
                 return f"{frame}.owners"
@@ -65,6 +87,21 @@ class Emitter:
                 return locals_[node.value]
             if node.value in {c.name for c in self.model.constants}:
                 return f"engine.status({frame}, {node.value!r})"
+            target = self.references.get(node.value)
+            definition = next(
+                (
+                    d
+                    for d in self.model.definitions
+                    if d.identity == target and d.kind == 'constant'
+                ),
+                None,
+            )
+            if definition is not None and definition.initializer is not None:
+                prior = self.references
+                self.references = {t.name: t.value for t in definition.references}
+                result = emit(definition.initializer)
+                self.references = prior
+                return result
             raise ValueError(f"unresolved generated calculation name: {node.value}")
         access = self.accesses.get(node.span)
         if access is not None:
@@ -78,11 +115,25 @@ class Emitter:
             receiver = node.operands[0]
             if receiver.kind == "name" and receiver.value == "input":
                 return f"engine.input({frame}, {node.value!r})"
-            if receiver.kind == "name" and receiver.value in self.references:
+            if (
+                receiver.kind == "name"
+                and receiver.value in self.references
+                and any(
+                    d.identity == self.references[receiver.value] and d.kind == 'decodes'
+                    for d in self.model.definitions
+                )
+            ):
                 return f"engine.code({frame}, {self.references[receiver.value]!r}, {node.value!r})"
             if node.value in ("value", "issues"):
                 return f"engine.partial_member({frame}, {emit(receiver)}, {node.value!r})"
-            raise ValueError(f"unresolved field operation: {node.value}")
+            if node.annotation and any(
+                d.identity == node.annotation.target
+                and d.kind == 'value'
+                and any(f.name == node.value for f in d.fields)
+                for d in self.model.definitions
+            ):
+                return f'engine.construct({frame}, lambda *values: getattr(values[0], {node.value!r}), [{emit(receiver)}])'
+            raise ValueError(f'unresolved field operation: {node.value}')
         if node.kind in ("unary", "binary"):
             if node.value == "??":
                 branch = self.fresh()
@@ -100,6 +151,13 @@ class Emitter:
             return f"engine.choose({frame}, {emit(node.operands[0])}, lambda {branch}: {alternatives[0]}, lambda {branch}: {alternatives[1]})"
         if node.kind in ("call", "recover"):
             selected = node.operands[0]
+            if selected.kind == 'name':
+                signature = SIGNATURES[selected.value]
+                arguments = {
+                    a.name or signature[i][0]: a.expression for i, a in enumerate(node.arguments)
+                }
+                values = ', '.join(emit(arguments[name]) for name, _ in signature)
+                return f'engine.conversion({frame}, {selected.value!r}, [{values}])'
             receiver, method = selected.operands[0], selected.value
             if method == "recover":
                 branches: list[str] = []
@@ -173,6 +231,10 @@ def programs(model: Model) -> str:
     lines = [
         '"""Generated batch calculation programs; no source evaluation at runtime."""',
         "from decimal import Decimal",
+        "from . import _value_types as value_types",
+        "from ._results import EntityRef",
+        "from ._conversions import convert",
+        "from ._computing import literal_mapping",
         "from ._computing import Computing, Frame, Program, Vector",
         "",
         "",
@@ -288,6 +350,18 @@ def programs(model: Model) -> str:
     )
     if not any("Decimal(" in line for line in lines):
         lines.remove("from decimal import Decimal")
+    lines.remove('from . import _value_types as value_types')
+    for definition in model.definitions:
+        name = definition.name.rsplit('.', 1)[-1]
+        if definition.kind == 'value' and any(f'_value_{name}(' in line for line in lines):
+            lines.insert(1, f'from ._value_types import {name} as _value_{name}')
+    for imported, marker in (
+        ('from ._results import EntityRef', 'EntityRef['),
+        ('from ._conversions import convert', 'convert('),
+        ('from ._computing import literal_mapping', ', literal_mapping,'),
+    ):
+        if not any(marker in line for line in lines):
+            lines.remove(imported)
     if not registry:
         lines[lines.index("from ._computing import Computing, Frame, Program, Vector")] = (
             "from ._computing import Program"

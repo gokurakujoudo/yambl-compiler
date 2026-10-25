@@ -38,6 +38,11 @@ def line_piece(items: list[Token], indent: int, calculation: bool = False) -> Pi
     result = ''
     previous = ''
     prior_equals = False
+    declaration_equals = (
+        next((t.start_pos for t in items if str(t) == '='), None)
+        if str(items[0]) in ('let', 'const')
+        else None
+    )
     keyword_equals = {
         items[i + 1].start_pos
         for i, item in enumerate(items[:-1])
@@ -51,18 +56,27 @@ def line_piece(items: list[Token], indent: int, calculation: bool = False) -> Pi
             if (
                 item.type == "NAME"
                 and str(items[i + 1]) == "="
-                and not (i == 1 and str(items[0]) == "let")
+                and items[i + 1].start_pos != declaration_equals
                 and str(items[0]) not in ("fallback_days", "hierarchy")
             ):
                 keyword_equals.add(items[i + 1].start_pos)
     for item in items:
         value = str(item)
+        expression_context = calculation and (
+            declaration_equals is None or cast(int, item.start_pos) > declaration_equals
+        )
         space = (
             result
             and value not in ('?', '.', '::', ':', ',', ')', '>', ']', '(', '[', '<')
             and previous not in ('*', '.', '::', '@', '(', '<', '[')
         )
-        if calculation and (
+        if expression_context:
+            space = (
+                bool(result)
+                and value not in ('?', '.', '::', ':', ',', ')', ']', '}', '(')
+                and previous not in ('.', '::', '@', '(', '[', '{')
+            )
+        if expression_context and (
             item.type == "COMPARISON" or previous in ("*", "<", ">", "<=", ">=", "==", "!=")
         ):
             space = bool(result)
@@ -94,11 +108,13 @@ def calculation_pieces(items: list[Token], indent: int) -> list[Piece]:
     for group in groups:
         closing = 0
         for item in group:
-            if str(item) != ')':
+            if str(item) not in (')', ']', '}'):
                 break
             closing += 1
         result.append(line_piece(group, indent + max(0, depth - closing), calculation=True))
-        depth += sum(str(t) == '(' for t in group) - sum(str(t) == ')' for t in group)
+        depth += sum(str(t) in ('(', '[', '{') for t in group) - sum(
+            str(t) in (')', ']', '}') for t in group
+        )
     return result
 
 
@@ -180,7 +196,7 @@ def format_document(document: Document) -> str:
                 pieces.append(line_piece(call_tokens, 0))
                 annotation_offsets.update(token.start_pos for token in call_tokens)
             items = [item for item in items if item.start_pos not in annotation_offsets]
-            pieces.append(line_piece(items, 0))
+            pieces.append(line_piece(items, 0, calculation=declaration.data == 'constant'))
     masked = document.text
     for start, end in reversed(document.blocks):
         pieces.append(Piece(start, end, 0, document.text[start:end].replace('\r\n', '\n')))

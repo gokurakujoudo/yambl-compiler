@@ -2,8 +2,8 @@
 
 import operator
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
-from datetime import date
+from dataclasses import dataclass, is_dataclass, replace
+from datetime import date, datetime, timezone
 from decimal import Decimal, DecimalException
 from enum import Enum
 from types import MappingProxyType
@@ -13,6 +13,7 @@ from yambl_compiler.ir.model import Type
 from yambl_compiler.storage.arithmetic import Number, aggregate, failure, lift, numeric
 from yambl_compiler.storage.batch import Batch, FieldRequest
 from yambl_compiler.storage.configuration import Configuration
+from yambl_compiler.storage.conversions import convert
 from yambl_compiler.storage.results import (
     CalculationIssue,
     EntityRef,
@@ -27,6 +28,21 @@ from yambl_compiler.storage.session import Session
 
 type Lane = tuple[int, ...]
 type Vector = dict[Lane, ReadResult[object]]
+
+
+def literal_mapping(*values: object) -> Mapping[object, object]:
+    """Build an immutable mapping and reject duplicate computed keys.
+
+    :param values: Alternating keys and payloads.
+    :returns: Detached mapping.
+    :raises ValueError: On duplicate keys.
+    """
+    result = dict(zip(values[::2], values[1::2], strict=True))
+    if len(result) != len(values) // 2:
+        raise ValueError('duplicate mapping literal key')
+    return MappingProxyType(result)
+
+
 type Program = Callable[["Computing", "Frame"], Vector]
 type Lambda = Callable[["Frame", Vector], Vector]
 
@@ -178,6 +194,23 @@ class Computing:
         :returns: Detached, immutable, type-correct payload.
         :raises ValueError: On an incompatible or out-of-range result.
         """
+        definition = next(
+            (
+                d
+                for d in self.reader.layout.model.definitions
+                if d.identity == type_.target and d.kind == 'value'
+            ),
+            None,
+        )
+        if definition is not None:
+            if (
+                not is_dataclass(value)
+                or type(value).__name__ != definition.name.rsplit('.', 1)[-1]
+            ):
+                raise ValueError('computed structured value has an incompatible type')
+            for field in definition.fields:
+                self.boundary(field.type, getattr(value, field.name))
+            return value
         if type_.name == "mapping":
             if not isinstance(value, Mapping):
                 raise ValueError("computed mapping requires a mapping result")
@@ -196,6 +229,10 @@ class Computing:
             )
         if type_.name == "decimal" and type(value) is int:
             value = Decimal(value)
+        if type_.name == 'datetime':
+            if not isinstance(value, datetime) or value.utcoffset() is None:
+                raise ValueError('computed datetime requires an explicit timezone')
+            return value.astimezone(timezone.utc)
         if type_.name == "float":
             import math
 
@@ -294,6 +331,31 @@ class Computing:
             lane: at(replaced, lane) if lane in absent else at(given, lane) for lane in frame.lanes
         }
 
+    def construct(
+        self, frame: Frame, factory: Callable[..., object], operands: Sequence[Vector]
+    ) -> Vector:
+        """Construct typed immutable values from aligned operands.
+
+        :param frame: Active contributions.
+        :param factory: Trusted generated constructor.
+        :param operands: Field or element vectors.
+        :returns: Constructed values, preserving non-normal results.
+        """
+        return {lane: lift(factory, [at(v, lane) for v in operands]) for lane in frame.lanes}
+
+    def conversion(self, frame: Frame, name: str, operands: Sequence[Vector]) -> Vector:
+        """Convert aligned scalar results while preserving failures and PARTIAL.
+
+        :param frame: Active contributions.
+        :param name: Checked builtin name.
+        :param operands: Vectors in formal parameter order.
+        :returns: Converted vector.
+        """
+        return {
+            lane: lift(lambda *values: convert(name, values), [at(v, lane) for v in operands])
+            for lane in frame.lanes
+        }
+
     def scalar(self, frame: Frame, operation: str, operands: Sequence[Vector]) -> Vector:
         """Lift supported scalar operations over aligned result vectors.
 
@@ -309,7 +371,7 @@ class Computing:
             :param values: Unwrapped typed operands.
             :returns: Scalar result.
             """
-            if operation in ("+", "-", "*"):
+            if operation in ("+", "-", "*", '/', '//'):
                 if len(values) == 1:
                     return numeric("-", 0, cast(Number, values[0]))
                 return numeric(operation, cast(Number, values[0]), cast(Number, values[1]))

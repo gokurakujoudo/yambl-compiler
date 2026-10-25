@@ -37,7 +37,7 @@ class ArithmeticTests(TestCase):
         self.assertEqual(numeric("*", 10**30, 10**30), 10**60)
         self.assertEqual(numeric("+", 2.0, Decimal("0.5")), 2.5)
         for operator, left, right in [
-            ("/", 1, 2),
+            ("%", 1, 2),
             ("+", True, 1),
             ("+", float("inf"), 1),
             ("+", Decimal("NaN"), 1),
@@ -45,6 +45,41 @@ class ArithmeticTests(TestCase):
             with self.subTest(operator=operator, left=left):
                 with self.assertRaises(ValueError):
                     numeric(operator, left, right)
+
+    def test_division_returns_float_and_floor_division_returns_integer(self):
+        for left, right, expected in [
+            (1, 3, 1 / 3),
+            (10**1000, 10**999, 10.0),
+            (Decimal('1.25'), Decimal('2.5'), 0.5),
+        ]:
+            result = numeric('/', left, right)
+            self.assertIs(type(result), float)
+            self.assertEqual(result, expected)
+        for left, right, expected in [
+            (-7, 3, -3),
+            (7, -3, -3),
+            (-7, -3, 2),
+            (Decimal('-1.25'), Decimal('0.5'), -3),
+            (7.0, 3.0, 2),
+        ]:
+            result = numeric('//', left, right)
+            self.assertIs(type(result), int)
+            self.assertEqual(result, expected)
+        with localcontext() as context:
+            context.prec = 2
+            self.assertEqual(
+                numeric('//', Decimal('12345678901234567890'), Decimal('0.01')),
+                1234567890123456789000,
+            )
+        for op, left, right in [
+            ('/', 1, 0),
+            ('//', 0, 0),
+            ('/', 10**1000, 1),
+            ('/', float('inf'), 1),
+            ('//', Decimal('NaN'), 1),
+        ]:
+            result = lift(lambda a, b: numeric(op, a, b), [Success(left), Success(right)])
+            self.assertEqual(result.status, Status.ERROR)
 
     def test_strict_best_effort_and_partial_lifting(self):
         missing = NonNormalResult(Status.NO_ENTRY, "price absent")

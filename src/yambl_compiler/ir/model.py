@@ -382,9 +382,11 @@ class Definition(Record):
     :param entries: Declared and generated dictionary entries.
     :param source: Original declaration location.
     :param dimensions: Entity-owned dimension declarations, including extensions.
+    :param initializer: Checked pure constant expression, absent on other definitions.
+    :param references: Lexical identities available to the constant initializer.
     """
 
-    kind: Literal['entity', 'value', 'type_alias', 'decorator', 'decodes']
+    kind: Literal['entity', 'value', 'type_alias', 'decorator', 'decodes', 'constant']
     name: str
     identity: str
     final: bool
@@ -397,6 +399,8 @@ class Definition(Record):
     entries: tuple[Entry, ...]
     source: Source
     dimensions: tuple[Dimension, ...] = ()
+    initializer: CalculationExpression | None = None
+    references: tuple[Text, ...] = ()
 
 
 @dataclass(frozen=True)

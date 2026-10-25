@@ -10,6 +10,16 @@ from yambl_compiler.semantics.validation import analyze
 
 
 class ComputationTests(unittest.TestCase):
+    def test_division_result_types(self):
+        self.assertEqual(
+            self.errors(
+                'entity E { computed attr x: float { return 1 / 3 } computed attr y: integer { return -7 // 3 } }'
+            ),
+            [],
+        )
+        self.assertTrue(self.errors('entity E { computed attr x: decimal { return 1 / 3 } }'))
+        self.assertTrue(self.errors("entity E { computed attr x: float { return 'one' / 3 } }"))
+
     def test_declared_inputs_defaults_and_descriptions(self):
         self.assertTrue(
             any(

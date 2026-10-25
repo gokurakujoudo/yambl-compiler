@@ -180,7 +180,7 @@ class Resolver:
                     if params:
                         self.issue(node, 'invalid parameters for Entity')
                     result = Term(ENTITY)
-                elif symbol is not None and symbol.kind != 'decorator':
+                elif symbol is not None and symbol.kind not in ('decorator', 'constant'):
                     if params:
                         self.issue(
                             node,

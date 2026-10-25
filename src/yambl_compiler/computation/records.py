@@ -39,6 +39,7 @@ class CalculationExpression(Record):
     :param arguments: Call arguments in source order.
     :param cases: Recovery branches in source order.
     :param span: Original expression location.
+    :param annotation: Contextual literal type or structured-member receiver type.
     """
 
     kind: Literal[
@@ -55,12 +56,75 @@ class CalculationExpression(Record):
         "conditional",
         "lambda",
         "recover",
+        "sequence",
+        "object",
     ]
     value: str
     operands: tuple[Expression, ...]
     arguments: tuple[Argument, ...]
     cases: tuple[Case, ...]
     span: Span
+    annotation: TypeHint | None = None
+
+
+@dataclass(frozen=True)
+class HintParameter(Record):
+    """Preserve a primitive type parameter.
+
+    :param name: Parameter name, empty for positional syntax.
+    :param value: Literal spelling, including quotes for string parameters.
+    """
+
+    name: str
+    value: str
+
+
+@dataclass(frozen=True)
+class HintAccess(Record):
+    """Preserve a type or descriptor member selection.
+
+    :param operator: Dot or descriptor selection.
+    :param name: Selected member.
+    """
+
+    operator: Literal['.', '::']
+    name: str
+
+
+@dataclass(frozen=True)
+class TypeHint(Record):
+    """Carry a local type annotation independently of the parser.
+
+    :param name: Primitive, declared name or quoted external dictionary name.
+    :param arguments: Generic arguments.
+    :param parameters: Primitive parameters in source order.
+    :param accesses: Ordered descriptor selections.
+    :param span: Original type location.
+    :param target: Resolved declaration identity for elaborated literals.
+    :param operations: Flags operations in source order.
+    :param binding: Local generic binding name, when present.
+    """
+
+    name: str
+    arguments: tuple[TypeHint, ...]
+    parameters: tuple[HintParameter, ...]
+    accesses: tuple[HintAccess, ...]
+    span: Span
+    target: str = ''
+    operations: tuple[HintOperation, ...] = ()
+    binding: str = ''
+
+
+@dataclass(frozen=True)
+class HintOperation(Record):
+    """Describe a flags operation inside a type annotation.
+
+    :param operator: Union or removal.
+    :param operand: Right-hand operand.
+    """
+
+    operator: Literal['+', '-']
+    operand: TypeHint
 
 
 @dataclass(frozen=True)
@@ -100,11 +164,13 @@ class CalculationBinding(Record):
     :param name: Local identifier.
     :param expression: Bound expression.
     :param span: Declaration location.
+    :param annotation: Optional explicit local type.
     """
 
     name: str
     expression: Expression
     span: Span
+    annotation: TypeHint | None = None
 
 
 @dataclass(frozen=True)

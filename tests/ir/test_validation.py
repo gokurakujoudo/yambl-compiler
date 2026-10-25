@@ -26,6 +26,7 @@ entity A { id key: string attr next: B attr price: decimal attr external: code<'
 entity B inherits A { @override attr price: exact<10.25> }
 value item { attr name: string }
 type alias_type = string
+const FIXED: integer = 1
 decodes Codes { - 1 First: 'First' }
 """,
         )
@@ -45,6 +46,13 @@ decodes Codes { - 1 First: 'First' }
 
     def test_catalogue_and_source_invariants(self):
         cases = [
+            (lambda d: self.definition(d, 'FIXED').update(initializer=None), '.initializer'),
+            (
+                lambda d: self.definition(d, 'A').update(
+                    references=[{'name': 'A', 'value': 'business.A'}]
+                ),
+                '.references',
+            ),
             (
                 lambda d: d['definitions'].append(d['definitions'][0]),
                 'duplicate qualified',
@@ -85,7 +93,7 @@ decodes Codes { - 1 First: 'First' }
             ),
             (
                 lambda d: self.definition(d, 'alias_type').update(expression=None),
-                'aliases require a body',
+                'aliases and constants require a type expression',
             ),
             (
                 lambda d: self.definition(d, 'Codes')['entries'][0].update(ordering='1.0'),

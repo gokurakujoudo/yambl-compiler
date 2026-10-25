@@ -649,7 +649,7 @@ class Lowering:
             tuple(formals),
             (
                 self.expression(children(node, 'type_expr')[0], unit, resolver, bindings)
-                if node.data == 'type_alias'
+                if node.data in ('type_alias', 'constant')
                 else None
             ),
             self.calls(node, unit, resolver),
@@ -658,6 +658,16 @@ class Lowering:
             tuple(sorted(entries, key=lambda entry: entry.code)),
             self.source(unit, header(node)),
             self.dimensions(key, unit),
+            unit.world.constant_expressions.get(key) if node.data == 'constant' else None,
+            (
+                tuple(
+                    Text(n, qualified(s.key))
+                    for n, s in sorted(unit.scope.items())
+                    if s.kind in ('constant', 'decodes')
+                )
+                if node.data == 'constant'
+                else ()
+            ),
         )
 
     def model(self) -> Model:
@@ -723,7 +733,7 @@ class Lowering:
         )
         return seal(
             Model(
-                4,
+                5,
                 self.version,
                 self.prefix,
                 primitives,
@@ -768,4 +778,4 @@ type ExpressionKind = Literal[
 type ArgumentKind = Literal['positional', 'keyword', 'pair']
 type FieldCategory = Literal['id', 'static', 'config', 'snapshot', 'scd', "computed"]
 type CalculationOperation = Literal["at", "best_available", "value"]
-type DefinitionKind = Literal['entity', 'value', 'type_alias', 'decorator', 'decodes']
+type DefinitionKind = Literal['entity', 'value', 'type_alias', 'decorator', 'decodes', 'constant']

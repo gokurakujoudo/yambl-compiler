@@ -18,6 +18,7 @@ def load_generated(path, name):
     spec = importlib.util.spec_from_file_location(name, path / "__init__.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules.pop(name + "._calculations", None)
+    sys.modules.pop(name + '._value_types', None)
     sys.modules[name] = module
     for part in (
         "records",
@@ -26,6 +27,7 @@ def load_generated(path, name):
         "batch",
         "configuration",
         "arithmetic",
+        'conversions',
         "selection",
         "computing",
         "session",

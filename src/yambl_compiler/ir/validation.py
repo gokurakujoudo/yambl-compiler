@@ -138,6 +138,8 @@ def structural(model: Model) -> list[str]:
                 "conditional": 3,
                 "lambda": 1,
                 "recover": 1,
+                'sequence': len(item.operands),
+                'object': len(item.operands) if len(item.operands) % 2 == 0 else -1,
             }[item.kind]
             if len(item.operands) != arity:
                 issues.append(path + ".operands: invalid calculation operand count")
@@ -152,6 +154,8 @@ def structural(model: Model) -> list[str]:
                 "+",
                 "-",
                 "*",
+                "/",
+                "//",
                 "and",
                 "or",
                 "==",
@@ -211,8 +215,12 @@ def structural(model: Model) -> list[str]:
                 filter(None, (item.source.namespace, item.name.split('.')[-1]))
             ):
                 issues.append(path + '.name: identity disagrees with lexical namespace')
-            if (item.kind == 'type_alias') != (item.expression is not None):
-                issues.append(path + '.expression: only aliases require a body')
+            if (item.kind in ('type_alias', 'constant')) != (item.expression is not None):
+                issues.append(path + '.expression: aliases and constants require a type expression')
+            if (item.kind == 'constant') != (item.initializer is not None):
+                issues.append(path + '.initializer: only constants require an initializer')
+            if item.references and item.kind != 'constant':
+                issues.append(path + '.references: only constants carry initializer references')
             if item.parent and item.kind != 'entity':
                 issues.append(path + '.parent: only entities inherit')
             if item.parameters and item.kind not in ('type_alias', 'decorator'):
@@ -296,7 +304,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
     """
     try:
         decode(encode(model), Model)
-        if model.format_revision != 4:
+        if model.format_revision != 5:
             return ('$.format_revision: unsupported IR revision; recompile the model repository',)
         issues = structural(model)
         if issues:
