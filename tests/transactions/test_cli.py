@@ -8,10 +8,10 @@ from unittest.mock import patch
 
 from tests.support import load_generated
 from tests.transactions.test_binding import CatalogCase
+from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
 from yambl_compiler.transactions.cli import main
-from yambl_compiler.transactions.model import Group, Operation, Plan
 from yambl_compiler.transactions.writing import dumps
 
 

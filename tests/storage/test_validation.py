@@ -8,13 +8,13 @@ from unittest.mock import patch
 
 from tests.support import FilesystemCase, load_generated
 from yambl_compiler.ir import compile_repository
+from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.storage.backends import repository_contents
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status
 from yambl_compiler.storage.validation import cycles
 from yambl_compiler.transactions.cli import main
 from yambl_compiler.transactions.editing import Data
-from yambl_compiler.transactions.model import Group, Operation, Plan
 from yambl_compiler.transactions.writing import dumps
 
 SOURCE = "entity Node { dimension dimension_207 { value source: string } \n id key: string\n attr parent: Node\n attr other: Node\n attr foreign: Other\n attr narrow: Child\n attr children: collection<Node>\n config attr limit: integer = 1\n config attr active: bool = true\n @dimension(dimension_207) attr dim: Node\n snapshot attr snap: Node\n scd attr period: Node\n}\nentity Child inherits Node { @override attr parent: Node attr extra: string }\nentity Other { id key: string attr parent: Node }\n"

@@ -7,19 +7,9 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from yambl_compiler.transactions.model import (
-    Change,
-    Condition,
-    Group,
-    Image,
-    ObjectValue,
-    Operation,
-    Plan,
-    Symbol,
-    Transaction,
-    TransactionGroup,
-    Value,
-)
+from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol, Value
+from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
+from yambl_compiler.languages.yatran.model import Change, Image, Transaction, TransactionGroup
 
 TOKEN = re.compile(
     r"(?P<space>[ \t]+)|(?P<newline>\n)|(?P<comment>\#[^\n]*)"
@@ -486,7 +476,7 @@ def parse(text: str) -> Plan | Transaction:
     :returns: Typed document.
     :raises DocumentError: On syntax, metadata or transaction integrity errors.
     """
-    from yambl_compiler.transactions.writing import semantic_digest
+    from yambl_compiler.languages.yatran.writing import semantic_digest
 
     parser = Parser(text)
     result = parser.plan() if parser.current.text == 'plan' else parser.transaction()

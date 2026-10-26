@@ -39,7 +39,6 @@ def load_generated(path, name):
     sys.modules[name + "._ir_model"] = importlib.import_module("yambl_compiler.ir.model")
     sys.modules[name + '.transactions'] = importlib.import_module('yambl_compiler.transactions')
     for part in (
-        'model',
         'syntax',
         'writing',
         'formatting',

@@ -662,9 +662,19 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         text = path.read_text(encoding='utf-8')
         text = text.replace('yambl_compiler.ir.model', '.._ir_model')
         text = text.replace('yambl_compiler.transactions.', '.')
+        text = text.replace('yambl_compiler.languages.', '..languages.')
         for module in modules:
             text = text.replace('yambl_compiler.storage.' + module, '.._' + module)
         contents[package + '/transactions/' + path.name] = text
+    language_root = Path(__file__).parents[1] / 'languages'
+    contents[package + '/languages/__init__.py'] = (language_root / '__init__.py').read_text(
+        encoding='utf-8'
+    )
+    for language in ('shared', 'yaplan', 'yatran'):
+        for path in sorted((language_root / language).glob('*.py')):
+            contents[package + '/languages/' + language + '/' + path.name] = path.read_text(
+                encoding='utf-8'
+            )
     contents[package + "/_computation_records.py"] = (
         Path(__file__).parents[1] / "languages/yambl/computation/records.py"
     ).read_text(encoding="utf-8")

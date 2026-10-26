@@ -5,12 +5,13 @@ from dataclasses import asdict
 from datetime import date
 
 from yambl_compiler.ir.model import Field
+from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol, Value
+from yambl_compiler.languages.shared.writing import literal
+from yambl_compiler.languages.yatran.model import Image
 from yambl_compiler.storage.backends import Row, validate_row
 from yambl_compiler.storage.contract import loads
 from yambl_compiler.storage.records import Layout, StoredField
 from yambl_compiler.transactions.binding import Catalog, Entity, object_items
-from yambl_compiler.transactions.model import Condition, Image, ObjectValue, Symbol, Value
-from yambl_compiler.transactions.writing import literal
 
 STATES = ('NO_ENTRY', 'EMPTY', 'NOT_APPLICABLE')
 

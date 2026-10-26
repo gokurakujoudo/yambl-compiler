@@ -6,8 +6,8 @@ from decimal import Decimal
 from typing import cast
 
 from yambl_compiler.ir.model import Definition, Field, Type
+from yambl_compiler.languages.shared.model import ObjectValue, Symbol, Value
 from yambl_compiler.storage.records import Layout, StoredField, table_name
-from yambl_compiler.transactions.model import ObjectValue, Symbol, Value
 
 
 @dataclass(frozen=True)

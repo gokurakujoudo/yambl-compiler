@@ -1,105 +1,18 @@
 """Exercise actual plan records, syntax failures and sealed transaction images."""
 
-import json
 import unittest
-from dataclasses import replace
 from decimal import Decimal
-from pathlib import Path
 from unittest.mock import patch
 
+from tests.languages.support import DIGEST, source
+from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol
+from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.transactions.formatting import format_document
-from yambl_compiler.transactions.model import (
-    Change,
-    Condition,
-    Group,
-    Image,
-    ObjectValue,
-    Operation,
-    Plan,
-    Symbol,
-    Transaction,
-    TransactionGroup,
-)
-from yambl_compiler.transactions.syntax import DocumentError, Parser, parse, tokenize
-from yambl_compiler.transactions.writing import dumps, literal, seal, semantic_digest
-
-DIGEST = 'a' * 64
+from yambl_compiler.transactions.syntax import DocumentError, parse
+from yambl_compiler.transactions.writing import dumps
 
 
-def source(body='', metadata=None):
-    return (
-        "plan daily {\n"
-        + (metadata or f"version 1\nmodel '{DIGEST}'")
-        + "\ngroup first {\n"
-        + body
-        + "\n}\n}\n"
-    )
-
-
-def transaction():
-    plan = Plan('daily', DIGEST, (Group('first', ()),))
-    before = Image('core.Security', ('security_id', 'coupon'), (('S1', Decimal('1.25')),))
-    after = Image('core.Security', ('security_id', 'coupon'), (('S1', Decimal('2.50')),))
-    return seal(
-        Transaction(
-            '12345678-1234-1234-1234-123456789abc',
-            '2026-10-26T12:34:56Z',
-            plan,
-            (
-                TransactionGroup(
-                    'first',
-                    (
-                        Change(
-                            'core.Security.coupon',
-                            (Condition('security_id', 'S1'),),
-                            (before,),
-                            (after,),
-                        ),
-                    ),
-                    ('later change retained',),
-                ),
-            ),
-        )
-    )
-
-
-class SyntaxTests(unittest.TestCase):
-    def test_digest_numeric_expansion_failure_is_a_document_diagnostic(self):
-        text = dumps(transaction())
-        for error in (MemoryError, OverflowError, ValueError):
-            with (
-                self.subTest(error=error),
-                patch('yambl_compiler.transactions.writing.semantic_digest', side_effect=error),
-            ):
-                with self.assertRaisesRegex(DocumentError, 'numeric representation'):
-                    parse(text)
-
-    def test_shared_sealed_image_cases(self):
-        fixture = (
-            Path(__file__).resolve().parents[3]
-            / 'yambl/tools/vscode/lsp/tests/transaction-image-cases.json'
-        )
-        for case in json.loads(fixture.read_text(encoding='utf-8'))['cases']:
-            with self.subTest(case=case['name']):
-                document = parse(case['text'])
-                self.assertIsInstance(document, Transaction)
-                self.assertEqual(parse(format_document(case['text'])), document)
-
-    def test_shared_editor_cases(self):
-        fixture = (
-            Path(__file__).resolve().parents[3]
-            / 'yambl/tools/vscode/lsp/tests/transaction-cases.json'
-        )
-        for case in json.loads(fixture.read_text(encoding='utf-8')):
-            with self.subTest(case=case['name']):
-                if case.get('invalid'):
-                    with self.assertRaises(DocumentError):
-                        parse(case['text'])
-                else:
-                    parse(case['text'])
-                    self.assertEqual(format_document(case['text']), case['formatted'])
-                    self.assertEqual(format_document(case['formatted']), case['formatted'])
-
+class DocumentTests(unittest.TestCase):
     def test_oversized_integer_and_ambiguous_programmatic_symbol(self):
         with self.assertRaisesRegex(DocumentError, 'numeric literal'):
             parse(source('insert core.A (id) {\n' + '1' * 5000 + '\n}'))
@@ -164,12 +77,6 @@ delete core.Security.price scope (security_id='S1')
         )
         self.assertEqual(parse(dumps(plan)), plan)
 
-    def test_error_coordinates(self):
-        with self.assertRaises(DocumentError) as caught:
-            tokenize('plan x {\n  @')
-        self.assertEqual((caught.exception.line, caught.exception.column), (2, 3))
-        self.assertIn('2:3:', str(caught.exception))
-
     def test_invalid_documents(self):
         cases = [
             ('insert core.A (id) { 1\n}', 'own line'),
@@ -220,83 +127,6 @@ delete core.Security.price scope (security_id='S1')
             parse(f"plan empty {{ version 1 model '{DIGEST}' }}"), Plan('empty', DIGEST, ())
         )
 
-    def test_transaction_roundtrip_and_integrity(self):
-        value = transaction()
-        text = dumps(value)
-        self.assertEqual(parse(text), value)
-        self.assertIn("'S1', 2.5", text)
-        self.assertIn("warning 'later change retained'", text)
-        self.assertEqual(parse(text.replace('2.5', '2.5000')), value)
-        with self.assertRaisesRegex(DocumentError, 'digest mismatch'):
-            parse(text.replace('2.5', '2.6'))
-        rollback = seal(replace(value, source='87654321-1234-1234-1234-123456789abc'))
-        self.assertEqual(parse(dumps(rollback)), rollback)
-        self.assertNotEqual(rollback.digest, value.digest)
-        self.assertEqual(semantic_digest(replace(value, digest='other')), value.digest)
-
-    def test_transaction_metadata_and_images(self):
-        text = dumps(transaction())
-        for modified, message in [
-            (text.replace('12345678-1234-1234-1234-123456789abc', 'bad'), 'metadata'),
-            (text.replace('123456789abc', '123456789ABC'), 'metadata'),
-            (text.replace('12:34:56Z', '12:34:56+00:00'), 'timestamp'),
-            (text.replace('2026-10-26', '2026-99-26'), 'metadata'),
-            (
-                text.replace(
-                    '    group first {\n        change', '    group absent {\n        change'
-                ),
-                'unknown',
-            ),
-            (text.replace("    time", "    bogus"), 'expected time'),
-        ]:
-            with self.subTest(modified=modified), self.assertRaisesRegex(DocumentError, message):
-                parse(modified)
-        parser = Parser(
-            "transaction '12345678-1234-1234-1234-123456789abc' { version 1 time '2026-10-26T00:00:00Z' "
-            f"digest '{DIGEST}' plan p {{ version 1 model '{DIGEST}' group g {{}} }} "
-            "group g { change core.A scope(id=1) {} } }"
-        )
-        with self.assertRaisesRegex(DocumentError, 'requires a before or after'):
-            parser.transaction()
-        changed = replace(
-            transaction().groups[0].changes[0], before=(), after=(Image('core.A', ('id',), ()),)
-        )
-        value = seal(replace(transaction(), groups=(TransactionGroup('first', (changed,)),)))
-        self.assertEqual(parse(dumps(value)), value)
-
-    def test_literal_writing(self):
-        cases = [
-            (Decimal('-0.000'), '0.0'),
-            (Decimal('100'), '100.0'),
-            (Decimal('1.25'), '1.25'),
-            ((), '[]'),
-            (ObjectValue(()), '{}'),
-            (True, 'true'),
-            (False, 'false'),
-            (123, '123'),
-        ]
-        for value, expected in cases:
-            with self.subTest(value=value):
-                self.assertEqual(literal(value), expected)
-        for value in ('line\nbreak', 'line\rbreak', Decimal('NaN'), Decimal('Infinity')):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                literal(value)
-        with self.assertRaisesRegex(ValueError, 'owned_data'):
-            dumps(
-                Plan(
-                    'p',
-                    DIGEST,
-                    (
-                        Group(
-                            'g',
-                            (Operation('insert', 'core.A', ('id',), (('x',),), owned_data=True),),
-                        ),
-                    ),
-                )
-            )
-
-
-class FormattingTests(unittest.TestCase):
     def test_empty_objects_inline_empty_comments_and_semantic_guard(self):
         from yambl_compiler.transactions.formatting import join_tokens
 
@@ -347,15 +177,3 @@ insert core.A ( id , value ) {
             format_document('# leading\n' + source() + '# trailing'),
             format_document(format_document('# leading\n' + source() + '# trailing')),
         )
-
-    def test_transaction_format_does_not_invalidate_digest(self):
-        text = dumps(transaction()).replace('    ', ' ')
-        formatted = format_document(text)
-        self.assertEqual(parse(formatted), transaction())
-        self.assertEqual(format_document(formatted), formatted)
-        with self.assertRaises(DocumentError):
-            format_document(text.replace('version 1', 'version 2'))
-
-
-if __name__ == '__main__':
-    unittest.main()

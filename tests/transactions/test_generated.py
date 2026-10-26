@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.transactions.test_binding import CatalogCase
+from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.storage.generation import generate
-from yambl_compiler.transactions.model import Group, Operation, Plan
 from yambl_compiler.transactions.writing import dumps
 
 SCRIPT = '''

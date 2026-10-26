@@ -5,13 +5,13 @@ from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
+from tests.languages.support import source
 from tests.storage.test_runtime import SOURCE
 from tests.support import FilesystemCase
-from tests.transactions.test_syntax import source
 from yambl_compiler.ir import compile_repository
+from yambl_compiler.languages.shared.model import ObjectValue, Symbol
 from yambl_compiler.storage.layout import build_layout
 from yambl_compiler.transactions.binding import Catalog, object_items
-from yambl_compiler.transactions.model import ObjectValue, Symbol
 from yambl_compiler.transactions.syntax import parse
 
 
