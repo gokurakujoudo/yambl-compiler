@@ -64,6 +64,16 @@ def transaction():
 
 
 class SyntaxTests(unittest.TestCase):
+    def test_digest_numeric_expansion_failure_is_a_document_diagnostic(self):
+        text = dumps(transaction())
+        for error in (MemoryError, OverflowError, ValueError):
+            with (
+                self.subTest(error=error),
+                patch('yambl_compiler.transactions.writing.semantic_digest', side_effect=error),
+            ):
+                with self.assertRaisesRegex(DocumentError, 'numeric representation'):
+                    parse(text)
+
     def test_shared_sealed_image_cases(self):
         fixture = (
             Path(__file__).resolve().parents[3]

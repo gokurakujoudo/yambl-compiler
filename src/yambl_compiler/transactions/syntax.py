@@ -429,8 +429,11 @@ class Parser:
         try:
             if str(UUID(id_)) != id_ or (source and str(UUID(source)) != source):
                 raise ValueError('noncanonical UUID')
-            if not time.endswith('Z'):
-                raise ValueError('timestamp must end in Z')
+            if not re.fullmatch(
+                r'[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z',
+                time,
+            ):
+                raise ValueError('timestamp must use YYYY-MM-DDTHH:MM:SS[.fraction]Z')
             datetime.fromisoformat(time)
         except ValueError as error:
             raise self.fail(f'invalid transaction metadata: {error}') from error
@@ -489,6 +492,11 @@ def parse(text: str) -> Plan | Transaction:
     result = parser.plan() if parser.current.text == 'plan' else parser.transaction()
     if parser.current.kind != 'eof':
         raise parser.fail('unexpected content after document')
-    if isinstance(result, Transaction) and result.digest != semantic_digest(result):
-        raise parser.fail('transaction digest mismatch')
+    if isinstance(result, Transaction):
+        try:
+            digest = semantic_digest(result)
+        except (MemoryError, OverflowError, ValueError) as error:
+            raise parser.fail('numeric representation exceeds runtime limits') from error
+        if result.digest != digest:
+            raise parser.fail('transaction digest mismatch')
     return result
