@@ -197,7 +197,7 @@ def validate_row(layout: Layout, table: Table, row: Row) -> None:
         if column.name.endswith("__state") or column.name == "state":
             if value not in ("VALUE", "NO_ENTRY", "EMPTY", "NOT_APPLICABLE"):
                 raise ValueError("invalid stored field state")
-    if "valid_from" in table.primary:
+    if "valid_from" in table.primary and "valid_to" in row:
         start, end = str(row["valid_from"]), str(row["valid_to"])
         if not "1900-01-01" <= start < end <= "2999-12-31" or any(
             date.fromisoformat(v).isoformat() != v for v in (start, end)

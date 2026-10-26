@@ -259,7 +259,7 @@ class Data:
                 else:
                     value = str(row[column])
                 values.append(value)
-            rows.append((*values, self.payload(entity, field, stored, row)))
+            rows.append((*values, self.payload(entity, field, stored, physical)))
         return Image(
             target,
             (*coords, 'value'),

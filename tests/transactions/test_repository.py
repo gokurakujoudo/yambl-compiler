@@ -178,6 +178,78 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(FileExistsError):
                     await self.store_type.create(config)
 
+    async def test_scd_collection_deletion_round_trip_on_both_backends(self):
+        scope = (Condition('key', 'a'),)
+        initial = Plan(
+            'owners',
+            self.plan.model,
+            (
+                Group(
+                    'initial',
+                    (
+                        Operation('insert', 'A', ('key',), (('a',),)),
+                        Operation('insert', 'Other', ('number',), ((1,), (2,))),
+                        Operation(
+                            'replace',
+                            'A.owners',
+                            ('valid_from', 'valid_to', 'value'),
+                            (('2026-01-01', '2026-02-01', (1, 2)),),
+                            scope,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        deletion = Plan(
+            'remove',
+            self.plan.model,
+            (
+                Group(
+                    'window',
+                    (
+                        Operation(
+                            'delete',
+                            'A.owners',
+                            (),
+                            (),
+                            (*scope, Condition('day', '2026-01-10', '2026-01-20')),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        initial_path = self.write('owners.yaplan', dumps(initial))
+        deletion_path = self.write('remove.yaplan', dumps(deletion))
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, config = await self.configured(backend)
+                with store:
+                    self.assertEqual(store.apply(initial_path).status, 'committed')
+                    removed = store.apply(deletion_path)
+                    self.assertEqual(removed.status, 'committed')
+                    change = parse(removed.path.read_text()).groups[0].changes[0]
+                    self.assertEqual(
+                        change.before[0].rows, (('a', '2026-01-10', '2026-01-20', (1, 2)),)
+                    )
+                    self.assertEqual(change.after[0].rows, ())
+                with await self.store_type.open(config) as reopened:
+                    with closing(reopened.read()) as reader:
+                        records = reader.get_a('a').value.owners
+                        self.assertIsInstance(records, Success)
+                        self.assertEqual(len(records.value), 2)
+                        self.assertTrue(reader.validate().value.valid)
+                    restored = reopened.rollback(removed.path)
+                    self.assertEqual(restored.status, 'committed')
+                    change = parse(restored.path.read_text()).groups[0].changes[0]
+                    self.assertEqual(
+                        change.after[0].rows, (('a', '2026-01-10', '2026-01-20', (1, 2)),)
+                    )
+                    redone = reopened.rollback(restored.path)
+                    self.assertEqual(redone.status, 'committed')
+                    with closing(reopened.read()) as reader:
+                        self.assertEqual(len(reader.get_a('a').value.owners.value), 2)
+                        self.assertTrue(reader.validate().value.valid)
+
     async def test_partial_conflicts_commit_report_and_warning_on_both_backends(self):
         for backend in ('sqlite', 'files'):
             store, _ = await self.configured(backend)

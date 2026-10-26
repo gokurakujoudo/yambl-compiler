@@ -211,6 +211,69 @@ class ExecutionTests(CatalogCase):
             (('a', '2026-01-10', '2026-01-20', Decimal('100')),),
         )
 
+    def test_scd_collection_delete_preserves_outside_members_and_redo(self):
+        for id_ in (1, 2, 3):
+            self.data.insert(self.catalog.entity('Other'), id_)
+        target = 'A.owners'
+        columns = ('valid_from', 'valid_to', 'value')
+        self.put(target, (('2026-01-01', '2026-02-01', (1, 2)),), columns)
+        scope = (*self.scope, Condition('day', '2026-01-10', '2026-01-20'))
+        transaction = self.apply(Group('remove', (Operation('delete', target, (), (), scope),)))
+        self.assertEqual(
+            self.data.image(target, self.scope).rows,
+            (
+                ('a', '2026-01-01', '2026-01-10', (1, 2)),
+                ('a', '2026-01-20', '2026-02-01', (1, 2)),
+            ),
+        )
+        self.assertEqual(self.data.image(target, scope).rows, ())
+        self.put(
+            target,
+            (('2026-01-20', '2026-02-01', (3,)),),
+            columns,
+            (*self.scope, Condition('day', '2026-01-20', '2026-02-01')),
+        )
+        reversed_groups = rollback(self.data, transaction)
+        self.assertEqual(reversed_groups[0].warnings, ())
+        restored = self.data.image(target, self.scope)
+        self.assertTrue(
+            same(
+                (restored,),
+                (
+                    Image(
+                        target,
+                        restored.columns,
+                        (
+                            ('a', '2026-01-01', '2026-01-20', (2, 1)),
+                            ('a', '2026-01-20', '2026-02-01', (3,)),
+                        ),
+                    ),
+                ),
+            )
+        )
+        redone = rollback(self.data, replace(transaction, groups=reversed_groups))
+        self.assertEqual(redone[0].warnings, ())
+        self.assertEqual(self.data.image(target, scope).rows, ())
+        self.assertEqual(
+            self.data.image(target, self.scope).rows,
+            (
+                ('a', '2026-01-01', '2026-01-10', (1, 2)),
+                ('a', '2026-01-20', '2026-02-01', (3,)),
+            ),
+        )
+
+    def test_delete_entity_without_owned_data_and_restore(self):
+        self.data.insert(self.catalog.entity('B'), 'bare')
+        original = self.data.entity_images(self.catalog.entity('B'), 'bare')
+        transaction = self.apply(
+            Group('remove', (Operation('delete', 'B', ('key',), (('bare',),)),))
+        )
+        with self.assertRaisesRegex(ValueError, 'does not exist'):
+            self.data.actual(self.entity, 'bare')
+        result = rollback(self.data, transaction)
+        self.assertEqual(result[0].warnings, ())
+        self.assertEqual(self.data.entity_images(self.catalog.entity('B'), 'bare'), original)
+
     def test_group_selection_and_whole_scope_conflict(self):
         scope = (*self.scope, Condition('source', 'Vendor'))
         first = Operation(
