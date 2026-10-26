@@ -67,6 +67,19 @@ class BindingTests(CatalogCase):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 self.catalog.field(self.entity, name)
 
+    def test_missing_storage_bindings_are_not_silently_accepted(self):
+        layout = self.catalog.layout
+        without_entity = Catalog(
+            replace(layout, roots={k: v for k, v in layout.roots.items() if k != 'A'})
+        )
+        with self.assertRaisesRegex(ValueError, 'entity has no storage: A'):
+            without_entity.entity('A')
+        without_field = Catalog(
+            replace(layout, fields={k: v for k, v in layout.fields.items() if k != 'A.text'})
+        )
+        with self.assertRaisesRegex(ValueError, 'field has no storage: A.text'):
+            without_field.field(self.entity, 'text')
+
     def test_scalar_encoding_and_decoding(self):
         cases = [
             ('text', 'word', 'word'),

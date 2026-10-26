@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unittest
 from contextlib import closing
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -19,7 +20,7 @@ from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
 from yambl_compiler.transactions.model import Condition, Group, ObjectValue, Operation, Plan, Symbol
 from yambl_compiler.transactions.syntax import parse
-from yambl_compiler.transactions.writing import dumps
+from yambl_compiler.transactions.writing import dumps, seal
 
 CRASH_WORKER = '''
 import asyncio
@@ -568,6 +569,7 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
         ]
         for changes, message in (
             ({'transactions': [1]}, 'scalar type'),
+            ({'transactions': ['ABCDEFAB-1234-1234-1234-123456789ABC']}, 'invalid file generation'),
             ({'transactions': ['../outside']}, 'UUID'),
             ({'transactions': [report.id, report.id]}, 'duplicate committed'),
             ({'generation': str(uuid4())}, 'latest committed'),
@@ -638,6 +640,131 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, 'integer'):
                 store.apply(self.write('invalid.yaplan', dumps(invalid)))
             self.assertEqual(store.snapshot().tables, before)
+
+    async def test_wrong_document_kind_and_model_leave_data_unchanged(self):
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, _ = await self.configured(backend)
+                with store:
+                    report = store.apply(self.plan_path)
+                    original = parse(report.path.read_text())
+                    wrong_plan = replace(self.plan, model='0' * 64)
+                    wrong_transaction = seal(replace(original, plan=wrong_plan))
+                    operations = (
+                        (store.apply, report.path, 'apply requires a Plan'),
+                        (store.rollback, self.plan_path, 'rollback requires a Transaction'),
+                        (
+                            store.apply,
+                            self.write('wrong.yaplan', dumps(wrong_plan)),
+                            'Plan model digest',
+                        ),
+                        (
+                            store.rollback,
+                            self.write('wrong.yatran', dumps(wrong_transaction)),
+                            'Transaction model digest',
+                        ),
+                    )
+                    before = store.snapshot().tables
+                    exports = {
+                        p.name: p.read_bytes()
+                        for p in store.transaction_directory().glob('*.yatran')
+                    }
+                    for operation, path, message in operations:
+                        with self.subTest(operation=message):
+                            with self.assertRaisesRegex(ValueError, message):
+                                operation(path)
+                            self.assertEqual(store.snapshot().tables, before)
+                            self.assertEqual(
+                                {
+                                    p.name: p.read_bytes()
+                                    for p in store.transaction_directory().glob('*.yatran')
+                                },
+                                exports,
+                            )
+
+    async def test_export_rejects_unknown_ids_and_mismatched_durable_records(self):
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, _ = await self.configured(backend)
+                with store:
+                    report = store.apply(self.plan_path)
+                    original_text = report.path.read_text()
+                    original = parse(original_text)
+                    before = store.snapshot().tables
+                    for id_, message in (
+                        ('ABCDEFAB-1234-1234-1234-123456789ABC', 'invalid transaction ID'),
+                        (str(uuid4()), 'unknown transaction'),
+                    ):
+                        with self.assertRaisesRegex(ValueError, message):
+                            store.export(id_)
+                    mismatched = (
+                        self.plan,
+                        seal(replace(original, id=str(uuid4()))),
+                        seal(replace(original, plan=replace(self.plan, model='0' * 64))),
+                    )
+                    for document in mismatched:
+                        content = dumps(document)
+                        if backend == 'sqlite':
+                            with closing(sqlite3.connect(store.path)) as db, db:
+                                db.execute(
+                                    'UPDATE tb_yambl_transactions SET document=? WHERE id=?',
+                                    (content, report.id),
+                                )
+                        else:
+                            (store.path / 'versions' / report.id / 'transaction.yatran').write_text(
+                                content, encoding='utf-8'
+                            )
+                        with self.assertRaisesRegex(ValueError, 'stored transaction identity'):
+                            store.export(report.id)
+                        self.assertEqual(report.path.read_text(), original_text)
+                        self.assertEqual(store.snapshot().tables, before)
+                    if backend == 'sqlite':
+                        with closing(sqlite3.connect(store.path)) as db, db:
+                            db.execute(
+                                'UPDATE tb_yambl_transactions SET document=? WHERE id=?',
+                                (original_text, report.id),
+                            )
+                    else:
+                        (store.path / 'versions' / report.id / 'transaction.yatran').write_text(
+                            original_text, encoding='utf-8'
+                        )
+                    report.path.unlink()
+                    self.assertEqual(store.export(report.id).read_text(), original_text)
+
+    async def test_cleanup_refuses_linked_paths_and_retains_unrecognized_entries(self):
+        store, _ = await self.configured('files')
+        with store:
+            versions = store.path / 'versions'
+            unknown = versions / 'not-a-generation'
+            unknown.mkdir()
+            marker = unknown / 'keep.txt'
+            marker.write_text('retained', encoding='utf-8')
+            noncanonical = versions / 'ABCDEFAB-1234-1234-1234-123456789ABC'
+            noncanonical.mkdir()
+            regular_file = versions / str(uuid4())
+            regular_file.write_text('retained', encoding='utf-8')
+            old = versions / str(uuid4())
+            tables = old / 'tables'
+            table = tables / (store.layout.tables[0].name + '.jsonl')
+            manifest = old / 'repository.json'
+            for linked in (versions, old, tables, manifest, table):
+                tables.mkdir(parents=True, exist_ok=True)
+                manifest.write_text('manifest sentinel', encoding='utf-8')
+                table.write_text('table sentinel', encoding='utf-8')
+                with self.subTest(linked=linked):
+                    # Simulate the OS link flag without requiring symlink privileges.
+                    with patch.object(Path, 'is_junction', lambda path: path == linked):
+                        with self.assertRaisesRegex(OSError, 'cannot clean a linked'):
+                            store.cleanup()
+                    self.assertTrue(linked.exists())
+                    self.assertEqual(table.read_text(), 'table sentinel')
+            store.cleanup()
+            self.assertFalse(old.exists())
+            self.assertEqual(marker.read_text(), 'retained')
+            self.assertTrue(noncanonical.is_dir())
+            self.assertEqual(regular_file.read_text(), 'retained')
+            with closing(store.read()) as reader:
+                self.assertTrue(reader.validate().value.valid)
 
     async def test_cleanup_preserves_history_and_unknown_files(self):
         store, config = await self.configured('files')

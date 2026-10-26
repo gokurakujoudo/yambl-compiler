@@ -483,6 +483,7 @@ class GenerationTests(FilesystemCase):
                     ]
                 ),
                 0,
+                output.getvalue(),
             )
             self.assertEqual(
                 main(
@@ -501,6 +502,7 @@ class GenerationTests(FilesystemCase):
                     ]
                 ),
                 0,
+                output.getvalue(),
             )
         self.assertIn("generated:", output.getvalue())
         self.assertTrue((self.root / "cli-output/schema.md").is_file())

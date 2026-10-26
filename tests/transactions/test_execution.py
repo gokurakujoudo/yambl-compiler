@@ -1,5 +1,6 @@
 """Check candidate mutation and conflict-aware rollback on real compiled layouts."""
 
+from copy import deepcopy
 from dataclasses import replace
 from decimal import Decimal
 
@@ -47,6 +48,103 @@ class ExecutionTests(CatalogCase):
     def put(self, target, rows, columns=('value',), scope=None):
         selected = self.scope if scope is None else scope
         self.data.put(target, selected, Image(target, columns, rows))
+
+    def test_candidate_field_entry_points_reject_entity_targets(self):
+        for operation in (
+            lambda: self.data.image('A', self.scope),
+            lambda: self.data.clear('A', self.scope),
+            lambda: self.data.put('A', self.scope, Image('A', (), ())),
+            lambda: Execution(self.data).field(Operation('replace', 'A', (), (), self.scope)),
+        ):
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, 'field'):
+                operation()
+        with self.assertRaisesRegex(ValueError, 'scope requires owner ID'):
+            self.data.image('A.text', ())
+        with self.assertRaisesRegex(ValueError, 'replace or delete'):
+            Execution(self.data).field(Operation('update', 'A.text', (), (), self.scope))
+        with self.assertRaisesRegex(ValueError, 'invalid entity operation'):
+            Execution(self.data).entities(Operation('replace', 'A', ('key',), (('a',),)))
+        self.assertEqual(self.data.image('A.text', self.scope).rows, (('a', Symbol('NO_ENTRY')),))
+
+    def test_whole_entity_and_wider_scopes_conflict_with_prior_writes(self):
+        cases = (
+            (
+                Operation('update', 'A', ('key', 'text'), (('a', 'first'),)),
+                Operation('delete', 'A', ('key',), (('a',),), owned_data=True),
+            ),
+            (
+                Operation('replace', 'A.price', ('day', 'source', 'value'), (), self.scope),
+                Operation('delete', 'A.price', (), (), (*self.scope, Condition('source', 'One'))),
+            ),
+            (
+                Operation('delete', 'A.price', (), (), (*self.scope, Condition('source', 'One'))),
+                Operation('replace', 'A.price', ('day', 'source', 'value'), (), self.scope),
+            ),
+        )
+        before = deepcopy(self.data.tables)
+        for operations in cases:
+            with self.subTest(operations=operations):
+                candidate = Data(self.data.layout, deepcopy(before))
+                with self.assertRaisesRegex(ValueError, 'overlapping operations'):
+                    Execution(candidate).apply(
+                        Plan(
+                            'overlap',
+                            self.data.layout.model.model_digest,
+                            (Group('all', operations),),
+                        )
+                    )
+        self.assertEqual(self.data.tables, before)
+
+    def test_corrupt_payloads_and_missing_owners_are_rejected(self):
+        _, stored = self.catalog.field(self.entity, 'text')
+        row = self.data.tables[stored.table][0]
+        row[stored.state] = 'UNSUPPORTED'
+        with self.assertRaisesRegex(ValueError, 'invalid stored state'):
+            self.data.image('A.text', self.scope)
+        row[stored.state] = 'NO_ENTRY'
+        self.put('A.members', (((),),))
+        member_table = self.catalog.field(self.entity, 'members')[1].members
+        self.data.tables[member_table].append({'id': 'missing', 'member_id': '1'})
+        with self.assertRaisesRegex(ValueError, 'missing owner'):
+            self.data.validate()
+        self.data.tables[member_table].clear()
+
+        for name in ('first', 'second'):
+            scope = (Condition('config_group_id', name),)
+            self.data.insert(self.catalog.entity('builtins.ConfigGroup'), name)
+            for field, value in (
+                ('entity_type', Symbol('A')),
+                ('priority', 1),
+                ('when', ObjectValue(())),
+                ('then_set', ObjectValue(((Symbol('A.peers'), ()),))),
+            ):
+                self.put('builtins.ConfigGroup.' + field, ((value,),), scope=scope)
+        self.data.validate()
+        table = self.data.tables['tb_config_group_then_set']
+        original = table[0]['value']
+        for content, message in (
+            ('[]', 'mapping payload'),
+            ('{}', 'mapping payload'),
+            ('{"value": 1}', 'configuration collection'),
+        ):
+            table[0]['value'] = content
+            with self.subTest(content=content), self.assertRaisesRegex(ValueError, message):
+                self.data.image(
+                    'builtins.ConfigGroup.then_set', (Condition('config_group_id', 'first'),)
+                )
+        table[0]['value'] = original
+        self.data.validate()
+
+    def test_rollback_rejects_missing_field_before_image(self):
+        transaction = self.update('text', 'after')
+        group = transaction.groups[0]
+        malformed = replace(
+            transaction, groups=(replace(group, changes=(replace(group.changes[0], before=()),)),)
+        )
+        before = deepcopy(self.data.tables)
+        with self.assertRaisesRegex(ValueError, 'one before image'):
+            rollback(self.data, malformed)
+        self.assertEqual(self.data.tables, before)
 
     def test_config_group_entity_type_is_a_business_attribute(self):
         scope = (Condition("config_group_id", "group"),)
