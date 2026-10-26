@@ -1,0 +1,21 @@
+target: QUALIFIED
+revision: VERSION INT
+columns: "(" NAME ("," NAME)* ")"
+rows: "{" row* "}"
+row: value ("," value)*
+scope: SCOPE "(" [condition ("," condition)*] ")"
+condition: NAME "=" value | NAME IN "[" value "," value ")"
+?value: STRING -> string
+      | INT -> number
+      | NUMBER -> number
+      | QUALIFIED -> symbol
+      | sequence
+      | object
+sequence: "[" [value ("," value)*] "]"
+object: "{" [pair ("," pair)*] "}"
+pair: value ":" value
+QUALIFIED: /[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*/
+%import .lexical (NAME, INT, NUMBER, STRING)
+VERSION: /version\b/
+SCOPE: /scope\b/
+IN: /in\b/

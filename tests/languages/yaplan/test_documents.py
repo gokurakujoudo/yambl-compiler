@@ -5,14 +5,37 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from tests.languages.support import DIGEST, source
+from yambl_compiler.languages.shared.documents import parse
+from yambl_compiler.languages.shared.formatting import format_document
 from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol
+from yambl_compiler.languages.shared.syntax import DocumentError
 from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
-from yambl_compiler.transactions.formatting import format_document
-from yambl_compiler.transactions.syntax import DocumentError, parse
 from yambl_compiler.transactions.writing import dumps
 
 
 class DocumentTests(unittest.TestCase):
+    def test_lark_entry_point_and_keyword_boundaries(self):
+        from yambl_compiler.languages.yaplan.syntax import parse as parse_plan
+
+        self.assertEqual(parse_plan(source()), Plan('daily', DIGEST, (Group('first', ()),)))
+        for text in (
+            source().replace('plan daily', 'plandaily'),
+            source().replace('version 1', 'version1'),
+            source('insertcore.A (id) {}'),
+            source('replace core.A.x scopex(id=1) columns(value) {}'),
+        ):
+            with self.subTest(text=text), self.assertRaises(DocumentError) as caught:
+                parse_plan(text)
+            self.assertGreaterEqual(caught.exception.line, 1)
+            self.assertGreaterEqual(caught.exception.column, 1)
+        for body, message in (
+            ('delete core.A.x scope(id=1) columns(value) {}', 'cannot contain'),
+            ('replace core.A.x scope(id=1)', 'requires columns'),
+            ('insert core.A (id) {\n' + '[' * 1000 + '1' + ']' * 1000 + '\n}', 'nesting exceeds'),
+        ):
+            with self.subTest(body=body), self.assertRaisesRegex(DocumentError, message):
+                parse_plan(source(body))
+
     def test_oversized_integer_and_ambiguous_programmatic_symbol(self):
         with self.assertRaisesRegex(DocumentError, 'numeric literal'):
             parse(source('insert core.A (id) {\n' + '1' * 5000 + '\n}'))
@@ -81,25 +104,25 @@ delete core.Security.price scope (security_id='S1')
         cases = [
             ('insert core.A (id) { 1\n}', 'own line'),
             ('insert core.A (id) {\n1 }', 'after data'),
-            ('insert core.A (id) {\n1 2\n}', 'after data'),
+            ('insert core.A (id) {\n1 2\n}', 'own line'),
             ('insert core.A (id) {\n1, 2\n}', 'expected 1 values'),
             ('insert core.A (id) {\n[1,\n2]\n}', 'span multiple'),
-            ('insert core.A (id) {\n[1,]\n}', 'expected literal'),
-            ('insert core.A (id) {\n{a:}\n}', 'expected literal'),
-            ('insert core.A (id) {\nfoo(1)\n}', 'after data'),
+            ('insert core.A (id) {\n[1,]\n}', 'invalid data document syntax'),
+            ('insert core.A (id) {\n{a:}\n}', 'invalid data document syntax'),
+            ('insert core.A (id) {\nfoo(1)\n}', 'invalid data document syntax'),
             ('insert core.A (id) {\n1+2\n}', 'invalid token'),
             ('insert core.A (id, id) {}', 'duplicate column'),
-            ('insert core.A () {}', 'expected identifier'),
-            ('insert core.A (a.b) {}', 'expected identifier'),
-            ('insert 123 (id) {}', 'expected identifier'),
+            ('insert core.A () {}', 'invalid data document syntax'),
+            ('insert core.A (a.b) {}', 'invalid data document syntax'),
+            ('insert 123 (id) {}', 'invalid data document syntax'),
             ('update core.A owned_data delete_all (id) {}', 'only valid'),
             ('insert core.A scope (id=1) columns (id) {}', 'scope requires'),
             ('delete core.A owned_data delete_all scope (id=1)', 'scope requires'),
             ('replace core.A (id) {}', 'requires scope'),
             ('delete core.A.value scope ()', 'owner coordinate'),
             ('delete core.A.value scope (id=1, id=2)', 'duplicate scope'),
-            ('delete core.A.value scope (id=1, time in [1,2])', r'expected \)'),
-            ('nonsense core.A (id) {}', 'expected insert'),
+            ('delete core.A.value scope (id=1, time in [1,2])', 'invalid data document syntax'),
+            ('nonsense core.A (id) {}', 'invalid data document syntax'),
             ('insert core.A (id) {\n\'unfinished\n}', 'unterminated'),
             ('insert core.A (id) {\n' + '[' * 66 + '1' + ']' * 66 + '\n}', 'nesting exceeds'),
         ]
@@ -109,12 +132,12 @@ delete core.Security.price scope (security_id='S1')
         for text, message in [
             (source(metadata=f"version 2 model '{DIGEST}'"), 'unsupported document'),
             (source(metadata="version 1 model 'bad'"), 'SHA-256'),
-            (source(metadata='version 1 model 123'), 'single-quoted'),
-            (source() + 'extra', 'unexpected content'),
+            (source(metadata='version 1 model 123'), 'invalid data document syntax'),
+            (source() + 'extra', 'invalid data document syntax'),
             (source().replace('group first {', 'group first {} group first {'), 'duplicate group'),
-            ('', 'expected transaction'),
-            ('plan', 'identifier'),
-            ('plan x {', 'expected version'),
+            ('', 'invalid data document syntax'),
+            ('plan', 'invalid data document syntax'),
+            ('plan x {', 'invalid data document syntax'),
             ('\ufeff' + source(), 'invalid token'),
         ]:
             with self.subTest(text=text), self.assertRaisesRegex(DocumentError, message):
@@ -128,7 +151,7 @@ delete core.Security.price scope (security_id='S1')
         )
 
     def test_empty_objects_inline_empty_comments_and_semantic_guard(self):
-        from yambl_compiler.transactions.formatting import join_tokens
+        from yambl_compiler.languages.shared.formatting import join_tokens
 
         text = source('insert core.A (id, value) {\n1, {} #\n}')
         formatted = format_document(text)
@@ -140,7 +163,7 @@ delete core.Security.price scope (security_id='S1')
             line = join_tokens(tokens)
             return line.replace('1, {}', '2, {}')
 
-        with patch('yambl_compiler.transactions.formatting.join_tokens', side_effect=corrupt):
+        with patch('yambl_compiler.languages.shared.formatting.join_tokens', side_effect=corrupt):
             with self.assertRaisesRegex(ValueError, 'changed document semantics'):
                 format_document(text)
 

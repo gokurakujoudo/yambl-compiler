@@ -17,11 +17,11 @@ from lclang.workflow import (
     define_workflow,
 )
 
+from yambl_compiler.languages.shared.documents import parse
 from yambl_compiler.languages.yaplan.model import Plan
 from yambl_compiler.languages.yatran.model import Transaction
 from yambl_compiler.storage.results import Success
 from yambl_compiler.transactions.repository import DataStore
-from yambl_compiler.transactions.syntax import parse
 
 
 @dataclass(frozen=True, kw_only=True)

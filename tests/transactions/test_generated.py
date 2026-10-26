@@ -66,7 +66,9 @@ class GeneratedTransactionTests(CatalogCase):
         compiler = tomllib.loads(
             (Path(__file__).parents[2] / 'pyproject.toml').read_text(encoding='utf-8')
         )
-        expected = [d for d in compiler['project']['dependencies'] if d.startswith('lclang')]
+        expected = [
+            d for d in compiler['project']['dependencies'] if d.startswith(('lclang', 'lark'))
+        ]
         self.assertEqual(project['project']['dependencies'], expected)
         self.assertEqual(project['project']['name'], 'standalone-model')
         self.assertEqual(
@@ -98,7 +100,14 @@ class GeneratedTransactionTests(CatalogCase):
         )
 
     def test_missing_or_duplicate_runtime_dependency_is_a_preflight_failure(self):
-        for dependencies in (None, [], ['lclang==1', 'lclang==2']):
+        for dependencies in (
+            None,
+            [],
+            ['lclang==1', 'lclang==2'],
+            ['lclang==1'],
+            ['lark==1'],
+            ['lclang==1', 'lark==1', 'lark==2'],
+        ):
             with self.subTest(dependencies=dependencies):
                 output = self.root / 'invalid'
                 with patch('yambl_compiler.storage.generation.requires', return_value=dependencies):

@@ -13,7 +13,7 @@ def dumps(document: Plan | Transaction) -> str:
     :returns: UTF-8-ready text with one final LF.
     :raises ValueError: On an invalid document or stale transaction digest.
     """
-    from yambl_compiler.transactions.syntax import parse
+    from yambl_compiler.languages.shared.documents import parse
 
     lines = (
         plan_lines(document)

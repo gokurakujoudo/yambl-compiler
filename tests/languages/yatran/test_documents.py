@@ -7,14 +7,23 @@ from pathlib import Path
 from unittest.mock import patch
 
 from tests.languages.support import DIGEST, transaction
+from yambl_compiler.languages.shared.documents import parse
+from yambl_compiler.languages.shared.formatting import format_document
+from yambl_compiler.languages.shared.syntax import DocumentError
 from yambl_compiler.languages.yatran.model import Image, Transaction, TransactionGroup
 from yambl_compiler.languages.yatran.writing import seal, semantic_digest
-from yambl_compiler.transactions.formatting import format_document
-from yambl_compiler.transactions.syntax import DocumentError, Parser, parse
 from yambl_compiler.transactions.writing import dumps
 
 
 class DocumentTests(unittest.TestCase):
+    def test_lark_entry_point_requires_a_transaction(self):
+        from yambl_compiler.languages.yatran.syntax import parse as parse_transaction
+
+        expected = transaction()
+        self.assertEqual(parse_transaction(dumps(expected)), expected)
+        with self.assertRaises(DocumentError):
+            parse_transaction(dumps(expected.plan))
+
     def test_digest_numeric_expansion_failure_is_a_document_diagnostic(self):
         text = dumps(transaction())
         for error in (MemoryError, OverflowError, ValueError):
@@ -63,17 +72,17 @@ class DocumentTests(unittest.TestCase):
                 ),
                 'unknown',
             ),
-            (text.replace("    time", "    bogus"), 'expected time'),
+            (text.replace("    time", "    bogus"), 'invalid data document syntax'),
         ]:
             with self.subTest(modified=modified), self.assertRaisesRegex(DocumentError, message):
                 parse(modified)
-        parser = Parser(
+        invalid = (
             "transaction '12345678-1234-1234-1234-123456789abc' { version 1 time '2026-10-26T00:00:00Z' "
             f"digest '{DIGEST}' plan p {{ version 1 model '{DIGEST}' group g {{}} }} "
             "group g { change core.A scope(id=1) {} } }"
         )
         with self.assertRaisesRegex(DocumentError, 'requires a before or after'):
-            parser.transaction()
+            parse(invalid)
         changed = replace(
             transaction().groups[0].changes[0], before=(), after=(Image('core.A', ('id',), ()),)
         )

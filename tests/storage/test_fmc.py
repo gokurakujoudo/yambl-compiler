@@ -13,9 +13,9 @@ from unittest.mock import patch
 
 from tests.support import FilesystemCase, load_generated
 from yambl_compiler.ir import compile_repository
+from yambl_compiler.languages.shared.formatting import format_document
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
-from yambl_compiler.transactions.formatting import format_document
 
 
 class FmcTests(FilesystemCase):
@@ -56,7 +56,7 @@ from datetime import date
 from decimal import Decimal
 sys.path.insert(0, sys.argv[1])
 import fmc_model as m
-assert not any(n.startswith(('yambl_compiler', 'lark', 'jsonschema')) for n in sys.modules)
+assert not any(n.startswith(('yambl_compiler', 'jsonschema')) for n in sys.modules)
 for config in sys.argv[2:]:
     data = asyncio.run(m.FmcData.open(Path(config)))
     reader = data.read()

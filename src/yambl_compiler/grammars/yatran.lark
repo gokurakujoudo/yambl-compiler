@@ -1,0 +1,25 @@
+start: transaction
+transaction: TRANSACTION STRING "{" revision time source? digest plan transaction_group* "}"
+time: TIME STRING
+source: SOURCE STRING
+digest: DIGEST STRING
+transaction_group: GROUP NAME "{" (change | warning)* "}"
+change: CHANGE target scope "{" before* after* "}"
+before: BEFORE target columns rows
+after: AFTER target columns rows
+warning: WARNING STRING
+%import .yaplan (plan)
+%import .data (target, revision, columns, rows, scope)
+%import .lexical (NAME, STRING, COMMENT)
+%import common.WS
+%ignore WS
+%ignore COMMENT
+TRANSACTION: /transaction\b/
+TIME: /time\b/
+SOURCE: /source\b/
+DIGEST: /digest\b/
+GROUP: /group\b/
+CHANGE: /change\b/
+BEFORE: /before\b/
+AFTER: /after\b/
+WARNING: /warning\b/

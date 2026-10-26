@@ -18,12 +18,12 @@ from lclang.error import LclError, render_error
 
 from tests.support import load_generated
 from tests.transactions.test_binding import CatalogCase
+from yambl_compiler.languages.shared.documents import parse
 from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol
 from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.languages.yatran.writing import seal
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
-from yambl_compiler.transactions.syntax import parse
 from yambl_compiler.transactions.writing import dumps
 
 CRASH_WORKER = '''

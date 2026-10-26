@@ -253,9 +253,8 @@ lclang workflows expose the `check` and `format` commands.
 
 Language code and tests live under `languages/yambl/`, `languages/yaplan/` and
 `languages/yatran/`. Data literals and coordinates use `languages/shared/`.
-Lark grammars live in `grammars/`; repository, IR and storage services keep
-their shared packages. Plan and Transaction parsing currently remains in
-`transactions/syntax.py` while its Lark replacement is in development.
+All three languages use Lark grammars in `grammars/`, with common lexical rules
+in `lexical.lark`. Repository, IR and storage services keep their shared packages.
 
 | Source package under `src/yambl_compiler/` | Matching tests | Responsibility |
 | --- | --- | --- |
@@ -268,8 +267,8 @@ their shared packages. Plan and Transaction parsing currently remains in
 | `languages/yambl/semantics/signatures.py` | `tests/languages/yambl/semantics/test_signatures.py` | Resolved field contract comparisons |
 | `languages/yambl/semantics/entities.py` | `tests/languages/yambl/semantics/test_entities.py` | Merged attributes, locations, and inheritance |
 | `languages/yambl/formatting/formatter.py` | `tests/languages/yambl/formatting/test_formatter.py` | Layout and comment preservation |
-| `languages/yaplan/model.py`, `languages/yaplan/writing.py` | `tests/languages/yaplan/test_documents.py` | Plan records, operations and serialization |
-| `languages/yatran/model.py`, `languages/yatran/writing.py` | `tests/languages/yatran/test_documents.py` | Execution images, metadata and integrity digest |
+| `languages/yaplan/` | `tests/languages/yaplan/test_documents.py` | Plan parsing, records, operations and serialization |
+| `languages/yatran/` | `tests/languages/yatran/test_documents.py` | Transaction parsing, execution images, metadata and integrity digest |
 | `languages/shared/` | `tests/languages/shared/test_documents.py` | Data literals, coordinates and common document behavior |
 | `transactions/` | `tests/transactions/` | Data binding, candidate editing, apply, rollback and persistence |
 | `application/project.py` | `tests/application/test_project.py` | File discovery and publication |

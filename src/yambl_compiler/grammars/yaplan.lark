@@ -1,0 +1,18 @@
+start: plan
+plan: PLAN NAME "{" revision model_digest group* "}"
+model_digest: MODEL STRING
+group: GROUP NAME "{" operation* "}"
+operation: KIND target owned? (scope (COLUMNS columns rows)? | columns rows)
+owned: OWNED_DATA DELETE_ALL
+KIND: /(?:insert|update|delete|replace)\b/
+%import .data (target, revision, columns, rows, scope)
+%import .lexical (NAME, STRING, COMMENT)
+%import common.WS
+%ignore WS
+%ignore COMMENT
+PLAN: /plan\b/
+MODEL: /model\b/
+GROUP: /group\b/
+COLUMNS: /columns\b/
+OWNED_DATA: /owned_data\b/
+DELETE_ALL: /delete_all\b/

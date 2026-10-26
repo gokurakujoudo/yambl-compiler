@@ -599,10 +599,13 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
     dependencies = [
         requirement
         for requirement in requires('yambl-compiler') or ()
-        if re.match(r'^lclang\b', requirement)
+        if re.match(r'^(?:lclang|lark)\b', requirement)
     ]
-    if len(dependencies) != 1:
-        raise ValueError('compiler package must declare one lclang runtime dependency')
+    if any(
+        sum(bool(re.match(r'^' + name + r'\b', d)) for d in dependencies) != 1
+        for name in ('lclang', 'lark')
+    ):
+        raise ValueError('compiler package must declare one lclang and one lark runtime dependency')
     contents = {
         'pyproject.toml': (
             '[build-system]\nrequires = ["setuptools>=77"]\n'
@@ -612,7 +615,7 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
             'requires-python = ">=3.14"\n'
             f'dependencies = {json.dumps(dependencies)}\n\n'
             f'[tool.setuptools.packages.find]\ninclude = ["{package}*"]\n\n'
-            f'[tool.setuptools.package-data]\n{package} = ["*.json", "*.sql", "py.typed"]\n'
+            f'[tool.setuptools.package-data]\n{package} = ["*.json", "*.sql", "py.typed", "grammars/*.lark"]\n'
         ),
         "schema.sql": ddl(layout),
         "schema.md": reference(layout)
@@ -675,6 +678,10 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
             contents[package + '/languages/' + language + '/' + path.name] = path.read_text(
                 encoding='utf-8'
             )
+    for grammar in ('lexical', 'data', 'yaplan', 'yatran'):
+        contents[package + '/grammars/' + grammar + '.lark'] = (
+            Path(__file__).parents[1] / 'grammars' / (grammar + '.lark')
+        ).read_text(encoding='utf-8')
     contents[package + "/_computation_records.py"] = (
         Path(__file__).parents[1] / "languages/yambl/computation/records.py"
     ).read_text(encoding="utf-8")

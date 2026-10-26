@@ -1,6 +1,7 @@
 """Format transaction documents without rewriting data or dropping comments."""
 
-from yambl_compiler.transactions.syntax import Parser, Token, parse, tokenize
+from .documents import document_tree, parse
+from .syntax import Token, layout, tokenize
 
 
 def join_tokens(tokens: list[Token]) -> str:
@@ -31,11 +32,9 @@ def format_document(text: str) -> str:
     :raises ValueError: On invalid syntax or transaction integrity.
     """
     expected = parse(text)
-    parser = Parser(text)
-    if parser.current.text == 'plan':
-        parser.plan()
-    else:
-        parser.transaction()
+    boundaries = layout(document_tree(text))
+    stream = tokenize(text)
+    syntax_tokens = tuple(t for t in stream if t.kind != 'comment')
     output: list[str] = []
     pending: list[Token] = []
     depth, base, previous_line = 0, 0, 0
@@ -53,16 +52,16 @@ def format_document(text: str) -> str:
             output.append('    ' * depth + body)
             pending.clear()
 
-    for token in tokenize(text)[:-1]:
+    for token in stream[:-1]:
         if token.kind == 'comment':
             if pending and token.line != pending[-1].line:
                 flush()
             if not pending:
                 # A standalone comment belongs to the next structural level.
                 next_token = next(
-                    (t for t in parser.tokens if t.line > token.line), parser.tokens[-1]
+                    (t for t in syntax_tokens if t.line > token.line), syntax_tokens[-1]
                 )
-                depth = parser.layout.get(next_token, base)
+                depth = boundaries.get(next_token, base)
                 if next_token.text == '}':
                     depth += 1
             if previous_line and token.line > previous_line + 1 and output and output[-1]:
@@ -70,14 +69,14 @@ def format_document(text: str) -> str:
             flush(token.text[1:].lstrip(' '))
             previous_line = token.line
             continue
-        boundary = token in parser.layout
+        boundary = token in boundaries
         newline = bool(pending and token.line != pending[-1].line)
         if boundary or newline:
             flush()
             if previous_line and token.line > previous_line + 1 and output and output[-1]:
                 output.append('')
             if boundary:
-                base = parser.layout[token]
+                base = boundaries[token]
                 depth = base
             else:
                 depth = base + 1
