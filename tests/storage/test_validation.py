@@ -1,5 +1,6 @@
 """Validate cycle scope by logical field, dimensions and time intersection."""
 
+import asyncio
 import contextlib
 import io
 import sqlite3
@@ -8,10 +9,13 @@ from unittest.mock import patch
 from tests.support import FilesystemCase, load_generated
 from yambl_compiler.ir import compile_repository
 from yambl_compiler.storage.backends import repository_contents
-from yambl_compiler.storage.cli_runtime import main
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status
 from yambl_compiler.storage.validation import cycles
+from yambl_compiler.transactions.cli import main
+from yambl_compiler.transactions.editing import Data
+from yambl_compiler.transactions.model import Group, Operation, Plan
+from yambl_compiler.transactions.writing import dumps
 
 SOURCE = "entity Node { dimension dimension_207 { value source: string } \n id key: string\n attr parent: Node\n attr other: Node\n attr foreign: Other\n attr narrow: Child\n attr children: collection<Node>\n config attr limit: integer = 1\n config attr active: bool = true\n @dimension(dimension_207) attr dim: Node\n snapshot attr snap: Node\n scd attr period: Node\n}\nentity Child inherits Node { @override attr parent: Node attr extra: string }\nentity Other { id key: string attr parent: Node }\n"
 
@@ -25,9 +29,10 @@ class ValidationTests(FilesystemCase):
         self.layout = generate(compile_repository(self.root), self.output, "sample_model")
         self.api = load_generated(self.output / "sample_model", "sample_model")
         self.path = self.root / "data.db"
+        with asyncio.run(self.api.SampleData.create(self.config('sqlite', self.path))):
+            pass
         self.db = sqlite3.connect(self.path)
         self.addCleanup(self.db.close)
-        self.db.executescript((self.output / "schema.sql").read_text())
         self.db.executemany(
             "INSERT INTO tb_node(id, entity_type) VALUES (?, ?)",
             [("a", "Node"), ("b", "Child"), ("c", "Node")],
@@ -43,6 +48,14 @@ class ValidationTests(FilesystemCase):
             ],
         )
         self.db.commit()
+
+    def config(self, backend, path):
+        return self.write(f'{backend}.lclcfg', f"backend: '{backend}'\npath: '{path.as_posix()}'\n")
+
+    def cli(self, backend, path):
+        return main(
+            self.api.SampleData, ['check-data', '-o', 'config', str(self.config(backend, path))]
+        )
 
     def edge(self, identity, owner, target, **coords):
         s = self.layout.fields["Node." + identity]
@@ -106,18 +119,18 @@ class ValidationTests(FilesystemCase):
     def test_cli_reports_read_failure_and_usage(self):
         self.db.execute('DROP TABLE tb_node_snap')
         self.db.commit()
-        with contextlib.redirect_stdout(io.StringIO()) as output:
-            self.assertEqual(
-                main(
-                    self.api.SampleReader,
-                    ['check-data', '--backend', 'sqlite', '--path', str(self.path)],
-                ),
-                1,
-            )
-        self.assertIn('ERROR', output.getvalue())
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as raised:
-            main(self.api.SampleReader, ['check-data', '--backend', 'unknown'])
-        self.assertEqual(raised.exception.code, 2)
+        with (
+            contextlib.redirect_stdout(io.StringIO()) as output,
+            contextlib.redirect_stderr(output),
+        ):
+            self.assertNotEqual(self.cli('sqlite', self.path), 0)
+        self.assertIn('tb_node_snap', output.getvalue())
+        with (
+            contextlib.redirect_stdout(io.StringIO()) as output,
+            contextlib.redirect_stderr(output),
+        ):
+            self.assertNotEqual(self.cli('unknown', self.path), 0)
+        self.assertIn('backend', output.getvalue())
 
     def test_dimensions_snapshot_dates_collections_and_scd_intersection(self):
         self.edge("dim", "a", "b", dim_source="X")
@@ -145,6 +158,48 @@ class ValidationTests(FilesystemCase):
         )
         self.assertEqual(next(i for i in issues if i.field == "Node.snap").start, "2026-01-01")
 
+    def test_candidate_cycle_rejection_preserves_both_repositories(self):
+        self.db.row_factory = sqlite3.Row
+        rows = {
+            t.name: [dict(r) for r in self.db.execute('SELECT * FROM "' + t.name + '"')]
+            for t in self.layout.tables
+        }
+        files = self.root / 'managed-files'
+        with asyncio.run(self.api.SampleData.create(self.config('files', files))) as data:
+            data.publish_files(Data(self.layout, rows), None)
+        plan = Plan(
+            'cycle',
+            self.layout.model.model_digest,
+            (
+                Group(
+                    'invalid',
+                    (
+                        Operation('update', 'Node', ('key', 'limit'), (('a', 99),)),
+                        Operation('update', 'Node', ('key', 'parent'), (('a', 'a'),)),
+                    ),
+                ),
+            ),
+        )
+        source = self.write('cycle.yaplan', dumps(plan))
+        for backend, path in (('sqlite', self.path), ('files', files)):
+            with self.subTest(backend=backend):
+                config = self.config(backend, path)
+                with asyncio.run(self.api.SampleData.open(config)) as data:
+                    before = data.snapshot().tables
+                    with (
+                        contextlib.redirect_stdout(io.StringIO()) as output,
+                        contextlib.redirect_stderr(output),
+                    ):
+                        code = main(
+                            self.api.SampleData,
+                            ['apply', '-o', 'config', str(config), '-o', 'source', str(source)],
+                        )
+                    self.assertNotEqual(code, 0)
+                    self.assertIn('candidate data validation failed', output.getvalue())
+                    self.assertIn('same-field reference cycle', output.getvalue())
+                    self.assertEqual(data.snapshot().tables, before)
+                    self.assertEqual(list(data.transaction_directory().glob('*.yatran')), [])
+
     def test_two_backend_reports_cli_and_read_failures(self):
         self.edge("parent", "a", "a")
         self.db.row_factory = sqlite3.Row
@@ -160,50 +215,26 @@ class ValidationTests(FilesystemCase):
         reader = self.api.SampleReader.open_files(files).value
         self.addCleanup(reader.close)
         self.assertEqual(reader.validate(), self.report())
+        managed = self.root / 'managed-files'
+        with asyncio.run(self.api.SampleData.create(self.config('files', managed))) as data:
+            # Install a corrupt fixture without passing through candidate validation.
+            data.publish_files(Data(self.layout, rows), None)
         with contextlib.redirect_stdout(io.StringIO()) as output:
-            for backend, path in [("sqlite", self.path), ("files", files)]:
-                self.assertEqual(
-                    main(
-                        self.api.SampleReader,
-                        ["check-data", "--backend", backend, "--path", str(path)],
-                    ),
-                    1,
-                )
-            self.assertEqual(
-                main(
-                    self.api.SampleReader,
-                    [
-                        "check-data",
-                        "--backend",
-                        "sqlite",
-                        "--path",
-                        str(self.root / "missing"),
-                    ],
-                ),
-                1,
-            )
+            for backend, path in [("sqlite", self.path), ("files", managed)]:
+                self.assertNotEqual(self.cli(backend, path), 0)
+            self.assertNotEqual(self.cli('sqlite', self.root / 'missing'), 0)
         self.assertIn("same-field reference cycle", output.getvalue())
         reader.close()
         self.assertEqual(reader.validate().status, Status.ERROR)
         self.db.execute("UPDATE tb_node SET parent__state='EMPTY', parent=NULL WHERE id='a'")
         self.db.commit()
         with contextlib.redirect_stdout(io.StringIO()):
-            self.assertEqual(
-                main(
-                    self.api.SampleReader,
-                    ["check-data", "--backend", "sqlite", "--path", str(self.path)],
-                ),
-                0,
-            )
+            self.assertEqual(self.cli('sqlite', self.path), 0)
             with patch(
                 "yambl_compiler.storage.runtime.Reader.validate",
                 side_effect=OSError("io"),
             ):
-                with self.assertRaises(OSError):
-                    main(
-                        self.api.SampleReader,
-                        ["check-data", "--backend", "sqlite", "--path", str(self.path)],
-                    )
+                self.assertNotEqual(self.cli('sqlite', self.path), 0)
         self.db.execute("PRAGMA ignore_check_constraints=ON")
         self.db.execute("UPDATE tb_node SET parent__state='VALUE',parent=NULL WHERE id='a'")
         self.db.commit()

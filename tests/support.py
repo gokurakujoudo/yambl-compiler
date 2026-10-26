@@ -34,7 +34,6 @@ def load_generated(path, name):
         "results",
         "runtime",
         "validation",
-        "cli_runtime",
     ):
         sys.modules[name + "._" + part] = importlib.import_module("yambl_compiler.storage." + part)
     sys.modules[name + "._ir_model"] = importlib.import_module("yambl_compiler.ir.model")

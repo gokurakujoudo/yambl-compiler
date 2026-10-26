@@ -96,6 +96,12 @@ class DataCliTests(CatalogCase):
             self.assertNotEqual(code, 0)
             code, _, _ = self.invoke('rollback', config, '-o', 'source', str(self.plan), '--dryrun')
             self.assertNotEqual(code, 0)
+            code, reports, output = self.invoke(
+                'apply', config, '-o', 'source', str(external), '--dryrun'
+            )
+            self.assertNotEqual(code, 0)
+            self.assertEqual(reports, [])
+            self.assertIn('apply requires a Plan', output)
 
     def test_committed_publication_failure_is_not_a_failed_apply(self):
         config = self.config('sqlite')

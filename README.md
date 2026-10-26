@@ -466,12 +466,15 @@ It returns an immutable ValidationReport with `valid` and `issues`. Cycles are
 scoped by inheritance root, logical field, dimension tuple and snapshot date or
 intersecting SCD period. Cross-field and cross-root references are not merged;
 dangling references remain allowed. Each cyclic component has one deterministic
-witness. `python -m fmc_model check-data --backend sqlite|files --path PATH` returns
-0 for valid data, 1 for violations or read failure, and 2 for invalid arguments.
+witness. `python -m fmc_model check-data -o config repository.lclcfg` uses the
+configured backend and path. It returns zero for valid data and a nonzero exit
+code for validation, configuration or read failures.
 
-Keep the latest full generation under `build/latest/`. The FMC initializer accepts
-`--backend files` for JSONL and validates either backend after seeding. Generation
-still refuses nonempty destinations and does not provide a production writer.
+Keep the latest full generation under `build/latest/`. Initialize either backend
+with `FmcData.create(config_path)` and apply `examples/demo.yaplan` through
+`data.apply(plan_path)`. Generation refuses nonempty destinations; repository
+creation refuses an existing target. See [transaction operations](../yambl/lang/syntex/transactions.md)
+for applying and rolling back changes.
 
 ## Computed fields and batched reads
 

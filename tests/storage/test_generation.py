@@ -39,7 +39,10 @@ class GenerationTests(FilesystemCase):
             self.assertIn('entity "' + table.name + '" as ' + nodes[table.name], diagram)
         self.assertIn(' --> ', diagram)
         self.assertIn(' ..> ', diagram)
-        self.assertIn('Reader.open_sqlite(path)', (output / 'python-schema.md').read_text())
+        python_reference = (output / 'python-schema.md').read_text()
+        self.assertIn('Data.open(config_path)', python_reference)
+        self.assertIn('check-data -o config repository.lclcfg', python_reference)
+        self.assertNotIn('--backend', python_reference)
         self.assertIn('## APriceRecord', (output / 'python-schema.md').read_text())
         with closing(sqlite3.connect(":memory:")) as db:
             db.executescript(schema)

@@ -79,9 +79,9 @@ def python_reference(source: str, package: str) -> str:
     lines = [
         f"# {package} Python API",
         "",
-        "Requires Python 3.14 or later and only the standard library.",
+        "Requires Python 3.14 or later and the runtime dependencies declared in the generated pyproject.toml.",
         "",
-        "Reader.open_sqlite(path) and Reader.open_files(path) open existing data. Reader.open(path) is the SQLite alias. All return ReadResult[Reader].",
+        "Use await Data.open(config_path) or await Data.create(config_path) on the generated model-specific Data class. The .lclcfg file selects the backend and repository path. data.read() returns a reader with a stable snapshot.",
         "",
         "Entities and coordinate records are frozen dataclasses. Entity equality retains object identity. References are resolved explicitly with reader.resolve(ref).",
         "",
@@ -89,7 +89,7 @@ def python_reference(source: str, package: str) -> str:
         "",
         "reader.validate() returns ReadResult[ValidationReport]. Run python -m "
         + package
-        + " check-data --backend sqlite|files --path PATH for explicit whole-repository validation.",
+        + " check-data -o config repository.lclcfg for explicit whole-repository validation.",
         "",
     ]
     for node in ast.parse(source).body:
