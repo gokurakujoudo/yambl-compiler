@@ -9,6 +9,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import ClassVar, Literal, Self, cast
 from uuid import UUID, uuid4
 
@@ -141,34 +142,37 @@ class DataStore:
         """
         store = await cls.configured(config_path)
         with store.lock:
-            if store.backend == 'sqlite':
-                descriptor = os.open(store.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-                os.close(descriptor)
-                try:
-                    with closing(sqlite3.connect(store.path)) as connection, connection:
+            if store.path.exists() or store.path.is_symlink():
+                raise FileExistsError(store.path)
+            with TemporaryDirectory(
+                prefix=f'.{store.path.name}.create-', dir=store.path.parent
+            ) as directory:
+                prepared = cls(store.backend, Path(directory) / 'repository', store.layout)
+                if store.backend == 'sqlite':
+                    with closing(sqlite3.connect(prepared.path)) as connection, connection:
                         connection.execute('PRAGMA journal_mode=WAL')
                         connection.executescript(cls.schema_path.read_text(encoding='utf-8'))
                         connection.execute(
                             'CREATE TABLE tb_yambl_transactions (id TEXT PRIMARY KEY, document TEXT NOT NULL)'
                         )
-                except BaseException:
-                    store.path.unlink()
-                    raise
-            else:
-                store.path.mkdir()
-                tables: dict[str, list[Row]] = {
-                    t.name: [
-                        dict(zip((c.name for c in t.columns), row, strict=True)) for row in t.rows
-                    ]
-                    for t in store.layout.tables
-                }
-                from yambl_compiler.storage.records import LAYOUT_REVISION
+                else:
+                    prepared.path.mkdir()
+                    tables: dict[str, list[Row]] = {
+                        t.name: [
+                            dict(zip((c.name for c in t.columns), row, strict=True))
+                            for row in t.rows
+                        ]
+                        for t in store.layout.tables
+                    }
+                    from yambl_compiler.storage.records import LAYOUT_REVISION
 
-                tables['tb_yambl_metadata'] = [
-                    {'key': 'layout_revision', 'value': str(LAYOUT_REVISION)},
-                    {'key': 'model_digest', 'value': store.layout.model.model_digest},
-                ]
-                store.publish_files(Data(store.layout, tables), None)
+                    tables['tb_yambl_metadata'] = [
+                        {'key': 'layout_revision', 'value': str(LAYOUT_REVISION)},
+                        {'key': 'model_digest', 'value': store.layout.model.model_digest},
+                    ]
+                    prepared.publish_files(Data(store.layout, tables), None)
+                prepared.snapshot()
+                prepared.path.rename(store.path)
         return store
 
     def ready(self) -> None:

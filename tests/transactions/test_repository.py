@@ -2,12 +2,16 @@
 
 import asyncio
 import json
+import sqlite3
 import subprocess
 import sys
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
+
+from lclang.error import LclError, render_error
 
 from tests.support import load_generated
 from tests.transactions.test_binding import CatalogCase
@@ -78,6 +82,38 @@ with patch.object(repository, 'write_file', write), patch.object(Path, 'replace'
             store.export = export
         store.apply(root / 'demo.yaplan')
 raise RuntimeError('crash boundary was not reached')
+'''
+
+CREATE_CRASH_WORKER = '''
+import asyncio
+import os
+from pathlib import Path
+import sqlite3
+import sys
+from unittest.mock import patch
+from tests.support import load_generated
+from yambl_compiler.transactions import repository
+root, config, phase = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+module = load_generated(root / 'generated' / 'sample_model', 'sample_model')
+original_rename, original_write, original_connect = Path.rename, repository.write_file, sqlite3.connect
+def rename(path, target):
+    if phase == 'before_commit': os._exit(94)
+    result = original_rename(path, target)
+    if phase == 'after_commit': os._exit(94)
+    return result
+def write(path, content):
+    original_write(path, content)
+    if phase == 'prepare': os._exit(94)
+class Connection(sqlite3.Connection):
+    def executescript(self, script):
+        result = super().executescript(script)
+        if phase == 'prepare': os._exit(94)
+        return result
+def connect(*args, **kwargs):
+    return original_connect(*args, **kwargs, factory=Connection)
+with patch.object(Path, 'rename', rename), patch.object(repository, 'write_file', write), patch.object(sqlite3, 'connect', connect):
+    asyncio.run(module.SampleData.create(config))
+raise RuntimeError('initialization crash boundary not reached')
 '''
 
 
@@ -167,6 +203,104 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
             self.assertIs(store.__enter__(), store)
         with self.assertRaisesRegex(ValueError, 'closed'):
             store.read()
+
+    async def test_configuration_composition_evaluation_and_entry_relative_path(self):
+        self.write('defaults/base.lclcfg', "backend: 'files'\nstem: 'base'\npath: f'{stem}.data'\n")
+        config = self.write(
+            'entry.lclcfg', "using 'defaults/base.lclcfg'\nbackend: 'sqlite'\nstem: 'composed'\n"
+        )
+        store = await self.store_type.create(config)
+        self.addCleanup(store.close)
+        self.assertEqual(store.path, self.root / 'composed.data')
+        self.assertEqual(store.backend, 'sqlite')
+        self.assertFalse((self.root / 'defaults/composed.data').exists())
+        config.write_text("using 'defaults/base.lclcfg'\nstem: 'switched'\n", encoding='utf-8')
+        self.assertEqual(store.backend, 'sqlite')
+        self.assertEqual(store.path, self.root / 'composed.data')
+        other = await self.store_type.create(config)
+        self.addCleanup(other.close)
+        self.assertEqual((other.backend, other.path), ('files', self.root / 'switched.data'))
+        self.write('defaults/bad.lclcfg', 'backend: [\n')
+        bad = self.write('invalid.lclcfg', "using 'defaults/bad.lclcfg'\npath: 'never.data'\n")
+        with self.assertRaises(LclError) as caught:
+            await self.store_type.create(bad)
+        self.assertIn('bad.lclcfg', render_error(caught.exception))
+        self.assertFalse((self.root / 'never.data').exists())
+        for body, missing in [("path: 'never.data'", 'backend'), ("backend: 'files'", 'path')]:
+            with self.subTest(missing=missing), self.assertRaises(LclError) as absent:
+                await self.store_type.create(self.write('missing.lclcfg', body))
+            self.assertIn(missing, render_error(absent.exception))
+        cycle = self.write('cycle.lclcfg', "using 'cycle.lclcfg'\n")
+        with self.assertRaises(LclError) as circular:
+            await self.store_type.create(cycle)
+        self.assertIn('cycle.lclcfg', render_error(circular.exception))
+
+    async def test_creation_failure_removes_staging_and_allows_retry(self):
+        for backend in ('sqlite', 'files'):
+            config = self.write(
+                f'init-{backend}.lclcfg', f"backend: '{backend}'\npath: 'init-{backend}.data'\n"
+            )
+            target = self.root / f'init-{backend}.data'
+            failure = (
+                patch.object(
+                    self.store_type, 'schema_path', self.write('broken.sql', 'INVALID SQL;')
+                )
+                if backend == 'sqlite'
+                else patch(
+                    'yambl_compiler.transactions.repository.write_file',
+                    side_effect=OSError('prepare failed'),
+                )
+            )
+            with failure:
+                with self.assertRaises((sqlite3.Error, OSError)):
+                    await self.store_type.create(config)
+            self.assertFalse(target.exists())
+            self.assertEqual(list(self.root.glob(f'.{target.name}.create-*')), [])
+            with patch.object(Path, 'rename', side_effect=OSError('initial publication failed')):
+                with self.assertRaisesRegex(OSError, 'initial publication failed'):
+                    await self.store_type.create(config)
+            self.assertFalse(target.exists())
+            self.assertEqual(list(self.root.glob(f'.{target.name}.create-*')), [])
+            store = await self.store_type.create(config)
+            self.addCleanup(store.close)
+            store.apply(self.plan_path)
+            with closing(store.read()) as reader:
+                self.assertEqual(reader.get_a('a').value.text, Success('original'))
+
+    async def test_process_exit_during_initialization_is_atomic(self):
+        for backend in ('sqlite', 'files'):
+            for phase in ('prepare', 'before_commit', 'after_commit'):
+                with self.subTest(backend=backend, phase=phase):
+                    name = f'init-{backend}-{phase}'
+                    config = self.write(
+                        name + '.lclcfg', f"backend: '{backend}'\npath: '{name}.data'\n"
+                    )
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            '-c',
+                            CREATE_CRASH_WORKER,
+                            str(self.root),
+                            str(config),
+                            phase,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    self.assertEqual(result.returncode, 94, result.stderr)
+                    target = self.root / (name + '.data')
+                    self.assertEqual(target.exists(), phase == 'after_commit')
+                    store = await (
+                        self.store_type.open(config)
+                        if target.exists()
+                        else self.store_type.create(config)
+                    )
+                    self.addCleanup(store.close)
+                    report = store.apply(self.plan_path)
+                    self.assertEqual(report.status, 'committed')
+                    with closing(store.read()) as reader:
+                        self.assertEqual(reader.get_a('a').value.text, Success('original'))
 
     async def test_file_pointer_rejects_invalid_history_without_writes(self):
         store, config = await self.configured('files')
