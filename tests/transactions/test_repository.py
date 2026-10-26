@@ -5,7 +5,9 @@ import json
 import sqlite3
 import subprocess
 import sys
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
@@ -178,6 +180,99 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
                 reopened.close()
                 with self.assertRaises(FileExistsError):
                     await self.store_type.create(config)
+
+    async def test_writes_and_recovery_serialize_per_repository(self):
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                writer, config = await self.configured(backend)
+                rollback_store = await self.store_type.open(config)
+                recovery_store = await self.store_type.open(config)
+                independent, _ = await self.configured(backend, '-independent')
+                for store in (writer, rollback_store, recovery_store, independent):
+                    self.addCleanup(store.close)
+                self.assertIs(writer.lock, rollback_store.lock)
+                self.assertIs(writer.lock, recovery_store.lock)
+                self.assertIsNot(writer.lock, independent.lock)
+                writer.apply(self.plan_path)
+                changed_plan = replace(
+                    self.plan,
+                    groups=(
+                        Group(
+                            'text',
+                            (Operation('update', 'A', ('key', 'text'), (('a', 'changed'),)),),
+                        ),
+                    ),
+                )
+                changed = writer.apply(self.write('text.yaplan', dumps(changed_plan)))
+                source = self.write('undo.yatran', changed.path.read_text())
+                count_plan = replace(
+                    self.plan,
+                    groups=(
+                        Group('count', (Operation('update', 'A', ('key', 'count'), (('a', 7),)),)),
+                    ),
+                )
+                count_path = self.write('count.yaplan', dumps(count_plan))
+                committing, release, restored_export = (
+                    threading.Event(),
+                    threading.Event(),
+                    threading.Event(),
+                )
+                rollback_started, recovery_started = threading.Event(), threading.Event()
+                original_commit, original_export = writer.commit, self.store_type.export
+
+                def held_commit(data, transaction):
+                    committing.set()
+                    if not release.wait(10):
+                        raise TimeoutError('test did not release the pending commit')
+                    return original_commit(data, transaction)
+
+                def observed_export(store, id_):
+                    restored_export.set()
+                    return original_export(store, id_)
+
+                def undo():
+                    rollback_started.set()
+                    return rollback_store.rollback(source)
+
+                def recover():
+                    recovery_started.set()
+                    recovery_store.recover()
+
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    with (
+                        patch.object(writer, 'commit', held_commit),
+                        patch.object(self.store_type, 'export', observed_export),
+                    ):
+                        applying = pool.submit(writer.apply, count_path)
+                        try:
+                            self.assertTrue(committing.wait(10))
+                            changed.path.unlink()
+                            restored_export.clear()
+                            undoing = pool.submit(undo)
+                            recovering = pool.submit(recover)
+                            self.assertTrue(rollback_started.wait(10))
+                            self.assertTrue(recovery_started.wait(10))
+                            self.assertFalse(restored_export.wait(0.1))
+                            self.assertFalse(undoing.done())
+                            self.assertFalse(recovering.done())
+                            separate = pool.submit(independent.apply, self.plan_path).result(
+                                timeout=10
+                            )
+                            self.assertEqual(separate.status, 'committed')
+                            self.assertFalse(changed.path.exists())
+                        finally:
+                            release.set()
+                        applied = applying.result(timeout=10)
+                        undone = undoing.result(timeout=10)
+                        recovering.result(timeout=10)
+                self.assertEqual(applied.status, 'committed')
+                self.assertEqual(undone.status, 'committed')
+                self.assertEqual(changed.path.read_text(), source.read_text())
+                with closing(writer.read()) as reader:
+                    entity = reader.get_a('a').value
+                    self.assertEqual(entity.text, Success('original'))
+                    self.assertEqual(entity.count, Success(7))
+                    self.assertTrue(reader.validate().value.valid)
 
     async def test_scd_collection_deletion_round_trip_on_both_backends(self):
         scope = (Condition('key', 'a'),)
