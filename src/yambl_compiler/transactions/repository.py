@@ -9,11 +9,11 @@ from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import ClassVar, Literal, Self
+from typing import ClassVar, Literal, Self, cast
 from uuid import UUID, uuid4
 
 from yambl_compiler.storage.backends import FileBackend, Row, SQLiteBackend, repository_contents
-from yambl_compiler.storage.contract import load_contract
+from yambl_compiler.storage.contract import decode, load_contract, loads
 from yambl_compiler.storage.records import Layout, quote
 from yambl_compiler.storage.results import Success
 from yambl_compiler.storage.runtime import Reader
@@ -27,6 +27,22 @@ from yambl_compiler.transactions.writing import dumps, seal
 LOCKS: dict[str, threading.RLock] = {}
 LOCK_GUARD = threading.Lock()
 LOGGER = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FilePointer:
+    """Identify the committed file generation and its transaction history.
+
+    :param format_revision: File entry format revision.
+    :param model_digest: Model semantic digest.
+    :param generation: Current immutable generation UUID.
+    :param transactions: Committed transaction UUIDs in commit order.
+    """
+
+    format_revision: int
+    model_digest: str
+    generation: str
+    transactions: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -170,17 +186,28 @@ class DataStore:
         :returns: Validated generation directory.
         :raises ValueError: On invalid pointer metadata.
         """
-        metadata = json.loads((self.path / 'repository.json').read_text(encoding='utf-8'))
-        if (
-            set(metadata) != {'format_revision', 'model_digest', 'generation', 'transactions'}
-            or metadata['format_revision'] != 2
-            or metadata['model_digest'] != self.layout.model.model_digest
-        ):
+        return self.path / 'versions' / self.file_pointer().generation
+
+    def file_pointer(self) -> FilePointer:
+        """Validate the file entry before using any of its paths.
+
+        :returns: Typed committed generation and transaction history.
+        :raises ValueError: On malformed or incompatible entry metadata.
+        """
+        metadata = cast(
+            FilePointer,
+            decode(loads((self.path / 'repository.json').read_text(encoding='utf-8')), FilePointer),
+        )
+        if metadata.format_revision != 2 or metadata.model_digest != self.layout.model.model_digest:
             raise ValueError('file repository metadata does not match this model')
-        generation = metadata['generation']
-        if not isinstance(generation, str) or str(UUID(generation)) != generation:
-            raise ValueError('invalid file generation')
-        return self.path / 'versions' / generation
+        for id_ in (metadata.generation, *metadata.transactions):
+            if str(UUID(id_)) != id_:
+                raise ValueError('invalid file generation or transaction ID')
+        if len(set(metadata.transactions)) != len(metadata.transactions):
+            raise ValueError('duplicate committed transaction ID')
+        if metadata.transactions and metadata.generation != metadata.transactions[-1]:
+            raise ValueError('file generation is not the latest committed transaction')
+        return metadata
 
     def snapshot(self) -> Data:
         """Load a detached candidate from one consistent backend snapshot.
@@ -239,13 +266,18 @@ class DataStore:
                     raise ValueError('unknown transaction')
                 text = str(row[0])
             else:
-                metadata = json.loads((self.path / 'repository.json').read_text(encoding='utf-8'))
-                if id_ not in metadata['transactions']:
+                if id_ not in self.file_pointer().transactions:
                     raise ValueError('unknown transaction')
                 text = (self.path / 'versions' / id_ / 'transaction.yatran').read_text(
                     encoding='utf-8'
                 )
-            parse(text)
+            transaction = parse(text)
+            if (
+                not isinstance(transaction, Transaction)
+                or transaction.id != id_
+                or transaction.plan.model != self.layout.model.model_digest
+            ):
+                raise ValueError('stored transaction identity does not match the repository')
             directory = self.transaction_directory()
             directory.mkdir(exist_ok=True)
             destination = directory / (id_ + '.yatran')
@@ -259,20 +291,71 @@ class DataStore:
 
         :returns: None.
         """
-        if self.backend == 'sqlite':
-            with closing(sqlite3.connect(self.path)) as connection:
-                ids = [
-                    str(row[0])
-                    for row in connection.execute('SELECT id FROM tb_yambl_transactions')
-                ]
-        else:
-            ids = json.loads((self.path / 'repository.json').read_text(encoding='utf-8'))[
-                'transactions'
-            ]
-        for id_ in ids:
-            destination = self.transaction_directory() / (id_ + '.yatran')
-            if not destination.exists():
-                self.export(id_)
+        self.ready()
+        with self.lock:
+            if self.backend == 'sqlite':
+                with closing(sqlite3.connect(self.path)) as connection:
+                    ids = tuple(
+                        str(row[0])
+                        for row in connection.execute('SELECT id FROM tb_yambl_transactions')
+                    )
+            else:
+                ids = self.file_pointer().transactions
+            for id_ in ids:
+                destination = self.transaction_directory() / (id_ + '.yatran')
+                try:
+                    transaction = parse(destination.read_text(encoding='utf-8'))
+                    valid = (
+                        isinstance(transaction, Transaction)
+                        and transaction.id == id_
+                        and transaction.plan.model == self.layout.model.model_digest
+                    )
+                except FileNotFoundError, ValueError:
+                    valid = False
+                if not valid:
+                    self.export(id_)
+            self.cleanup()
+
+    def cleanup(self) -> None:
+        """Remove obsolete snapshot files while retaining committed transaction records.
+
+        Read sessions own detached data, so they do not reference generation files.
+        Unrecognized files and directories are left in place.
+
+        :returns: None.
+        :raises OSError: If managed files cannot be removed safely.
+        """
+        if self.backend != 'files':
+            return
+        metadata = self.file_pointer()
+        versions = self.path / 'versions'
+        if versions.is_symlink() or versions.is_junction():
+            raise OSError('cannot clean a linked versions directory')
+        for version in versions.iterdir():
+            if version.name == metadata.generation:
+                continue
+            try:
+                canonical = str(UUID(version.name)) == version.name
+            except ValueError:
+                canonical = False
+            if not canonical or not version.is_dir():
+                continue
+            tables = version / 'tables'
+            if any(p.is_symlink() or p.is_junction() for p in (version, tables)):
+                raise OSError('cannot clean a linked generation directory')
+            paths = [version / 'repository.json']
+            paths.extend(tables / (table.name + '.jsonl') for table in self.layout.tables)
+            if version.name not in metadata.transactions:
+                paths.append(version / 'transaction.yatran')
+            for path in paths:
+                if path.is_symlink() or path.is_junction():
+                    raise OSError('cannot clean a linked generation file')
+                path.unlink(missing_ok=True)
+            if tables.exists() and not any(tables.iterdir()):
+                tables.rmdir()
+            if not any(version.iterdir()):
+                version.rmdir()
+        (self.path / 'repository.pending').unlink(missing_ok=True)
 
     def publish_files(self, data: Data, transaction: Transaction | None) -> None:
         """Prepare immutable files, then atomically switch the root manifest.
@@ -290,11 +373,7 @@ class DataStore:
             path.parent.mkdir(exist_ok=True)
             write_file(path, content)
         pointer = self.path / 'repository.json'
-        ids: list[str] = (
-            json.loads(pointer.read_text(encoding='utf-8'))['transactions']
-            if pointer.exists()
-            else []
-        )
+        ids: list[str] = list(self.file_pointer().transactions) if pointer.exists() else []
         if transaction is not None:
             write_file(version / 'transaction.yatran', dumps(transaction))
             ids.append(id_)
@@ -361,6 +440,10 @@ class DataStore:
                 warnings,
                 str(error),
             )
+        try:
+            self.cleanup()
+        except OSError as error:
+            LOGGER.warning('%s: obsolete snapshot cleanup pending: %s', transaction.id, error)
         return TransactionReport(
             transaction.id,
             path,
@@ -377,6 +460,7 @@ class DataStore:
         """
         self.ready()
         with self.lock:
+            self.recover()
             plan = parse(Path(plan_path).read_text(encoding='utf-8'))
             if not isinstance(plan, Plan):
                 raise ValueError('apply requires a Plan')
@@ -417,6 +501,7 @@ class DataStore:
         """
         self.ready()
         with self.lock:
+            self.recover()
             transaction = parse(Path(transaction_path).read_text(encoding='utf-8'))
             if not isinstance(transaction, Transaction):
                 raise ValueError('rollback requires a Transaction')
