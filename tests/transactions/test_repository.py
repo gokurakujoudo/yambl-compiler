@@ -17,7 +17,7 @@ from tests.support import load_generated
 from tests.transactions.test_binding import CatalogCase
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
-from yambl_compiler.transactions.model import Group, Operation, Plan
+from yambl_compiler.transactions.model import Condition, Group, ObjectValue, Operation, Plan, Symbol
 from yambl_compiler.transactions.syntax import parse
 from yambl_compiler.transactions.writing import dumps
 
@@ -224,6 +224,138 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
             with closing(store.read()) as reader:
                 self.assertEqual(reader.get_a('a').value.text, Success('later'))
                 self.assertEqual(reader.get_a('a').value.count, Success(2))
+
+    async def test_invalid_candidate_constraints_leave_both_backends_unchanged(self):
+        owner = (Condition('key', 'a'),)
+        scope = (*owner, Condition('source', 'Vendor'))
+        period = (*owner, Condition('day', '2026-01-01', '2026-02-01'))
+        operations = [
+            Operation('replace', 'A.price', ('day', 'value'), (), (Condition('source', 'Vendor'),)),
+            Operation('delete', 'A.price', (), (), (*scope, Condition('day', '2026-01-01'))),
+            Operation(
+                'delete', 'A.price', (), (), (*scope, Condition('day', '2026-02-01', '2026-01-01'))
+            ),
+            Operation('delete', 'A.price', (), (), (*scope, Condition('unknown', 'x'))),
+            Operation('replace', 'A.price', ('day',), (('2026-01-01',),), scope),
+            Operation('replace', 'A.price', ('day', 'value'), ((1, 1),), scope),
+            Operation('replace', 'A.price', ('day', 'value'), (('2026-2-1', 1),), scope),
+            Operation(
+                'replace',
+                'A.price',
+                ('day', 'value'),
+                (('2026-02-01', 1),),
+                (*scope, Condition('day', '2026-01-01', '2026-02-01')),
+            ),
+            Operation(
+                'replace',
+                'A.price',
+                ('day', 'value'),
+                (('2026-01-01', 1), ('2026-01-01', 2)),
+                scope,
+            ),
+            Operation(
+                'replace',
+                'A.outstanding',
+                ('valid_from', 'valid_to', 'value'),
+                (('2025-12-01', '2026-01-15', 1),),
+                period,
+            ),
+            Operation(
+                'replace',
+                'A.outstanding',
+                ('valid_from', 'valid_to', 'value'),
+                (('2026-01-01', '2026-02-01', 1), ('2026-01-10', '2026-03-01', 2)),
+                owner,
+            ),
+            Operation('replace', 'A.members', ('value',), ((1,),), owner),
+            Operation('replace', 'A.members', ('value',), (((1, 1),),), owner),
+            Operation('update', 'A', ('text',), (('missing ID',),)),
+            Operation('delete', 'A', ('key', 'count'), (('a', 1),)),
+            Operation('update', 'A', ('key', 'members'), (('a', (1,)),)),
+            Operation('insert', 'builtins.ConfigGroup', ('config_group_id',), (('incomplete',),)),
+        ]
+        invalid_groups = [(operation,) for operation in operations]
+        for target, when, then_set in [
+            ('builtins.Decodes', ObjectValue(()), ObjectValue(())),
+            ('A', ObjectValue(((Symbol('Other.label'), 'outside'),)), ObjectValue(())),
+            ('A', ObjectValue(((Symbol('A.limit'), 1),)), ObjectValue(())),
+            ('A', ObjectValue(()), ObjectValue(((Symbol('A.peers'), 1),))),
+            ('A', ObjectValue(()), ObjectValue(((Symbol('A.limit'), True),))),
+            ('A', (), ObjectValue(())),
+        ]:
+            config_scope = (Condition('config_group_id', 'invalid'),)
+            invalid_groups.append(
+                (
+                    Operation(
+                        'insert',
+                        'builtins.ConfigGroup',
+                        ('config_group_id', 'entity_type', 'priority'),
+                        (('invalid', Symbol(target), 1),),
+                    ),
+                    Operation(
+                        'replace', 'builtins.ConfigGroup.when', ('value',), ((when,),), config_scope
+                    ),
+                    Operation(
+                        'replace',
+                        'builtins.ConfigGroup.then_set',
+                        ('value',),
+                        ((then_set,),),
+                        config_scope,
+                    ),
+                )
+            )
+        for entries in [
+            1,
+            (ObjectValue(((Symbol('code'), 'CNY'),)),),
+            (
+                ObjectValue(
+                    (
+                        (Symbol('code'), 'CNY'),
+                        (Symbol('decode'), 'Yuan'),
+                        (Symbol('ordering'), True),
+                    )
+                ),
+            ),
+        ]:
+            invalid_groups.append(
+                (
+                    Operation(
+                        'replace',
+                        'builtins.Decodes.entries',
+                        ('value',),
+                        ((entries,),),
+                        (Condition('decodes_id', 'Currencies'),),
+                    ),
+                )
+            )
+        for backend in ('sqlite', 'files'):
+            store, _ = await self.configured(backend)
+            self.addCleanup(store.close)
+            initialized = store.apply(self.plan_path)
+            self.assertEqual(initialized.status, 'committed', initialized.publication_error)
+            baseline = store.snapshot().tables
+            exported = sorted(store.transaction_directory().glob('*.yatran'))
+            for operations in invalid_groups:
+                with self.subTest(backend=backend, operations=operations):
+                    plan = Plan(
+                        'invalid',
+                        self.plan.model,
+                        (
+                            Group(
+                                'candidate',
+                                (
+                                    Operation('update', 'A', ('key', 'count'), (('a', 99),)),
+                                    *operations,
+                                ),
+                            ),
+                        ),
+                    )
+                    with self.assertRaises(ValueError):
+                        store.apply(self.write('invalid.yaplan', dumps(plan)))
+                    self.assertEqual(store.snapshot().tables, baseline)
+                    self.assertEqual(
+                        sorted(store.transaction_directory().glob('*.yatran')), exported
+                    )
 
     async def test_export_failure_is_committed_and_recovers_without_reapply(self):
         for backend in ('sqlite', 'files'):
