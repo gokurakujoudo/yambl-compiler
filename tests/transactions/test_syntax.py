@@ -64,6 +64,17 @@ def transaction():
 
 
 class SyntaxTests(unittest.TestCase):
+    def test_shared_sealed_image_cases(self):
+        fixture = (
+            Path(__file__).resolve().parents[3]
+            / 'yambl/tools/vscode/lsp/tests/transaction-image-cases.json'
+        )
+        for case in json.loads(fixture.read_text(encoding='utf-8'))['cases']:
+            with self.subTest(case=case['name']):
+                document = parse(case['text'])
+                self.assertIsInstance(document, Transaction)
+                self.assertEqual(parse(format_document(case['text'])), document)
+
     def test_shared_editor_cases(self):
         fixture = (
             Path(__file__).resolve().parents[3]
