@@ -1,8 +1,10 @@
 """Exercise actual plan records, syntax failures and sealed transaction images."""
 
+import json
 import unittest
 from dataclasses import replace
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
 
 from yambl_compiler.transactions.formatting import format_document
@@ -62,6 +64,21 @@ def transaction():
 
 
 class SyntaxTests(unittest.TestCase):
+    def test_shared_editor_cases(self):
+        fixture = (
+            Path(__file__).resolve().parents[3]
+            / 'yambl/tools/vscode/lsp/tests/transaction-cases.json'
+        )
+        for case in json.loads(fixture.read_text(encoding='utf-8')):
+            with self.subTest(case=case['name']):
+                if case.get('invalid'):
+                    with self.assertRaises(DocumentError):
+                        parse(case['text'])
+                else:
+                    parse(case['text'])
+                    self.assertEqual(format_document(case['text']), case['formatted'])
+                    self.assertEqual(format_document(case['formatted']), case['formatted'])
+
     def test_oversized_integer_and_ambiguous_programmatic_symbol(self):
         with self.assertRaisesRegex(DocumentError, 'numeric literal'):
             parse(source('insert core.A (id) {\n' + '1' * 5000 + '\n}'))
