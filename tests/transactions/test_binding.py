@@ -1,14 +1,18 @@
 """Verify business field and literal binding against compiled model contracts."""
 
+import json
 from dataclasses import replace
 from decimal import Decimal
+from pathlib import Path
 
 from tests.storage.test_runtime import SOURCE
 from tests.support import FilesystemCase
+from tests.transactions.test_syntax import source
 from yambl_compiler.ir import compile_repository
 from yambl_compiler.storage.layout import build_layout
 from yambl_compiler.transactions.binding import Catalog, object_items
 from yambl_compiler.transactions.model import ObjectValue, Symbol
+from yambl_compiler.transactions.syntax import parse
 
 
 class CatalogCase(FilesystemCase):
@@ -21,6 +25,30 @@ class CatalogCase(FilesystemCase):
 
 
 class BindingTests(CatalogCase):
+    def test_shared_editor_type_cases(self):
+        fixture = (
+            Path(__file__).resolve().parents[3]
+            / 'yambl/tools/vscode/lsp/tests/transaction-type-cases.json'
+        )
+        data = json.loads(fixture.read_text(encoding='utf-8'))
+        self.write('model.yambl', data['model'])
+        catalog = Catalog(build_layout(compile_repository(self.root)))
+        for case in data['cases']:
+            with self.subTest(case=case):
+                entity = catalog.entity(case['entity'])
+                field = catalog.field(entity, case['field'])[0]
+                value = (
+                    parse(source('insert core.Item (id) {\n' + case['literal'] + '\n}'))
+                    .groups[0]
+                    .operations[0]
+                    .rows[0][0]
+                )
+                if case['valid']:
+                    catalog.scalar(field.type, value)
+                else:
+                    with self.assertRaises(ValueError):
+                        catalog.scalar(field.type, value)
+
     def test_entity_and_field_resolution(self):
         child = self.catalog.entity('C')
         self.assertEqual((child.root, child.column, child.id.name), ('A', 'id', 'key'))
