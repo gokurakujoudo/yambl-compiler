@@ -9,7 +9,6 @@ from typing import Literal, cast
 
 from lark import Token, Tree
 
-from yambl_compiler.computation.records import Expression as CalculationExpression
 from yambl_compiler.ir.codec import encode, seal, semantic
 from yambl_compiler.ir.expansion import expand
 from yambl_compiler.ir.model import (
@@ -36,12 +35,13 @@ from yambl_compiler.ir.model import (
     Type,
     Value,
 )
-from yambl_compiler.semantics.decodes import is_flags
-from yambl_compiler.semantics.decorators import bind_call, parameters
-from yambl_compiler.semantics.dimensions import resolve_dimension
-from yambl_compiler.semantics.expressions import Resolver, Term, integer_text
-from yambl_compiler.semantics.fields import field_name
-from yambl_compiler.semantics.symbols import (
+from yambl_compiler.languages.yambl.computation.records import Expression as CalculationExpression
+from yambl_compiler.languages.yambl.semantics.decodes import is_flags
+from yambl_compiler.languages.yambl.semantics.decorators import bind_call, parameters
+from yambl_compiler.languages.yambl.semantics.dimensions import resolve_dimension
+from yambl_compiler.languages.yambl.semantics.expressions import Resolver, Term, integer_text
+from yambl_compiler.languages.yambl.semantics.fields import field_name
+from yambl_compiler.languages.yambl.semantics.symbols import (
     GENERICS,
     VALUES,
     EntityKey,
@@ -49,9 +49,9 @@ from yambl_compiler.semantics.symbols import (
     header,
     namespace,
 )
-from yambl_compiler.semantics.types import Resolved, common_type
-from yambl_compiler.semantics.validation import Analysis
-from yambl_compiler.syntax.parser import annotations, children, string_value, tokens
+from yambl_compiler.languages.yambl.semantics.types import Resolved, common_type
+from yambl_compiler.languages.yambl.semantics.validation import Analysis
+from yambl_compiler.languages.yambl.syntax.parser import annotations, children, string_value, tokens
 
 
 def qualified(key: EntityKey) -> str:
@@ -272,7 +272,7 @@ class Lowering:
                 kind, name, target = 'reference', symbol.key[1], qualified(symbol.key)
             else:
                 kind, name = 'external', string_value(first)
-                from yambl_compiler.semantics.symbols import symbol_key
+                from yambl_compiler.languages.yambl.semantics.symbols import symbol_key
 
                 target = qualified(symbol_key(unit.document, name))
                 self.external[target].append(self.source(unit, node))
@@ -310,7 +310,7 @@ class Lowering:
                     if term.path == 'self':
                         source = resolver.self_fields.get(member)
                         if source:
-                            from yambl_compiler.semantics.symbols import field_owner
+                            from yambl_compiler.languages.yambl.semantics.symbols import field_owner
 
                             owner = field_owner(*source)
                             scope_key = owner.key if owner else None

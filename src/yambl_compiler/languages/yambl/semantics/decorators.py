@@ -1,0 +1,555 @@
+"""Bind decorator arguments and validate declarative metadata."""
+
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from datetime import date
+
+from lark import Token, Tree
+
+from yambl_compiler.languages.yambl.semantics.expressions import Resolver, Term
+from yambl_compiler.languages.yambl.semantics.symbols import (
+    EntityKey,
+    Unit,
+    declaration_name,
+    header,
+)
+from yambl_compiler.languages.yambl.semantics.types import UNKNOWN, Resolved, accepts
+from yambl_compiler.languages.yambl.syntax.parser import (
+    Diagnostic,
+    annotations,
+    children,
+    diagnostic,
+    tokens,
+)
+
+
+@dataclass(frozen=True)
+class Parameter:
+    """Retain one declared decorator parameter.
+
+    :param node: Original syntax and location.
+    :param name: Formal parameter name.
+    :param type: Value constraint or pair type constraint.
+    :param pair: Whether this parameter receives a new key and type.
+    :param optional: Whether a pair can be omitted.
+    :param default: Ordinary parameter's default expression, if present.
+    """
+
+    node: Tree[Token]
+    name: str
+    type: Tree[Token]
+    pair: bool
+    optional: bool
+    default: Tree[Token] | None
+
+
+def parameters(declaration: Tree[Token]) -> list[Parameter]:
+    """Read formals without interpreting their constraints.
+
+    :param declaration: Decorator declaration.
+    :returns: Parameters in declaration order.
+    """
+    result: list[Parameter] = []
+    for node in children(header(declaration), 'decorator_parameter'):
+        items = tokens(node)
+        defaults = children(node, 'decorator_default')
+        result.append(
+            Parameter(
+                node,
+                str(next(t for t in items if t.type == 'NAME')),
+                children(node, 'type_expr')[0],
+                str(items[0]) == '*',
+                any(str(t) == '?' for t in items),
+                children(defaults[0], 'type_expr')[0] if defaults else None,
+            )
+        )
+    return result
+
+
+def capture(node: Tree[Token], unit: Unit) -> Term:
+    """Capture a decorated definition without inventing an instance.
+
+    :param node: Decorated declaration or field.
+    :param unit: Definition scope.
+    :returns: The definition's expression category.
+    """
+    if node.data == 'field':
+        syntax = children(children(node, 'field_body')[0], 'type_expr')[0]
+        return Term(Resolved('attrs'), 'field', 'self', (unit, syntax))
+    name = next(t for t in tokens(header(node)) if t.type == 'NAME')
+    if node.data == 'decorator':
+        return Term(Resolved('decorator', key=unit.scope[str(name)].key), 'value')
+    return Resolver(unit, [], {}).evaluate(Tree('type_expr', [name]))
+
+
+def argument_type(resolver: Resolver, syntax: Tree[Token], expected: Resolved) -> Resolved:
+    """Check a value, including a contextually typed reference ID.
+
+    :param resolver: Lexical and captured-object context.
+    :param syntax: Argument or default expression.
+    :param expected: Declared value constraint.
+    :returns: Actual type, preserving a constant value when available.
+    """
+    actual = resolver.value_type(resolver.evaluate(syntax))
+    literal_types = {
+        'string': {'STRING'},
+        'integer': {'INT'},
+        'snowflake_id': {'INT'},
+        'float': {'INT', 'NUMBER'},
+        'decimal': {'INT', 'NUMBER'},
+        'bool': {'BOOLEAN'},
+    }
+    items = tokens(syntax)
+    if expected.name == 'date' and actual.name == 'string' and actual.exact is not None:
+        try:
+            date.fromisoformat(actual.exact)
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', actual.exact):
+                raise ValueError('expected ISO date')
+            actual = replace(expected, exact=actual.exact)
+        except ValueError:
+            resolver.issue(syntax, 'date argument requires a valid YYYY-MM-DD string')
+    if len(items) == 1 and items[0].type in literal_types.get(expected.name, set()):
+        actual = replace(expected, exact=actual.exact)
+    if expected.kind == 'reference' and actual.name == 'string':
+        fields = resolver.unit.world.fields.get(expected.key or ('', ''), {})
+        ids = [
+            (scope, field)
+            for scope, field in fields.values()
+            if str(tokens(children(field, 'field_body')[0])[0]) == 'id'
+        ]
+        if len(ids) != 1:
+            resolver.issue(syntax, 'reference argument requires one identifiable ID field')
+        else:
+            scope, field = ids[0]
+            id_type = Resolver(scope, resolver.diagnostics, {}).resolve(
+                children(children(field, 'field_body')[0], 'type_expr')[0]
+            )
+            if id_type.name in ('string', 'snowflake_id'):
+                actual = replace(expected, exact=actual.exact)
+    if actual.kind == 'unknown' or not accepts(expected, actual, resolver.unit.world):
+        resolver.issue(syntax, 'incompatible decorator argument')
+    return actual
+
+
+def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Diagnostic]) -> None:
+    """Validate even unused decorator signatures and independent defaults.
+
+    :param declaration: Decorator declaration.
+    :param unit: Declaration scope.
+    :param diagnostics: Destination for errors.
+    :returns: None.
+    """
+    if not annotations(declaration, 'targets'):
+        diagnostics.append(
+            diagnostic(
+                unit.document,
+                header(declaration),
+                'decorator requires explicit @targets',
+            )
+        )
+    seen: set[str] = set()
+    pair_seen = optional_seen = False
+    resolver = Resolver(unit, diagnostics, {})
+    for formal in parameters(declaration):
+        if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', formal.name):
+            resolver.issue(formal.node, 'decorator parameter names must use snake_case')
+        if formal.name == 'description':
+            resolver.issue(formal.node, 'description is reserved decorator metadata')
+        if formal.name in seen:
+            resolver.issue(formal.node, f"duplicate decorator parameter: {formal.name}")
+        seen.add(formal.name)
+        if (pair_seen and not formal.pair) or (optional_seen and not formal.optional):
+            resolver.issue(
+                formal.node,
+                'ordinary parameters precede pairs; optional pairs come last',
+            )
+        if (formal.optional and not formal.pair) or (formal.pair and formal.default is not None):
+            resolver.issue(formal.node, 'only pairs use ?; only ordinary parameters use defaults')
+        pair_seen |= formal.pair
+        optional_seen |= formal.optional
+        if 'self' not in map(str, tokens(formal.type)):
+            expected = resolver.resolve(formal.type)
+            if expected.name == 'input_type' and not formal.pair:
+                resolver.issue(formal.type, 'input_type is only a decorator pair constraint')
+            if expected.kind == 'collection':
+                resolver.issue(formal.type, 'decorator parameters cannot be collections')
+            if formal.default is not None and 'self' not in map(str, tokens(formal.default)):
+                argument_type(resolver, formal.default, expected)
+
+
+def call_arguments(
+    call: Tree[Token], formals: list[Parameter], resolver: Resolver
+) -> tuple[list[Tree[Token]], Tree[Token] | None]:
+    """Separate optional trailing description from explicit call arguments.
+
+    :param call: Original invocation.
+    :param formals: Explicit signature, excluding implicit description.
+    :param resolver: Context for diagnostics.
+    :returns: Explicit arguments and optional description expression.
+    """
+    arguments = [c for c in call.children if isinstance(c, Tree)]
+    ordinary = [p for p in formals if not p.pair]
+    result: list[Tree[Token]] = []
+    description = None
+    position = 0
+    pair_seen = False
+    supplied: set[str] = set()
+    for i, argument in enumerate(arguments):
+        syntax = children(argument, 'type_expr')[0]
+        named = argument.data == 'keyword_argument' and str(tokens(argument)[0]) == 'description'
+        trailing = (
+            argument.data == 'positional_argument'
+            and i == len(arguments) - 1
+            and (pair_seen or all(p.name in supplied for p in ordinary))
+            and len(tokens(syntax)) == 1
+            and tokens(syntax)[0].type == 'STRING'
+        )
+        if named or trailing:
+            if description is not None:
+                resolver.issue(argument, 'duplicate decorator description')
+            if i != len(arguments) - 1:
+                resolver.issue(argument, 'description must be the final decorator argument')
+            description = syntax
+        else:
+            result.append(argument)
+            if argument.data == 'keyword_argument':
+                supplied.add(str(tokens(argument)[0]))
+            elif argument.data == 'positional_argument' and position < len(ordinary):
+                supplied.add(ordinary[position].name)
+            position += argument.data == 'positional_argument'
+            pair_seen |= argument.data == 'pair_argument'
+    return result, description
+
+
+def bind_call(
+    call: Tree[Token],
+    node: Tree[Token],
+    unit: Unit,
+    diagnostics: list[Diagnostic],
+    values: dict[str, Resolved] | None = None,
+    bound_arguments: list[tuple[str, str, Resolved]] | None = None,
+) -> str:
+    """Bind one call and return its canonical signature.
+
+    :param call: Decorator invocation.
+    :param node: Decorated definition.
+    :param unit: Invocation scope.
+    :param diagnostics: Destination for errors.
+    :param values: Optional destination for bound argument types and constant values.
+    :param bound_arguments: Optional ordered binding output, including pair keys.
+    :returns: Identity and normalized arguments, or an empty string on lookup failure.
+    """
+    name = str(tokens(call)[1])
+    actual_resolver = Resolver(unit, diagnostics, {}, bindings={'self': capture(node, unit)})
+    symbol = unit.scope.get(name)
+    if symbol is None or symbol.kind != 'decorator':
+        actual_resolver.issue(call, f"unknown decorator: {name}")
+        return ''
+    scope, declaration = unit.world.declarations[symbol.key]
+    formals = parameters(declaration)
+    arguments, description = call_arguments(call, formals, actual_resolver)
+    description_bound = (
+        [
+            (
+                'description',
+                '',
+                argument_type(actual_resolver, description, Resolved('string', 'string')),
+            )
+        ]
+        if description is not None
+        else []
+    )
+    if name == "dimension" and symbol.key == unit.scope["dimension"].key:
+        from yambl_compiler.languages.yambl.semantics.computation import structural
+        from yambl_compiler.languages.yambl.semantics.dimensions import field_dimension
+
+        explicit_call = Tree(
+            call.data, [c for c in call.children if not isinstance(c, Tree) or c in arguments]
+        )
+        dimension = field_dimension(unit, node, explicit_call, diagnostics)
+        if dimension is None:
+            return ""
+        dimension_bound = [
+            ("variation", dimension.value_name, dimension.value_type),
+            *description_bound,
+        ]
+        if dimension.hierarchy_name:
+            dimension_bound.append(
+                (
+                    "selector",
+                    dimension.hierarchy_name,
+                    Resolved("Hierarchy", "reference", key=unit.scope["Hierarchy"].key),
+                )
+            )
+        if bound_arguments is not None:
+            bound_arguments.extend(dimension_bound)
+        if values is not None:
+            values.update((n, t) for n, _, t in dimension_bound)
+        return repr(
+            (
+                symbol.key,
+                dimension_bound,
+                structural(dimension.hierarchy_default),
+                structural(dimension.fallback),
+            )
+        )
+    formal_resolver = Resolver(scope, diagnostics, {}, bindings=actual_resolver.bindings)
+    ordinary = [p for p in formals if not p.pair]
+    pairs = [p for p in formals if p.pair]
+    supplied: dict[str, Tree[Token]] = {}
+    position = pair_position = 0
+    keyword_seen = pair_seen = False
+    keys: set[str] = set()
+    for argument in arguments:
+        kind = argument.data
+        if kind == 'pair_argument':
+            pair_seen = True
+            key = str(tokens(argument)[0])
+            if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', key):
+                actual_resolver.issue(argument, 'pair keys must use snake_case')
+            if key in keys:
+                actual_resolver.issue(argument, f"duplicate pair key: {key}")
+            keys.add(key)
+            formal = pairs[pair_position] if pair_position < len(pairs) else None
+            pair_position += 1
+        elif kind == 'keyword_argument':
+            keyword_seen = True
+            key = str(tokens(argument)[0])
+            formal = next((p for p in ordinary if p.name == key), None)
+        else:
+            if keyword_seen:
+                actual_resolver.issue(argument, 'positional arguments must precede named arguments')
+            formal = ordinary[position] if position < len(ordinary) else None
+            position += 1
+        if pair_seen and kind != 'pair_argument':
+            actual_resolver.issue(argument, 'new pairs must follow ordinary arguments')
+        if formal is None:
+            actual_resolver.issue(argument, f"unexpected argument for decorator: {name}")
+        elif formal.name in supplied:
+            actual_resolver.issue(argument, f"duplicate decorator argument: {formal.name}")
+        else:
+            supplied[formal.name] = argument
+    bound: list[tuple[str, str, Resolved]] = list(description_bound)
+    for formal in formals:
+        expected = formal_resolver.resolve(formal.type)
+        if expected.kind == 'collection':
+            formal_resolver.issue(formal.type, 'decorator parameters cannot be collections')
+        provided = supplied.get(formal.name)
+        if provided is None:
+            if formal.default is not None:
+                actual = argument_type(formal_resolver, formal.default, expected)
+                bound.append((formal.name, '', actual))
+            elif not formal.optional:
+                actual_resolver.issue(call, f"missing decorator argument: {formal.name}")
+            continue
+        syntax = children(provided, 'type_expr')[0]
+        if formal.pair:
+            actual = actual_resolver.resolve(syntax)
+            input_constraint = expected.name == 'input_type'
+            if (
+                actual.kind in ('collection', 'unknown')
+                or actual.name in ('attrs', 'dimension_ref', 'input_type')
+                or (not input_constraint and not accepts(expected, actual, unit.world))
+            ):
+                actual_resolver.issue(syntax, 'incompatible decorator pair type')
+            bound.append((formal.name, str(tokens(provided)[0]), actual))
+            defaults = children(provided, 'decorator_default')
+            if defaults:
+                if name != 'extra_input_params':
+                    actual_resolver.issue(
+                        provided, 'pair defaults are only supported by extra_input_params'
+                    )
+                default = argument_type(
+                    actual_resolver, children(defaults[0], 'type_expr')[0], actual
+                )
+                bound.append(('parameter_default', str(tokens(provided)[0]), default))
+        else:
+            bound.append((formal.name, '', argument_type(actual_resolver, syntax, expected)))
+    if values is not None:
+        values.update((name, actual) for name, _, actual in bound)
+    if bound_arguments is not None:
+        bound_arguments.extend(bound)
+    return repr((symbol.key, bound))
+
+
+def check_target(
+    call: Tree[Token],
+    node: Tree[Token],
+    declaration: Tree[Token],
+    unit: Unit,
+    diagnostics: list[Diagnostic],
+) -> None:
+    """Match an invocation against its language-defined target contract.
+
+    :param call: Decorator invocation with a resolved declaration.
+    :param node: Decorated declaration or field.
+    :param declaration: Enclosing declaration, including extend blocks.
+    :param unit: Invocation scope.
+    :param diagnostics: Destination for errors.
+    :returns: None.
+    """
+    name = str(tokens(call)[1])
+    scope, definition = unit.world.declarations[unit.scope[name].key]
+    targets = annotations(definition, 'targets')
+    if not targets:
+        return
+    values: dict[str, Resolved] = {}
+    errors: list[Diagnostic] = []
+    bind_call(targets[0], definition, scope, errors, values)
+    if errors:
+        return
+    body = children(node, 'field_body')
+    mode = str(tokens(body[0])[0]).replace('attr', 'static') if body else ''
+    kind = {
+        'entity': 'Entity',
+        'value': 'Value',
+        'decodes': 'Decodes',
+        'type_alias': 'Type',
+        'decorator': 'Decorator',
+    }.get(str(node.data), '')
+    if body:
+        kind = (
+            'Id' if mode == 'id' else 'ValueAttr' if declaration.data == 'value' else 'EntityAttr'
+        )
+        if kind == 'ValueAttr':
+            mode = 'static'
+    allowed = kind in (values.get('targets', UNKNOWN).exact or '').split('+')
+    if kind in ('EntityAttr', 'ValueAttr'):
+        allowed &= mode.capitalize() in (values.get('categories', UNKNOWN).exact or '').split('+')
+    if not allowed:
+        diagnostics.append(
+            diagnostic(unit.document, call, f"decorator {name} does not allow this target")
+        )
+
+
+def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> None:
+    """Validate calls, multiplicity and declarative target contracts.
+
+    :param units: Complete resolved compilation unit.
+    :param diagnostics: Destination for errors.
+    :returns: None.
+    """
+    groups: dict[tuple[EntityKey, str], str] = {}
+    placements: dict[tuple[EntityKey, str], tuple[str, str]] = {}
+    for unit in units:
+        for declaration in [
+            c
+            for c in unit.document.tree.children
+            if isinstance(c, Tree) and c.data not in ('namespace_decl', 'import_decl')
+        ]:
+            if declaration.data == 'decorator':
+                check_parameters(declaration, unit, diagnostics)
+            for node in [declaration, *children(declaration, 'field')]:
+                seen: set[str] = set()
+                dimensions: set[str] = set()
+                for call in annotations(node):
+                    name = str(tokens(call)[1])
+                    values: dict[str, Resolved] = {}
+                    bind_call(call, node, unit, diagnostics, values)
+                    symbol = unit.scope.get(name)
+                    if symbol is not None and symbol.kind == 'decorator':
+                        check_target(call, node, declaration, unit, diagnostics)
+                        definition = unit.world.declarations[symbol.key][1]
+                        if name in seen and (
+                            name == 'allow_multiple'
+                            or not annotations(definition, 'allow_multiple')
+                        ):
+                            diagnostics.append(
+                                diagnostic(unit.document, call, f"duplicate decorator: {name}")
+                            )
+                    seen.add(name)
+                    if name in ('sparse', 'dense'):
+                        category = values.get('cat', UNKNOWN).exact or ''
+                        if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', category):
+                            diagnostics.append(
+                                diagnostic(
+                                    unit.document,
+                                    call,
+                                    'storage category must be nonempty snake_case',
+                                )
+                            )
+                        if annotations(node, 'dimension') or (
+                            annotations(node, 'sparse') and annotations(node, 'dense')
+                        ):
+                            diagnostics.append(
+                                diagnostic(
+                                    unit.document,
+                                    call,
+                                    'sparse, dense and dimension are mutually exclusive',
+                                )
+                            )
+                        if node.data == 'field':
+                            syntax = children(children(node, 'field_body')[0], 'type_expr')[0]
+                            if Resolver(unit, [], {}).resolve(syntax).kind == 'collection':
+                                diagnostics.append(
+                                    diagnostic(
+                                        unit.document,
+                                        call,
+                                        'storage grouping requires a non-collection field',
+                                    )
+                                )
+                            owner = unit.scope.get(declaration_name(declaration))
+                            if owner is not None and owner.kind == 'entity':
+                                ancestors = unit.world.parents.get(owner.key, [])
+                                root = ancestors[-1] if ancestors else owner.key
+                                group_key = (root, category)
+                                field_key = (
+                                    root,
+                                    str(
+                                        next(
+                                            t
+                                            for t in tokens(children(node, 'field_body')[0])
+                                            if t.type == 'NAME'
+                                        )
+                                    ),
+                                )
+                                if group_key in groups and groups[group_key] != name:
+                                    diagnostics.append(
+                                        diagnostic(
+                                            unit.document,
+                                            call,
+                                            'conflicting sparse/dense layout for storage category',
+                                        )
+                                    )
+                                if field_key in placements and placements[field_key] != (
+                                    name,
+                                    category,
+                                ):
+                                    diagnostics.append(
+                                        diagnostic(
+                                            unit.document,
+                                            call,
+                                            'conflicting storage groups across field implementations',
+                                        )
+                                    )
+                                groups[group_key] = name
+                                placements[field_key] = (name, category)
+                    if name in ('temporal', 'dimension'):
+                        pairs = children(call, 'pair_argument')
+                        if name == 'dimension' and pairs:
+                            first = Resolver(
+                                unit, [], {}, bindings={'self': capture(node, unit)}
+                            ).resolve(children(pairs[0], 'type_expr')[0])
+                            if first.kind != 'unknown' and first.name not in (
+                                'string',
+                                'code',
+                            ):
+                                diagnostics.append(
+                                    diagnostic(
+                                        unit.document,
+                                        pairs[0],
+                                        'dimension value must be string or code',
+                                    )
+                                )
+                        for pair in pairs:
+                            key = str(tokens(pair)[0])
+                            if key in dimensions:
+                                diagnostics.append(
+                                    diagnostic(
+                                        unit.document,
+                                        pair,
+                                        f"duplicate dimension: {key}",
+                                    )
+                                )
+                            dimensions.add(key)

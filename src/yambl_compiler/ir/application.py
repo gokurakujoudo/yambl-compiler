@@ -37,10 +37,10 @@ def compile_repository(path: Path) -> Model:
     from yambl_compiler.application.project import source_files
     from yambl_compiler.application.repository import ROOT_NAME, find_root, read_prefix
     from yambl_compiler.ir.lowering import Lowering
-    from yambl_compiler.semantics.builtins import AUTHOR_ROOT, MODEL_ROOT
-    from yambl_compiler.semantics.symbols import namespace
-    from yambl_compiler.semantics.validation import analyze
-    from yambl_compiler.syntax.parser import Diagnostic, Document, parse
+    from yambl_compiler.languages.yambl.semantics.builtins import AUTHOR_ROOT, MODEL_ROOT
+    from yambl_compiler.languages.yambl.semantics.symbols import namespace
+    from yambl_compiler.languages.yambl.semantics.validation import analyze
+    from yambl_compiler.languages.yambl.syntax.parser import Diagnostic, Document, parse
 
     root = find_root(path.resolve())
     if root is None:

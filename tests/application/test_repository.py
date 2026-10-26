@@ -6,8 +6,8 @@ from unittest.mock import patch
 from tests.support import FilesystemCase, document
 from yambl_compiler.application.project import run, source_files
 from yambl_compiler.application.repository import find_root, read_prefix
-from yambl_compiler.semantics.symbols import namespace, resolve_scopes
-from yambl_compiler.semantics.validation import check
+from yambl_compiler.languages.yambl.semantics.symbols import namespace, resolve_scopes
+from yambl_compiler.languages.yambl.semantics.validation import check
 
 
 class RepositoryTests(FilesystemCase):
@@ -82,7 +82,7 @@ class RepositoryTests(FilesystemCase):
     def test_builtin_repository_constraints(self):
         self.write('yambl-root.lclcfg', "prefix: 'wrong'")
         source = self.write('model.yambl', 'entity A {}')
-        with patch('yambl_compiler.semantics.builtins.AUTHOR_ROOT', self.root):
+        with patch('yambl_compiler.languages.yambl.semantics.builtins.AUTHOR_ROOT', self.root):
             self.assertIn(
                 'built-in prefix must be empty', ' '.join(run(self.root, 'check').messages)
             )

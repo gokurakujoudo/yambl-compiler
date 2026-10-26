@@ -652,7 +652,9 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
             else Path(__file__).parents[1] / "ir/model.py"
         )
         text = path.read_text(encoding="utf-8").replace("yambl_compiler.ir.model", "._ir_model")
-        text = text.replace("yambl_compiler.computation.records", "._computation_records")
+        text = text.replace(
+            "yambl_compiler.languages.yambl.computation.records", "._computation_records"
+        )
         for module in modules:
             text = text.replace("yambl_compiler.storage." + module, "._" + module)
         contents[package + "/_" + name + ".py"] = text
@@ -664,7 +666,7 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
             text = text.replace('yambl_compiler.storage.' + module, '.._' + module)
         contents[package + '/transactions/' + path.name] = text
     contents[package + "/_computation_records.py"] = (
-        Path(__file__).parents[1] / "computation/records.py"
+        Path(__file__).parents[1] / "languages/yambl/computation/records.py"
     ).read_text(encoding="utf-8")
     data_name = (
         "".join(word.capitalize() for word in package.removesuffix("_model").split("_")) + "Data"

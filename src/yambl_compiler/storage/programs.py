@@ -2,8 +2,8 @@
 
 from collections.abc import Mapping
 
-from yambl_compiler.computation.records import Expression
 from yambl_compiler.ir.model import CalculationAccess, Dimension, Field, Model
+from yambl_compiler.languages.yambl.computation.records import Expression
 from yambl_compiler.storage.conversions import SIGNATURES
 
 

@@ -4,10 +4,10 @@ import json
 from dataclasses import replace
 
 from tests.support import FilesystemCase
-from yambl_compiler.computation.records import Argument, Case
 from yambl_compiler.ir import compile_repository, validate_ir
 from yambl_compiler.ir.codec import dumps, loads
 from yambl_compiler.ir.validation import structural
+from yambl_compiler.languages.yambl.computation.records import Argument, Case
 
 
 class ComputationIRTests(FilesystemCase):

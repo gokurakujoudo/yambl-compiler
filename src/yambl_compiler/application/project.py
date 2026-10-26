@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Literal, Never
 
 from yambl_compiler.application.repository import ROOT_NAME, find_root, read_prefix
-from yambl_compiler.formatting.formatter import format_document
-from yambl_compiler.semantics.symbols import namespace
-from yambl_compiler.semantics.validation import check
-from yambl_compiler.syntax.parser import Diagnostic, Document, parse
+from yambl_compiler.languages.yambl.formatting.formatter import format_document
+from yambl_compiler.languages.yambl.semantics.symbols import namespace
+from yambl_compiler.languages.yambl.semantics.validation import check
+from yambl_compiler.languages.yambl.syntax.parser import Diagnostic, Document, parse
 
 
 @dataclass(frozen=True)
@@ -101,7 +101,7 @@ def run(path: Path, operation: Literal['check', 'format'], verify: bool = False)
     :returns: A report; failures stop writes, except completed earlier replacements on I/O failure.
     """
     messages: list[str] = []
-    from yambl_compiler.semantics.builtins import AUTHOR_ROOT, MODEL_ROOT
+    from yambl_compiler.languages.yambl.semantics.builtins import AUTHOR_ROOT, MODEL_ROOT
 
     try:
         paths = source_files(path, dependencies=operation == 'check')

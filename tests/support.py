@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from yambl_compiler.syntax.parser import Diagnostic, Document, parse
+from yambl_compiler.languages.yambl.syntax.parser import Diagnostic, Document, parse
 
 
 def load_generated(path, name):

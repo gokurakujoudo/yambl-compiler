@@ -13,10 +13,10 @@ from yambl_compiler.ir.model import (
     Source,
     Value,
 )
-from yambl_compiler.semantics.symbols import EntityKey, resolve_scopes
-from yambl_compiler.semantics.validation import Analysis, analyze_units
-from yambl_compiler.syntax.computation import restore_body, restore_expression
-from yambl_compiler.syntax.parser import Diagnostic, Document
+from yambl_compiler.languages.yambl.semantics.symbols import EntityKey, resolve_scopes
+from yambl_compiler.languages.yambl.semantics.validation import Analysis, analyze_units
+from yambl_compiler.languages.yambl.syntax.computation import restore_body, restore_expression
+from yambl_compiler.languages.yambl.syntax.parser import Diagnostic, Document
 
 
 def token(value: str, kind: str, source: Source) -> Token:

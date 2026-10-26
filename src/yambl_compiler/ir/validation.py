@@ -6,7 +6,6 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from typing import cast
 
-from yambl_compiler.computation.records import CalculationExpression, CalculationSpan
 from yambl_compiler.ir.codec import JSON, IRValue, decode, encode, seal, semantic
 from yambl_compiler.ir.lowering import Lowering
 from yambl_compiler.ir.model import (
@@ -19,7 +18,11 @@ from yambl_compiler.ir.model import (
     Value,
 )
 from yambl_compiler.ir.restoring import restore
-from yambl_compiler.syntax.parser import Diagnostic
+from yambl_compiler.languages.yambl.computation.records import (
+    CalculationExpression,
+    CalculationSpan,
+)
+from yambl_compiler.languages.yambl.syntax.parser import Diagnostic
 
 REQUIRED = {
     'Decodes',

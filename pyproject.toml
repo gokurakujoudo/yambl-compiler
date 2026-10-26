@@ -16,8 +16,7 @@ dev = ["black==26.10.1", "ruff==0.17.1", "mypy==2.4.0", "pyright==1.1.414", "cov
 yambl = "yambl_compiler.application.cli:main"
 
 [tool.setuptools.package-data]
-yambl_compiler = ["py.typed", "lang/**/*.yambl", "lang/**/*.json", "lang/*.lclcfg"]
-"yambl_compiler.syntax" = ["grammar.lark"]
+yambl_compiler = ["py.typed", "lang/**/*.yambl", "lang/**/*.json", "lang/*.lclcfg", "grammars/*.lark"]
 
 [tool.black]
 line-length = 100

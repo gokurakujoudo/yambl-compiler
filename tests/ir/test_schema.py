@@ -14,7 +14,7 @@ from yambl_compiler.ir.schema import schema, validate_schema
 class SchemaTests(FilesystemCase):
     def test_static_shorthand_normalizes_metadata_and_ir(self):
         from tests.support import document
-        from yambl_compiler.semantics.validation import check
+        from yambl_compiler.languages.yambl.semantics.validation import check
 
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write(

@@ -1,0 +1,121 @@
+start: namespace_decl? import_decl* declaration*
+namespace_decl: NAMESPACE qualified_name
+qualified_name: NAME ("." NAME)*
+import_decl: FROM qualified_name IMPORT NAME
+?declaration: entity | decodes | extension | value | type_alias | decorator | constant
+constant: constant_header ":" type_expr "=" calculation
+constant_header: CONST NAME
+decorator: annotation* decorator_header
+decorator_header: DECORATOR "@" NAME "(" [decorator_parameter ("," decorator_parameter)*] ")"
+decorator_parameter: "*"? NAME "?"? ":" type_expr decorator_default?
+decorator_default: "=" type_expr
+type_alias: annotation* type_alias_header "=" type_expr
+type_alias_header: TYPE NAME type_parameters?
+type_parameters: "<" type_parameter ("," type_parameter)* ">"
+type_parameter: NAME ":" type_expr
+entity: annotation* entity_header "{" (field | dimension)* "}"
+entity_header: FINAL? ENTITY NAME inheritance?
+value: annotation* value_header "{" field* "}"
+value_header: VALUE NAME
+inheritance: INHERITS NAME
+extension: extension_header "{" (field | dimension)* "}"
+extension_header: EXTEND NAME
+field: annotation* field_body
+field_body: (ID | ATTR | STATIC ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) NAME ":" type_expr default_value?
+          | COMPUTED ATTR NAME ":" type_expr computation
+dimension: DIMENSION NAME "{" dimension_value dimension_hierarchy? dimension_fallback? "}"
+dimension_value: VALUE NAME ":" type_expr
+dimension_hierarchy: HIERARCHY NAME ":" type_expr ("=" calculation)?
+dimension_fallback: FALLBACK_DAYS "=" calculation
+computation: "{" let_statement* return_statement "}"
+let_statement: LET NAME (":" type_expr)? "=" calculation
+return_statement: RETURN calculation
+?calculation: NAME "->" calculation -> lambda_expression
+            | IF calculation THEN calculation ELSE calculation -> conditional_expression
+            | coalescence
+?coalescence: disjunction ("??" coalescence)?
+?disjunction: conjunction (OR conjunction)*
+?conjunction: comparison (AND comparison)*
+?comparison: sum_expression (COMPARISON sum_expression)?
+?sum_expression: product_expression (("+" | "-") product_expression)*
+?product_expression: unary_expression (("*" | "/" | "//") unary_expression)*
+?unary_expression: ("-" | NOT) unary_expression -> unary_expression
+                 | calculation_postfix
+?calculation_postfix: calculation_atom calculation_suffix*
+?calculation_atom: NAME function_arguments -> calculation_function
+                 | NAME -> calculation_name
+                 | SELF -> calculation_name
+                 | STRING -> calculation_literal
+                 | CALC_NUMBER -> calculation_literal
+                 | BOOLEAN -> calculation_literal
+                 | "[" [calculation ("," calculation)*] "]" -> calculation_sequence
+                 | "{" [calculation_pair ("," calculation_pair)*] "}" -> calculation_object
+                 | "(" calculation ")" -> calculation_parentheses
+calculation_pair: calculation ":" calculation
+calculation_suffix: ("." | "::") NAME calculation_arguments?
+calculation_arguments: "(" [calculation_argument ("," calculation_argument)*] ")"
+function_arguments: "(" [function_argument ("," function_argument)*] ")"
+?function_argument: NAME "=" calculation -> calculation_keyword
+                  | calculation
+?calculation_argument: NAME "=" calculation -> calculation_keyword
+                     | recovery_case
+                     | calculation
+recovery_case: CASE NAME ("," NAME)* (AS NAME)? "->" calculation
+default_value: "=" (INT | NUMBER | STRING | BOOLEAN)
+annotation: "@" NAME ["(" [annotation_argument ("," annotation_argument)*] ")"]
+?annotation_argument: NAME "=" type_expr -> keyword_argument
+                    | NAME ":" type_expr decorator_default? -> pair_argument
+                    | type_expr -> positional_argument
+decodes: annotation* decodes_header "{" entry* "}"
+decodes_header: DECODES NAME
+entry: "-" (INT | BINARY) NAME ":" STRING
+type_expr: _type_term flag_operation* binding?
+_type_term: (NAME | SELF | STRING | INT | NUMBER | BOOLEAN) (parameters | arguments)? access*
+flag_operation: ("+" | "-") flag_operand
+flag_operand: _type_term
+arguments: "<" type_expr ("," type_expr)* ">"
+access: ("." | "::") NAME
+binding: AS NAME
+parameters: "[" parameter ("," parameter)* "]"
+?parameter: named_parameter | literal
+named_parameter: NAME ":" literal
+?literal: INT | STRING
+CONST: /const\b/
+COMPUTED: /computed\b/
+DIMENSION: /dimension\b/
+HIERARCHY: /hierarchy\b/
+FALLBACK_DAYS: /fallback_days\b/
+LET: /let\b/
+RETURN: /return\b/
+IF.2: /if\b/
+THEN: /then\b/
+ELSE: /else\b/
+CASE.2: /case\b/
+AND: /and\b/
+OR: /or\b/
+NOT.2: /not\b/
+COMPARISON: "==" | "!=" | "<=" | ">=" | "<" | ">"
+CALC_NUMBER: /[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/
+NAMESPACE: /namespace\b/
+FROM: /from\b/
+IMPORT: /import\b/
+ENTITY: /entity\b/
+FINAL: /final\b/
+STATIC: /static\b/
+SELF.2: /self\b/
+TYPE: /type\b/
+AS: /as\b/
+DECORATOR: /decorator\b/
+ID: /id\b/
+ATTR: /attr\b/
+SNAPSHOT: /snapshot\b/
+SCD: /scd\b/
+CONFIG: /config\b/
+EXTEND: /extend\b/
+INHERITS: /inherits\b/
+VALUE: /value\b/
+DECODES: /decodes\b/
+%import common.WS
+%ignore WS
+%ignore COMMENT
+%import .lexical (NAME, INT, BINARY, NUMBER, BOOLEAN, STRING, COMMENT)

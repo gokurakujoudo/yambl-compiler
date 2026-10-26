@@ -9,8 +9,8 @@ from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.semantics.test_decorators import VALID as DECORATORS
-from tests.semantics.test_expressions import VALID as EXPRESSIONS
+from tests.languages.yambl.semantics.test_decorators import VALID as DECORATORS
+from tests.languages.yambl.semantics.test_expressions import VALID as EXPRESSIONS
 from tests.support import FilesystemCase
 from yambl_compiler.application.cli import main, run_ir
 from yambl_compiler.ir.application import compile_repository, load_ir, write_ir
@@ -86,7 +86,7 @@ def guarded(path, *args, **kwargs):
 Path.read_text = guarded
 from yambl_compiler.ir.application import load_ir
 model = load_ir(Path(sys.argv[1]))
-assert 'yambl_compiler.semantics.builtins' not in sys.modules
+assert 'yambl_compiler.languages.yambl.semantics.builtins' not in sys.modules
 print(model.model_digest)
 '''
         result = subprocess.run(
@@ -172,7 +172,7 @@ print(model.model_digest)
 
     def test_all_valid_editor_corpus_compiles(self):
         from tests.support import document
-        from yambl_compiler.semantics.validation import check
+        from yambl_compiler.languages.yambl.semantics.validation import check
 
         fixtures = Path(__file__).parents[3] / 'yambl/tools/vscode/lsp/tests'
         count = 0
@@ -229,7 +229,7 @@ entity A {
 
     def test_builtin_root_constraints_and_failed_ir_validation(self):
         root = self.repository('namespace builtins entity A {}', prefix='wrong')
-        with patch('yambl_compiler.semantics.builtins.AUTHOR_ROOT', root):
+        with patch('yambl_compiler.languages.yambl.semantics.builtins.AUTHOR_ROOT', root):
             with self.assertRaisesRegex(ValueError, 'built-in prefix must be empty'):
                 compile_repository(root)
             (root / 'yambl-root.lclcfg').write_text("prefix: ''\n", encoding='utf-8')
@@ -242,7 +242,7 @@ entity A {
         ):
             with self.assertRaisesRegex(ValueError, 'inconsistent view'):
                 compile_repository(root)
-        from yambl_compiler.semantics.builtins import AUTHOR_ROOT
+        from yambl_compiler.languages.yambl.semantics.builtins import AUTHOR_ROOT
 
         model = compile_repository(AUTHOR_ROOT)
         self.assertTrue(all(d.source.origin == 'builtin' for d in model.definitions))

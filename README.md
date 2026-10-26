@@ -251,19 +251,20 @@ unit by resolving scopes, merging entity fields, checking field relationships, a
 validating types. The filesystem layer owns discovery and publication. Thin
 lclang workflows expose the `check` and `format` commands.
 
-Source and unit tests use the same functional package structure:
+YAMBL-specific code and tests live under `languages/yambl/`. Lark grammars live
+in `grammars/`; repository, IR and storage services keep their shared packages:
 
 | Source package under `src/yambl_compiler/` | Matching tests | Responsibility |
 | --- | --- | --- |
-| `syntax/parser.py`, `syntax/grammar.lark` | `tests/syntax/test_parser.py` | Tokens, parse trees, source diagnostics |
-| `semantics/validation.py` | `tests/semantics/test_validation.py` | Compilation-unit validation |
-| `semantics/symbols.py` | `tests/semantics/test_symbols.py` | Namespace symbols and file-local imports |
-| `semantics/expressions.py` | `tests/semantics/test_expressions.py` | Transparent aliases and dependent type expressions |
-| `semantics/types.py` | `tests/semantics/test_types.py` | Type constraints and external Decodes |
-| `semantics/fields.py` | `tests/semantics/test_fields.py` | Metadata, modes, dimensions, and defaults |
-| `semantics/signatures.py` | `tests/semantics/test_signatures.py` | Resolved field contract comparisons |
-| `semantics/entities.py` | `tests/semantics/test_entities.py` | Merged attributes, locations, and inheritance |
-| `formatting/formatter.py` | `tests/formatting/test_formatter.py` | Layout and comment preservation |
+| `languages/yambl/syntax/parser.py`, `grammars/yambl.lark` | `tests/languages/yambl/syntax/test_parser.py` | Tokens, parse trees, source diagnostics |
+| `languages/yambl/semantics/validation.py` | `tests/languages/yambl/semantics/test_validation.py` | Compilation-unit validation |
+| `languages/yambl/semantics/symbols.py` | `tests/languages/yambl/semantics/test_symbols.py` | Namespace symbols and file-local imports |
+| `languages/yambl/semantics/expressions.py` | `tests/languages/yambl/semantics/test_expressions.py` | Transparent aliases and dependent type expressions |
+| `languages/yambl/semantics/types.py` | `tests/languages/yambl/semantics/test_types.py` | Type constraints and external Decodes |
+| `languages/yambl/semantics/fields.py` | `tests/languages/yambl/semantics/test_fields.py` | Metadata, modes, dimensions, and defaults |
+| `languages/yambl/semantics/signatures.py` | `tests/languages/yambl/semantics/test_signatures.py` | Resolved field contract comparisons |
+| `languages/yambl/semantics/entities.py` | `tests/languages/yambl/semantics/test_entities.py` | Merged attributes, locations, and inheritance |
+| `languages/yambl/formatting/formatter.py` | `tests/languages/yambl/formatting/test_formatter.py` | Layout and comment preservation |
 | `application/project.py` | `tests/application/test_project.py` | File discovery and publication |
 | `application/cli.py` | `tests/application/test_cli.py` | lclang CLI workflows |
 
