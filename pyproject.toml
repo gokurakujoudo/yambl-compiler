@@ -47,3 +47,9 @@ source = ["src/yambl_compiler"]
 [tool.coverage.report]
 fail_under = 100
 show_missing = true
+# Match type-only guards at line start, not strings emitted by the generator.
+exclude_lines = [
+    '#\s*(pragma|PRAGMA)[:\s]?\s*(no|NO)\s*(cover|COVER)',
+    '^\s*(((async )?def .*?)?[\])]+(\s*->.*?)?:\s*)?\.\.\.\s*(#|$)',
+    '^\s*if (typing\.)?TYPE_CHECKING:',
+]
