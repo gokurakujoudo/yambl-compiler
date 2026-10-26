@@ -14,7 +14,6 @@ from tests.transactions.test_binding import CatalogCase
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
 from yambl_compiler.transactions.model import Group, Operation, Plan
-from yambl_compiler.transactions.repository import DataStore
 from yambl_compiler.transactions.syntax import parse
 from yambl_compiler.transactions.writing import dumps
 
@@ -89,11 +88,7 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
         generate(self.catalog.layout.model, output, 'sample_model')
         self.module = load_generated(output / 'sample_model', 'sample_model')
 
-        class Store(DataStore):
-            reader_type = self.module.SampleReader
-            schema_path = output / 'schema.sql'
-
-        self.store_type = Store
+        self.store_type = self.module.SampleData
         self.plan = Plan(
             'demo',
             self.catalog.layout.model.model_digest,

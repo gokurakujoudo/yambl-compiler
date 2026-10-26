@@ -1,9 +1,11 @@
 """Generate importable typed readers and publish complete output directories."""
 
 import hashlib
+import json
 import keyword
 import re
 import tempfile
+from importlib.metadata import requires
 from pathlib import Path
 
 from yambl_compiler.ir.codec import dumps
@@ -184,6 +186,7 @@ def python_package(layout: Layout, package: str) -> str:
     reader_name = (
         "".join(word.capitalize() for word in package.removesuffix("_model").split("_")) + "Reader"
     )
+    data_name = reader_name.removesuffix('Reader') + 'Data'
     records = {
         key: names[s.root] + "".join(p.capitalize() for p in s.field.name.split("_")) + "Record"
         for key, s in layout.fields.items()
@@ -196,6 +199,7 @@ def python_package(layout: Layout, package: str) -> str:
         *requests.values(),
         *value_names.values(),
         reader_name,
+        data_name,
     ]
     reader_methods = [
         "get_" + snake(name) + suffix for name in names.values() for suffix in ("", "_many")
@@ -205,6 +209,8 @@ def python_package(layout: Layout, package: str) -> str:
     reserved = {
         "EntityHandle",
         "Reader",
+        "DataStore",
+        "TransactionReport",
         "ReadResult",
         "EntityRef",
         "Success",
@@ -229,7 +235,7 @@ def python_package(layout: Layout, package: str) -> str:
     if len(set(public_names)) != len(public_names) or set(public_names) & reserved:
         raise ValueError("generated Python public-name collision")
     lines = [
-        '"""Generated typed read-only model API."""',
+        '"""Generated typed data access and transaction API."""',
         "",
         "from __future__ import annotations",
         "",
@@ -245,6 +251,7 @@ def python_package(layout: Layout, package: str) -> str:
         "from ._computing import Omitted, UNSET",
         "from ._calculations import PROGRAMS",
         "from ._runtime import EntityHandle, Reader",
+        "from .transactions.repository import DataStore, TransactionReport",
         "from ._validation import ValidationReport, ValidationIssue",
         "",
     ]
@@ -512,6 +519,24 @@ def python_package(layout: Layout, package: str) -> str:
     lines.extend(
         [
             "",
+            "",
+            f"class {data_name}(DataStore):",
+            '    """Open configured data stores and apply or roll back transactions."""',
+            f"    reader_type = {reader_name}",
+            "    schema_path = Path(__file__).with_name('schema.sql')",
+            "",
+            f"    def read(self) -> {reader_name}:",
+            *docstring(
+                [
+                    "Create a consistent typed read session.",
+                    "",
+                    ":returns: Reader whose data remains stable across later commits.",
+                    f":rtype: {reader_name}",
+                ],
+                8,
+            ),
+            f"        return cast({reader_name}, super().read())",
+            "",
             "__all__ = "
             + repr(
                 sorted(
@@ -528,6 +553,7 @@ def python_package(layout: Layout, package: str) -> str:
                         "UNSET",
                         "ValidationReport",
                         "ValidationIssue",
+                        "TransactionReport",
                     ]
                 )
             ),
@@ -570,7 +596,24 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         raise ValueError("generate requires a new or empty output directory")
     layout = build_layout(model)
     source = python_package(layout, package)
+    dependencies = [
+        requirement
+        for requirement in requires('yambl-compiler') or ()
+        if re.match(r'^lclang\b', requirement)
+    ]
+    if len(dependencies) != 1:
+        raise ValueError('compiler package must declare one lclang runtime dependency')
     contents = {
+        'pyproject.toml': (
+            '[build-system]\nrequires = ["setuptools>=77"]\n'
+            'build-backend = "setuptools.build_meta"\n\n'
+            f'[project]\nname = {json.dumps(package.replace("_", "-"))}\n'
+            f'version = {json.dumps(model.compiler_version)}\n'
+            'requires-python = ">=3.14"\n'
+            f'dependencies = {json.dumps(dependencies)}\n\n'
+            f'[tool.setuptools.packages.find]\ninclude = ["{package}*"]\n\n'
+            f'[tool.setuptools.package-data]\n{package} = ["*.json", "*.sql", "py.typed"]\n'
+        ),
         "schema.sql": ddl(layout),
         "schema.md": reference(layout)
         + "\n## Table relationships\n\n[PlantUML source](schema-relations.puml)\n\n```plantuml\n"
@@ -580,6 +623,7 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         "python-schema.md": python_reference(source, package),
         "storage-manifest.json": manifest(layout),
         package + "/__init__.py": source,
+        package + '/schema.sql': ddl(layout),
         package + "/runtime-contract.json": contract_json(layout),
         package + "/py.typed": "",
         package + "/model.yambl-ir.json": dumps(model),
@@ -613,6 +657,13 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         for module in modules:
             text = text.replace("yambl_compiler.storage." + module, "._" + module)
         contents[package + "/_" + name + ".py"] = text
+    for path in sorted((Path(__file__).parents[1] / 'transactions').glob('*.py')):
+        text = path.read_text(encoding='utf-8')
+        text = text.replace('yambl_compiler.ir.model', '.._ir_model')
+        text = text.replace('yambl_compiler.transactions.', '.')
+        for module in modules:
+            text = text.replace('yambl_compiler.storage.' + module, '.._' + module)
+        contents[package + '/transactions/' + path.name] = text
     contents[package + "/_computation_records.py"] = (
         Path(__file__).parents[1] / "computation/records.py"
     ).read_text(encoding="utf-8")

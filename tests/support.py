@@ -38,6 +38,21 @@ def load_generated(path, name):
     ):
         sys.modules[name + "._" + part] = importlib.import_module("yambl_compiler.storage." + part)
     sys.modules[name + "._ir_model"] = importlib.import_module("yambl_compiler.ir.model")
+    sys.modules[name + '.transactions'] = importlib.import_module('yambl_compiler.transactions')
+    for part in (
+        'model',
+        'syntax',
+        'writing',
+        'formatting',
+        'binding',
+        'editing',
+        'execution',
+        'snapshot',
+        'repository',
+    ):
+        sys.modules[name + '.transactions.' + part] = importlib.import_module(
+            'yambl_compiler.transactions.' + part
+        )
     spec.loader.exec_module(module)
     return module
 
