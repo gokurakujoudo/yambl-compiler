@@ -16,6 +16,7 @@ SCRIPT = '''
 import asyncio
 import importlib.abc
 from pathlib import Path
+import runpy
 import sys
 
 class RejectCompiler(importlib.abc.MetaPathFinder):
@@ -52,6 +53,8 @@ async def exercise():
     assert not any(n.startswith('yambl_compiler') for n in sys.modules)
     print('both backends: create/apply/read/validate/rollback/redo/reopen passed')
 asyncio.run(exercise())
+sys.argv = ['standalone_model', 'check-data', '-o', 'config', str(root / 'files.lclcfg')]
+runpy.run_module('standalone_model', run_name='__main__')
 '''
 
 
@@ -84,6 +87,7 @@ class GeneratedTransactionTests(CatalogCase):
             timeout=45,
         )
         self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+        self.assertIn('"valid": true', child.stdout)
         self.assertIn(
             'both backends: create/apply/read/validate/rollback/redo/reopen passed', child.stdout
         )

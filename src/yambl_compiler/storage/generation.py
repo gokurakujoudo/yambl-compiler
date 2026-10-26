@@ -644,7 +644,6 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         "results",
         "runtime",
         "validation",
-        "cli_runtime",
     ]
     for name in [*modules, "ir_model"]:
         path = (
@@ -667,11 +666,11 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
     contents[package + "/_computation_records.py"] = (
         Path(__file__).parents[1] / "computation/records.py"
     ).read_text(encoding="utf-8")
-    reader_name = (
-        "".join(word.capitalize() for word in package.removesuffix("_model").split("_")) + "Reader"
+    data_name = (
+        "".join(word.capitalize() for word in package.removesuffix("_model").split("_")) + "Data"
     )
     contents[package + "/__main__.py"] = (
-        f'"""Validate model data from the command line."""\nfrom . import {reader_name}\nfrom ._cli_runtime import main\n\nraise SystemExit(main({reader_name}))\n'
+        f'"""Manage configured model data."""\nfrom . import {data_name}\nfrom .transactions.cli import main\n\nraise SystemExit(main({data_name}))\n'
     )
     tables: dict[str, list[Row]] = {
         t.name: [dict(zip((c.name for c in t.columns), row, strict=True)) for row in t.rows]
