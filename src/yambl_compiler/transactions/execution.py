@@ -1,14 +1,18 @@
 """Build atomic candidate changes and preserve later edits during rollback."""
 
+import json
 from dataclasses import dataclass
+from decimal import Decimal
 
 from yambl_compiler.transactions.editing import Data
 from yambl_compiler.transactions.model import (
     Change,
     Condition,
     Image,
+    ObjectValue,
     Operation,
     Plan,
+    Symbol,
     Transaction,
     TransactionGroup,
     Value,
@@ -197,18 +201,40 @@ class Execution:
         return tuple(groups)
 
 
-def comparable(image: Image) -> tuple[tuple[Value, ...], ...]:
+def semantic_value(value: Value) -> str:
+    """Encode typed values with unordered collection and mapping semantics.
+
+    :param value: Business literal from a validated data image.
+    :returns: Stable comparison key, distinguishing booleans from numbers.
+    """
+    if isinstance(value, bool):
+        return 'bool:' + literal(value)
+    if isinstance(value, (int, Decimal)):
+        return 'number:' + literal(Decimal(value))
+    if isinstance(value, tuple):
+        return 'collection:' + json.dumps(sorted(semantic_value(item) for item in value))
+    if isinstance(value, ObjectValue):
+        return 'object:' + json.dumps(
+            sorted(
+                (semantic_value(key.name if isinstance(key, Symbol) else key), semantic_value(item))
+                for key, item in value.items
+            )
+        )
+    return ('symbol:' if isinstance(value, Symbol) else 'string:') + literal(value)
+
+
+def comparable(image: Image) -> tuple[tuple[str, ...], ...]:
     """Canonicalize unordered records and equivalent adjacent SCD fragments.
 
     :param image: Typed business data image.
     :returns: Sorted semantic records.
     """
     if 'valid_from' not in image.columns:
-        return tuple(sorted(image.rows, key=lambda r: tuple(literal(v) for v in r)))
+        return tuple(sorted(tuple(semantic_value(v) for v in row) for row in image.rows))
     start, end = image.columns.index('valid_from'), image.columns.index('valid_to')
-    groups: dict[tuple[Value, ...], list[tuple[Value, ...]]] = {}
+    groups: dict[tuple[str, ...], list[tuple[Value, ...]]] = {}
     for row in image.rows:
-        key = tuple(v for i, v in enumerate(row) if i not in (start, end))
+        key = tuple(semantic_value(v) for i, v in enumerate(row) if i not in (start, end))
         groups.setdefault(key, []).append(row)
     merged: list[tuple[Value, ...]] = []
     for rows in groups.values():
@@ -221,7 +247,7 @@ def comparable(image: Image) -> tuple[tuple[Value, ...], ...]:
             else:
                 pieces.append(row)
         merged.extend(pieces)
-    return tuple(sorted(merged, key=lambda r: tuple(literal(v) for v in r)))
+    return tuple(sorted(tuple(semantic_value(v) for v in row) for row in merged))
 
 
 def same(left: tuple[Image, ...], right: tuple[Image, ...]) -> bool:

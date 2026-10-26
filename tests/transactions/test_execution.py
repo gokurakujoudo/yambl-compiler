@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from tests.transactions.test_binding import CatalogCase
 from yambl_compiler.transactions.editing import Data
-from yambl_compiler.transactions.execution import Execution, rollback
+from yambl_compiler.transactions.execution import Execution, rollback, same
 from yambl_compiler.transactions.model import (
     Condition,
     Group,
@@ -105,6 +105,64 @@ class ExecutionTests(CatalogCase):
         self.assertEqual(len(result[0].warnings), 1)
         self.assertEqual(result[0].changes, ())
         self.assertEqual(self.data.image('A.text', self.scope).rows, (('a', 'later'),))
+
+    def test_config_collection_order_is_not_a_rollback_conflict(self):
+        scope = (Condition('config_group_id', 'ordered'),)
+        for id_ in (1, 2):
+            self.data.insert(self.catalog.entity('Other'), id_)
+        self.apply(
+            Group(
+                'initial',
+                (
+                    Operation(
+                        'insert',
+                        'builtins.ConfigGroup',
+                        ('config_group_id', 'entity_type', 'priority'),
+                        (('ordered', Symbol('A'), 1),),
+                    ),
+                    Operation(
+                        'replace',
+                        'builtins.ConfigGroup.when',
+                        ('value',),
+                        ((ObjectValue(()),),),
+                        scope,
+                    ),
+                    Operation(
+                        'replace',
+                        'builtins.ConfigGroup.then_set',
+                        ('value',),
+                        ((ObjectValue(()),),),
+                        scope,
+                    ),
+                ),
+            )
+        )
+        target = 'builtins.ConfigGroup.then_set'
+        transaction = self.apply(
+            Group(
+                'peers',
+                (
+                    Operation(
+                        'replace',
+                        target,
+                        ('value',),
+                        ((ObjectValue(((Symbol('A.peers'), (1, 2)),)),),),
+                        scope,
+                    ),
+                ),
+            )
+        )
+        self.data.put(
+            target,
+            scope,
+            Image(target, ('value',), ((ObjectValue(((Symbol('A.peers'), (2, 1)),)),),)),
+        )
+        reverse = rollback(self.data, transaction)
+        self.assertEqual(reverse[0].warnings, ())
+        self.assertEqual(self.data.image(target, scope).rows, (('ordered', ObjectValue(())),))
+        redone = rollback(self.data, replace(transaction, groups=reverse))
+        self.assertEqual(redone[0].warnings, ())
+        self.assertEqual(set(self.data.image(target, scope).rows[0][1].items[0][1]), {1, 2})
 
     def test_scd_split_and_outside_changes_survive_rollback(self):
         columns = ('valid_from', 'valid_to', 'value')
@@ -210,3 +268,103 @@ class ExecutionTests(CatalogCase):
         repeated = Operation('update', 'A', ('key', 'text'), (('a', 'same'),))
         with self.assertRaisesRegex(ValueError, 'overlapping'):
             self.apply(Group('one', (repeated,)), Group('two', (repeated,)))
+
+    def test_unordered_typed_images_preserve_real_differences(self):
+        def image(value):
+            return (Image('A.value', ('key', 'value'), (('a', value),)),)
+
+        left = ObjectValue(((Symbol('first'), (1, 2)), (Symbol('second'), Decimal('1.00'))))
+        right = ObjectValue((('second', 1), ('first', (2, 1))))
+        self.assertTrue(same(image(left), image(right)))
+        self.assertFalse(same(image((1, 2)), image((1, 3))))
+        self.assertFalse(same(image(True), image(1)))
+        self.assertFalse(same(image(Symbol('EMPTY')), image('EMPTY')))
+        self.assertFalse(same(image(()), image(Symbol('NO_ENTRY'))))
+
+    def test_partial_field_conflict_does_not_block_other_field_rollback(self):
+        self.put('A.text', (('original',),))
+        self.put('A.count', ((1,),))
+        transaction = self.apply(
+            Group(
+                'patch',
+                (Operation('update', 'A', ('key', 'text', 'count'), (('a', 'updated', 2),)),),
+            )
+        )
+        self.put('A.text', (('later',),))
+        result = rollback(self.data, transaction)
+        self.assertEqual(len(result[0].warnings), 1)
+        self.assertEqual([c.target for c in result[0].changes], ['A.count'])
+        self.assertEqual(self.data.image('A.text', self.scope).rows, (('a', 'later'),))
+        self.assertEqual(self.data.image('A.count', self.scope).rows, (('a', 1),))
+
+    def test_later_entity_replacement_and_missing_entity_are_preserved(self):
+        inserted = self.apply(
+            Group('new', (Operation('insert', 'B', ('key', 'extra'), (('b', 'new'),)),))
+        )
+        self.data.delete(self.catalog.entity('B'), 'b', True)
+        self.data.insert(self.catalog.entity('C'), 'b')
+        result = rollback(self.data, inserted)
+        self.assertEqual(result[0].changes, ())
+        self.assertIn('later entity type retained', result[0].warnings[0])
+        self.assertEqual(self.data.actual(self.entity, 'b').definition.identity, 'C')
+        changed = self.update('text', 'updated')
+        self.data.delete(self.entity, 'a', True)
+        result = rollback(self.data, changed)
+        self.assertEqual(result[0].changes, ())
+        self.assertIn('missing data retained', result[0].warnings[0])
+        with self.assertRaisesRegex(ValueError, 'does not exist'):
+            self.data.actual(self.entity, 'a')
+
+    def test_disjoint_scopes_and_new_entity_owned_data_share_one_plan(self):
+        first = (
+            *self.scope,
+            Condition('source', 'One'),
+            Condition('day', '2026-01-01', '2026-02-01'),
+        )
+        second = (
+            *self.scope,
+            Condition('source', 'One'),
+            Condition('day', '2026-02-01', '2026-03-01'),
+        )
+        third = (*self.scope, Condition('source', 'Two'))
+        transaction = self.apply(
+            Group(
+                'disjoint',
+                (
+                    Operation(
+                        'replace',
+                        'A.price',
+                        ('day', 'value'),
+                        (('2026-01-10', Decimal('1')),),
+                        first,
+                    ),
+                    Operation(
+                        'replace',
+                        'A.price',
+                        ('day', 'value'),
+                        (('2026-02-10', Decimal('2')),),
+                        second,
+                    ),
+                    Operation(
+                        'replace',
+                        'A.price',
+                        ('day', 'value'),
+                        (('2026-01-10', Decimal('3')),),
+                        third,
+                    ),
+                    Operation('insert', 'B', ('key',), (('b',),)),
+                    Operation(
+                        'replace', 'B.extra', ('value',), (('owned',),), (Condition('key', 'b'),)
+                    ),
+                ),
+            )
+        )
+        self.assertEqual(len(self.data.image('A.price', self.scope).rows), 3)
+        self.assertEqual(
+            self.data.image('B.extra', (Condition('key', 'b'),)).rows, (('b', 'owned'),)
+        )
+        result = rollback(self.data, transaction)
+        self.assertEqual(result[0].warnings, ())
+        self.assertEqual(self.data.image('A.price', self.scope).rows, ())
+        with self.assertRaisesRegex(ValueError, 'does not exist'):
+            self.data.actual(self.entity, 'b')

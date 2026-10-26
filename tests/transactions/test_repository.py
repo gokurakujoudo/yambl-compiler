@@ -178,6 +178,53 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises(FileExistsError):
                     await self.store_type.create(config)
 
+    async def test_partial_conflicts_commit_report_and_warning_on_both_backends(self):
+        for backend in ('sqlite', 'files'):
+            store, _ = await self.configured(backend)
+            self.addCleanup(store.close)
+            store.apply(self.plan_path)
+            changed = Plan(
+                'change',
+                self.plan.model,
+                (
+                    Group(
+                        'patch',
+                        (
+                            Operation(
+                                'update', 'A', ('key', 'text', 'count'), (('a', 'updated', 2),)
+                            ),
+                        ),
+                    ),
+                ),
+            )
+            transaction = store.apply(self.write('patch.yaplan', dumps(changed)))
+            later = Plan(
+                'later',
+                self.plan.model,
+                (Group('later', (Operation('update', 'A', ('key', 'text'), (('a', 'later'),)),)),),
+            )
+            store.apply(self.write('later.yaplan', dumps(later)))
+            with self.assertLogs(
+                'yambl_compiler.transactions.repository', level='WARNING'
+            ) as messages:
+                reversed_report = store.rollback(transaction.path)
+            self.assertEqual(reversed_report.status, 'committed_with_warnings')
+            self.assertEqual(reversed_report.changes, 1)
+            self.assertEqual(len(reversed_report.warnings), 1)
+            self.assertIn('A.text', messages.output[0])
+            recorded = parse(reversed_report.path.read_text(encoding='utf-8'))
+            self.assertEqual(recorded.source, transaction.id)
+            self.assertTrue(recorded.time.endswith('Z'))
+            self.assertEqual(recorded.groups[0].warnings, reversed_report.warnings)
+            with closing(store.read()) as reader:
+                self.assertEqual(reader.get_a('a').value.text, Success('later'))
+                self.assertEqual(reader.get_a('a').value.count.status, Status.NO_ENTRY)
+            redo = store.rollback(reversed_report.path)
+            self.assertEqual((redo.status, redo.changes, redo.warnings), ('committed', 1, ()))
+            with closing(store.read()) as reader:
+                self.assertEqual(reader.get_a('a').value.text, Success('later'))
+                self.assertEqual(reader.get_a('a').value.count, Success(2))
+
     async def test_export_failure_is_committed_and_recovers_without_reapply(self):
         for backend in ('sqlite', 'files'):
             store, config = await self.configured(backend)
