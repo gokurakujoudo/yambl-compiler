@@ -11,6 +11,7 @@ from typing import Literal, cast, get_args, get_origin, get_type_hints
 from yambl_compiler.storage.records import Layout
 
 type JSON = None | str | int | bool | list[JSON] | dict[str, JSON]
+RUNTIME_REVISION = 6
 
 
 def unique_object(pairs: list[tuple[str, JSON]]) -> dict[str, JSON]:
@@ -108,7 +109,7 @@ def dumps(layout: Layout) -> str:
     """
     return (
         json.dumps(
-            {"runtime_revision": 5, "layout": asdict(layout)},
+            {"runtime_revision": RUNTIME_REVISION, "layout": asdict(layout)},
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -134,7 +135,7 @@ def load_contract(path: Path, digest: str) -> Layout:
         not isinstance(data, dict)
         or set(data) != {"runtime_revision", "layout"}
         or type(data["runtime_revision"]) is not int
-        or data["runtime_revision"] != 5
+        or data["runtime_revision"] != RUNTIME_REVISION
     ):
         raise ValueError("unsupported runtime contract revision or fields")
     return cast(Layout, decode(data["layout"], Layout))

@@ -250,7 +250,7 @@ def repository_contents(layout: Layout, tables: Mapping[str, list[Row]]) -> dict
         for t in layout.tables
     }
     metadata = {
-        "format_revision": 1,
+        "format_revision": 2,
         "layout_revision": LAYOUT_REVISION,
         "model_digest": layout.model.model_digest,
         "tables": {
@@ -287,7 +287,7 @@ class FileBackend:
             not isinstance(metadata, dict)
             or set(metadata) != {"format_revision", "layout_revision", "model_digest", "tables"}
             or type(metadata["format_revision"]) is not int
-            or metadata["format_revision"] != 1
+            or metadata["format_revision"] != 2
             or type(metadata["layout_revision"]) is not int
             or metadata["layout_revision"] != LAYOUT_REVISION
             or metadata["model_digest"] != layout.model.model_digest

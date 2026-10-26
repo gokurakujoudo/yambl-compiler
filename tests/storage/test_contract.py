@@ -26,6 +26,7 @@ class ContractTests(FilesystemCase):
             {},
             {"runtime_revision": True, "layout": {}},
             {"runtime_revision": 9, "layout": {}},
+            {"runtime_revision": 5, "layout": {}},
         ):
             path.write_text(json.dumps(value), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "revision"):

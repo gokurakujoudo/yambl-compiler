@@ -360,128 +360,126 @@ parentheses. Custom metadata participates in override/overload signatures after
 argument binding and default substitution. Call order is ignored; repetition counts
 and pair names/types are retained. Relationship markers remain outside signatures.
 
-## SQLite, JSONL and typed reads
+## Generate a data package
 
-Compile a rooted repository, then generate into a new or empty directory:
+Compile a rooted model, then generate into a new or empty directory:
 
 ```console
 yambl compile -o path ../fmc-data-model -o output ./build/model.yambl-ir.json
-yambl schema -o output ./build/yambl-ir.schema.json
 yambl generate -o path ./build/model.yambl-ir.json -o output ./build/generated -o package fmc_model
+python -m pip install ./build/generated
 ```
 
-The output contains `schema.sql`, a complete readable `schema.md`,
-`storage-manifest.json`, and the `fmc_model` package with bundled IR and `py.typed`.
-The SQL, reference and manifest share one physical model. Generation rejects
-unsupported business fields before writing. `--dryrun` validates and renders
-without creating output directories. Database migrations and production writes
-are not provided.
+The generated project declares its runtime dependencies using the compiler's
+installed package metadata. It runs on Python 3.14+ without the compiler or model
+sources. Its bundled contract is checked against a fixed SHA-256 digest when
+opened; the runtime does not recompile IR.
 
-Storage layout revision 5 uses names such as `tb_core_portfolio` and
-`tb_core_security_price`. Ungrouped dimensionless static fields, including per-field states,
-share the root identity table. Collection members use the field table name;
-separate collection headers add `_status`. Readers reject databases with an older
-layout revision. Regenerate disposable databases when updating the generated package.
-Each root's `_config` table is keyed by `(id, field)`. Like sparse groups it uses
-only the required string, bool, int, decimal and date lanes. Normal scalar rows
-use exactly the matching lane; non-normal rows and collection headers use NULL
-in every scalar lane. Collections retain their member tables.
+Generation emits the Python package, `pyproject.toml`, `py.typed`, bundled IR,
+`runtime-contract.json`, `schema.sql`, `schema.md`, `storage-manifest.json`,
+`schema-relations.puml`, `python-schema.md` and an initialized JSONL template.
+Unsupported business fields fail before publication. `--dryrun` validates and
+renders without writing. See the [storage reference](../yambl/lang/syntex/storage.md)
+for physical layouts and supported types.
 
-`@sparse('bond_info')` moves a non-collection, dimensionless static field into
-the root's `_bond_info` long table. It has `(id, field)` keys, a state column,
-and the string, bool, int, decimal or date payload columns used by that group.
-References use the target ID's column. CHECK constraints require exactly the
-selected payload for VALUE and NULL in all payload columns for other states.
-`@dense('bond_info')` instead uses a wide group with per-field state and payload
-columns. Both decorators require a nonempty snake_case category and exclude
-each other and `@dimension`. Conflicting group layouts or physical names fail
-before output is written. Overrides and overloads share the logical field's
-group; explicit placements must agree. Grouping does not change the read API.
+## Repository configuration and initialization
 
-The schema also includes Decodes, Hierarchy and ConfigGroup tables. Declared
-dictionaries and their entries are initialized from the bundled IR, including
-flags None/All entries. ConfigGroup mappings use child tables keyed by group ID
-and logical field name, with a typed JSON value. SQL checks the JSON envelope;
-the effective-config evaluator checks mapping types against the actual field implementation.
-Generic public read methods for these mapping fields remain unavailable; the manifest
-marks them with `readable: false`.
+`FmcData` provides the same interface for SQLite and file repositories. Select the
+backend and path in a `.lclcfg` entry file, such as `repository.lclcfg`:
 
-IR revision 6 uses compact JSON. The packaged Draft 2020-12 schema validates
-structure offline; semantic validation also checks references and derived views.
-Recompile revision 1 and 2 artifacts. Ordinary `attr` now means `static attr`, and
-`AttrCats.Attr` has been removed in favor of `AttrCats.Static`.
+```yaml
+backend: 'sqlite'
+path: './data.db'
+```
 
-Generated packages require only Python 3.14+ and the standard library. They carry
-validated runtime contracts pinned by SHA-256; loading does not recompile the IR.
-`open_sqlite(path)` opens a read-only transaction; `open_files(path)` opens a JSONL
-snapshot. `open(path)` remains the SQLite alias. Config defaults still apply only
-to NO_ENTRY and carry `origin='model_default'`.
+Use `backend: 'files'` and a directory path for a file repository. lclang loads,
+combines and evaluates configuration; relative paths resolve from the entry file's
+directory. The backend and path remain fixed for the lifetime of the data interface.
 
-Entities are frozen dataclasses with identity equality. Each attribute property
-lazily reads all its data. Time or dimension fields return immutable tuples of
-field-specific frozen records; each record contains coordinates and a ReadResult
-payload. Scalar properties return ReadResult directly. No records means a
-successful empty tuple. References remain explicit EntityRef values.
+```console
+python -m fmc_model create -o config repository.lclcfg
+python -m fmc_model apply -o config repository.lclcfg -o source ../fmc-data-model/examples/demo.yaplan
+```
 
-Methods cache normalized queries and reuse complete property caches. Cached data
-survives close; new reads return ERROR. Errors are never cached. Range lists are
-copied before returning. Computed methods execute named-dimension selection and effective per-instance configuration.
+Creation rejects an existing target. Model-defined dictionaries are initialized
+from the bundled contract. The static FMC Plan adds the example business data;
+applying it twice fails on existing IDs. New instances retain NO_ENTRY for omitted
+fields. Config defaults are evaluated at read time and carry `origin='model_default'`.
 
-The language repository's `lang/syntex/storage.md` documents storage rules and
-tracks implemented and pending capabilities. The FMC repository includes an
-initializer and seed data for a disposable example database.
+Current artifacts use IR revision 6, storage layout revision 6, runtime contract
+revision 6 and file format revision 2. Earlier storage and runtime artifacts must
+be regenerated; no database migration is provided. Keep verified FMC artifacts in
+`build/latest/` and validate replacements before removing older output.
 
-Generated entity classes include their declared title and description when present.
-Attribute read methods document the YAMBL type, dimensions and every entity that
-declares the logical field, sorted by qualified name. Override and overload owners
-are included; an extension belongs to its target entity. Inheritance alone does
-not add another declaration owner. Optional Hierarchy selectors are identified as
-metadata rather than Python arguments.
+## Reading and calculation
 
-Every generated method has rST parameter and return fields, including result types,
-date boundaries, batch ordering and config default behavior. Model prose is kept
-in literal blocks and quoted safely in Python. Generated docstrings are tested as
-rST and checked against the actual Python signatures.
+`await FmcData.open(config_path)` opens an existing repository and recovers pending
+transaction exports. `data.read()` returns a reader with a consistent snapshot;
+new sessions see committed changes while existing sessions keep their data.
+Close each reader when finished. The data interface supports `with` and `close()`.
 
-The output also includes `schema-relations.puml`, `python-schema.md`, and a
-`repository/` JSONL template seeded with built-in dictionaries. The PlantUML graph
-lists every table and column with its SQL type, nullability and primary-key
-position. Arrows connect specific columns: solid arrows are enforced foreign keys;
-dashed arrows are logical ownership or entity references. Repeated FK labels group
-the columns of a composite constraint. Reference labels identify the logical field
-and any discriminator used by shared payload columns. `schema.md` embeds the same
-PlantUML source; displaying it as a diagram requires a PlantUML renderer. All these
-outputs use the same physical model.
+Entity handles are frozen dataclasses with identity equality. Scalar properties
+return `ReadResult`; temporal or dimensioned properties return immutable tuples of
+field-specific records with coordinates and a `ReadResult` value. An empty record
+set is a successful empty tuple. `EntityRef` values are resolved explicitly with
+`reader.resolve(ref)`.
 
-JSONL repositories contain `repository.json` and `tables/<table>.jsonl` for every
-table. Metadata pins format revision 1, layout revision 5, the model digest and
-each file's SHA-256. Tables are loaded and indexed on first use. Every new backend
-read checks file identity, size and timestamps; table loads also verify hashes
-and check file state before and after reading. Once changes are detected, reopen
-the reader. Existing immutable field caches remain usable. Rows require complete
-columns, canonical scalar encodings, unique keys and valid state/payload lanes.
+Methods cache normalized queries and reuse complete property caches. Errors are
+not cached. Cached data remains available after reader close; uncached reads return
+ERROR. Returned range lists are independent copies. Computed methods use the same
+selection, configuration and precise arithmetic rules on both backends.
 
-`reader.validate()` explicitly scans data and checks same-field reference cycles.
-It returns an immutable ValidationReport with `valid` and `issues`. Cycles are
-scoped by inheritance root, logical field, dimension tuple and snapshot date or
-intersecting SCD period. Cross-field and cross-root references are not merged;
-dangling references remain allowed. Each cyclic component has one deterministic
-witness. `python -m fmc_model check-data -o config repository.lclcfg` uses the
-configured backend and path. It returns zero for valid data and a nonzero exit
-code for validation, configuration or read failures.
+Generated `python-schema.md` documents entity titles, descriptions, attribute
+ownership, method signatures and result types. Inherited, overridden and extended
+fields retain their model identities. The [FMC examples](../fmc-data-model/README.md)
+show executable reads and calculations.
 
-Keep the latest full generation under `build/latest/`. Initialize either backend
-with `FmcData.create(config_path)` and apply `examples/demo.yaplan` through
-`data.apply(plan_path)`. Generation refuses nonempty destinations; repository
-creation refuses an existing target. See [transaction operations](../yambl/lang/syntex/transactions.md)
-for applying and rolling back changes.
+## Plans, application and rollback
+
+A `.yaplan` contains named groups of entity inserts, field patches, deletes and
+complete field scopes. Each data record occupies one line. A `.yatran` records
+actual before/after images, UTC execution time, groups, warnings and source
+transaction relationships. See the [transaction reference](../yambl/lang/syntex/transactions.md)
+for syntax, scope rules, SCD splitting and explicit owned-data deletion.
+
+`data.apply(plan_path)` commits the entire Plan. `data.rollback(transaction_path,
+groups=None)` reverses all or selected groups while preserving conflicting later
+changes. Each operation returns a transaction ID, file path, change count and
+conflict summary; `data.export(id)` exports a committed transaction by ID.
+
+```console
+python -m fmc_model rollback -o config repository.lclcfg -o source transaction.yatran
+```
+
+Writes and recovery serialize within the process for each repository. SQLite
+commits business data and the execution record in one native transaction. Files
+use immutable generations and an atomic manifest switch. A `publication_pending`
+result means data committed but the export needs recovery; reopen the repository
+to recover it. A `committed_with_warnings` rollback committed its eligible changes
+and skipped the reported conflicts. Neither result calls for reapplying the Plan.
+
+## Data validation
+
+`reader.validate()` checks stored data and same-field reference cycles and returns
+an immutable report with `valid` and `issues`. Checks use the final candidate state
+before apply or rollback commits. They do not add business completeness rules.
+
+```console
+python -m fmc_model check-data -o config repository.lclcfg
+```
+
+The command returns zero for valid data and nonzero for validation, configuration
+or read failures. Cycles are scoped by inheritance root and logical field, equal
+dimensions, snapshot date or overlapping SCD time. Cross-root and dangling
+references do not create cycle edges. Each cyclic component produces one
+reproducible closed ID path, with its field and coordinates.
 
 ## Computed fields and batched reads
 
 `computed attr name: Type { let local = expression return expression }` declares a
 read-only calculation. Its inferred inputs, defaults and dependency identities are
-stored in IR revision 6. Runtime contract 5 and storage layout 5 require regenerated
-artifacts; JSONL format remains 1. Computed fields add no physical columns.
+stored in IR revision 6. Runtime contract 6 and storage layout 6 require regenerated
+artifacts; JSONL uses file format 2. Computed fields add no physical columns.
 
 Stored and computed fields use `field::value(...)` in calculation expressions.
 Stored reads select an exact date and dimension coordinate; computed reads bind
@@ -508,8 +506,8 @@ calculations after close when no new backend read is needed.
 
 See the [calculation contract](../yambl/lang/syntex/computations.md) and the
 [capability matrix](../yambl/lang/syntex/storage.md#能力清单). General functions,
-write APIs, migrations, FX conversion and automatic combinations of
-multiple Hierarchies are outside this release.
+migrations, FX conversion and automatic combinations of multiple Hierarchies
+are outside this release.
 
 Optional calculation inputs can be declared with
 `@extra_input_params(day: date = '2026-01-01', 'Observation date')`.
@@ -518,4 +516,4 @@ its right operand only when the input is omitted; `.default(...)` is no longer
 accepted. Native non-normal results still require `recover`.
 Decorator calls accept optional trailing description metadata without adding a
 formal parameter to each declaration. IR revision 6 preserves pair defaults;
-runtime contract 5 carries the same checked metadata into generated packages.
+runtime contract 6 carries the same checked metadata into generated packages.
