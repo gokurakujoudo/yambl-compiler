@@ -1,8 +1,11 @@
 """Exercise the actual FMC example without consulting model sources at read time."""
 
-import runpy
+import asyncio
+import re
+import sqlite3
 import subprocess
 import sys
+from contextlib import closing
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -12,6 +15,7 @@ from tests.support import FilesystemCase, load_generated
 from yambl_compiler.ir import compile_repository
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
+from yambl_compiler.transactions.formatting import format_document
 
 
 class FmcTests(FilesystemCase):
@@ -20,24 +24,42 @@ class FmcTests(FilesystemCase):
         model = compile_repository(repository)
         output = self.root / "generated"
         generate(model, output, "fmc_model")
-        initialize = runpy.run_path(str(repository / "examples/create_sqlite_demo.py"))["create"]
+        module = load_generated(output / "fmc_model", "fmc_model")
+        plan = repository / "examples/demo.yaplan"
+        self.assertEqual(
+            format_document(plan.read_text(encoding="utf-8")),
+            plan.read_text(encoding="utf-8"),
+        )
         database = self.root / "demo.db"
-        initialize(output, database)
-        files = self.root / 'repository'
-        initialize(output, files, 'files')
+        files = self.root / "repository"
+        configs = []
+        for backend, destination in (("sqlite", database), ("files", files)):
+            config = self.write(
+                backend + ".lclcfg",
+                f"backend: '{backend}'\npath: '{destination.name}'\n",
+            )
+            configs.append(config)
+            with asyncio.run(module.FmcData.create(config)) as data:
+                report = data.apply(plan)
+                self.assertEqual(report.status, "committed")
+                undone = data.rollback(report.path)
+                self.assertEqual(undone.status, 'committed')
+                reader = data.read()
+                self.assertEqual(reader.get_fund('FUND00000001').status, Status.NO_ENTRY)
+                reader.close()
+                self.assertEqual(data.rollback(undone.path).status, 'committed')
         with self.assertRaises(FileExistsError):
-            initialize(output, files, 'files')
-        isolated = """import sys, runpy
+            asyncio.run(module.FmcData.create(configs[1]))
+        isolated = """import sys, asyncio
 from pathlib import Path
 from datetime import date
 from decimal import Decimal
 sys.path.insert(0, sys.argv[1])
 import fmc_model as m
 assert not any(n.startswith(('yambl_compiler', 'lark', 'jsonschema')) for n in sys.modules)
-for backend, path in [('sqlite',sys.argv[2]), ('files',sys.argv[3])]:
-    opened = (m.FmcReader.open_sqlite if backend=='sqlite' else m.FmcReader.open_files)(Path(path))
-    assert isinstance(opened,m.Success), opened
-    reader = opened.value
+for config in sys.argv[2:]:
+    data = asyncio.run(m.FmcData.open(Path(config)))
+    reader = data.read()
     assert reader.validate().value.valid
     bond = reader.get_security('BOND00000001').value
     assert bond.price.value
@@ -55,29 +77,43 @@ for backend, path in [('sqlite',sys.argv[2]), ('files',sys.argv[3])]:
     assert isinstance(results.value[2],m.Partial), results
     assert results.value[2].value == {'Industrials':Decimal('10175.625')}, results
     reader.close()
+    data.close()
     assert bond.read_price(date(2026,1,2),price_source=m.PriceSourcesCode('Primary')) == m.Success(Decimal('101.25'))
 print('independent FMC reads and validation passed')
 """
+        examples = re.findall(
+            r"```python\n(.*?)```",
+            (repository / "README.md").read_text(encoding="utf-8"),
+            re.S,
+        )
+        self.assertEqual(len(examples), 2)
+        for example in examples:
+            for backend, config in zip(("sqlite", "files"), configs, strict=True):
+                example = example.replace(
+                    f"../fmc-data-model/examples/{backend}.lclcfg", config.as_posix()
+                )
+            isolated += "\nexec(" + repr(example) + ")\n"
         completed = subprocess.run(
             [
                 sys.executable,
-                '-I',
-                '-S',
-                '-c',
+                "-I",
+                "-c",
                 isolated,
                 str(output),
-                str(database),
-                str(files),
+                *(str(config) for config in configs),
             ],
             capture_output=True,
             text=True,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
-        self.assertIn('independent FMC reads and validation passed', completed.stdout)
+        self.assertIn("independent FMC reads and validation passed", completed.stdout)
+        self.assertIn("101.25", completed.stdout)
+        self.assertIn("Financials", completed.stdout)
         before = database.read_bytes()
         with self.assertRaises(FileExistsError):
-            initialize(output, database)
+            asyncio.run(module.FmcData.create(configs[0]))
         self.assertEqual(database.read_bytes(), before)
+
         module = load_generated(output / "fmc_model", "fmc_model")
         original = Path.read_text
 
@@ -87,7 +123,9 @@ print('independent FMC reads and validation passed')
             return original(path, *args, **kwargs)
 
         with patch.object(Path, "read_text", independent):
-            reader = module.FmcReader.open(database).value
+            data = asyncio.run(module.FmcData.open(configs[0]))
+            self.addCleanup(data.close)
+            reader = data.read()
             self.addCleanup(reader.close)
             bond = reader.get_security("BOND00000001").value
             self.assertIsInstance(bond, module.Bond)
@@ -120,3 +158,26 @@ print('independent FMC reads and validation passed')
             self.assertEqual(events[2][1].status, Status.NO_ENTRY)
             reader.close()
         self.assertEqual(database.read_bytes(), before)
+
+    def test_corrupt_physical_data_is_not_recovered_to_other(self):
+        repository = Path(__file__).parents[3] / "fmc-data-model"
+        output = self.root / "generated"
+        generate(compile_repository(repository), output, "fmc_model")
+        module = load_generated(output / "fmc_model", "fmc_model")
+        config = self.write("data.lclcfg", "backend: 'sqlite'\npath: 'data.db'\n")
+        with asyncio.run(module.FmcData.create(config)) as data:
+            data.apply(repository / "examples/demo.yaplan")
+            for sql in (
+                "UPDATE tb_core_security_price SET price='broken' WHERE id='BOND00000002' AND dim_price_source='Primary'",
+                "UPDATE tb_core_security_price SET price='50' WHERE id='BOND00000002' AND dim_price_source='Primary'; UPDATE tb_core_issuer_industry SET valid_to='2026-01-07' WHERE id='ISSR00000001' AND valid_to='2026-01-06'",
+            ):
+                with closing(sqlite3.connect(self.root / "data.db")) as connection, connection:
+                    connection.executescript(sql)
+                reader = data.read()
+                try:
+                    result = reader.get_fund("FUND00000001").value.read_industry_market_value(
+                        as_of_date=date(2026, 1, 6), best_effort=True
+                    )
+                    self.assertEqual(result.status, Status.ERROR)
+                finally:
+                    reader.close()

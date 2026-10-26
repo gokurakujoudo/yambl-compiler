@@ -54,7 +54,7 @@ class Data:
         row = next((r for r in self.tables[entity.table] if r[entity.column] == encoded), None)
         if row is None:
             raise ValueError(f'entity does not exist: {entity.definition.identity} {literal(id_)}')
-        if 'entity_type' not in row:
+        if entity.root not in self.layout.entities:
             return entity
         actual = self.catalog.entity(str(row['entity_type']))
         ancestor = actual.definition

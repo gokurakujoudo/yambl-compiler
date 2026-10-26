@@ -10,6 +10,7 @@ from yambl_compiler.transactions.model import (
     Condition,
     Group,
     Image,
+    ObjectValue,
     Operation,
     Plan,
     Symbol,
@@ -46,6 +47,47 @@ class ExecutionTests(CatalogCase):
     def put(self, target, rows, columns=('value',), scope=None):
         selected = self.scope if scope is None else scope
         self.data.put(target, selected, Image(target, columns, rows))
+
+    def test_config_group_entity_type_is_a_business_attribute(self):
+        scope = (Condition("config_group_id", "group"),)
+        transaction = self.apply(
+            Group(
+                "configuration",
+                (
+                    Operation(
+                        "insert",
+                        "builtins.ConfigGroup",
+                        ("config_group_id", "entity_type", "priority"),
+                        (("group", Symbol("A"), 10),),
+                    ),
+                    Operation(
+                        "replace",
+                        "builtins.ConfigGroup.when",
+                        ("value",),
+                        ((ObjectValue(()),),),
+                        scope,
+                    ),
+                    Operation(
+                        "replace",
+                        "builtins.ConfigGroup.then_set",
+                        ("value",),
+                        ((ObjectValue(((Symbol("A.limit"), 7),)),),),
+                        scope,
+                    ),
+                ),
+            )
+        )
+        entity = self.catalog.entity("builtins.ConfigGroup")
+        self.assertEqual(self.data.actual(entity, "group"), entity)
+        original = self.data.entity_images(entity, "group")
+        self.assertEqual(
+            self.data.image("builtins.ConfigGroup.entity_type", scope).rows,
+            (("group", Symbol("A")),),
+        )
+        reversed_groups = rollback(self.data, transaction)
+        self.assertEqual(self.data.tables["tb_config_group"], [])
+        rollback(self.data, replace(transaction, groups=reversed_groups))
+        self.assertEqual(self.data.entity_images(entity, "group"), original)
 
     def test_patch_rollback_preserves_later_fields(self):
         self.put('A.text', (('before',),))
