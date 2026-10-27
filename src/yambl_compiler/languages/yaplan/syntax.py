@@ -55,11 +55,12 @@ def from_tree(node: Tree[Token]) -> Plan:
     """Decode a standalone or embedded Plan.
 
     :param node: Complete Plan subtree.
-    :returns: Model-bound plan.
+    :returns: Plan with an optional model binding.
     :raises ValueError: On invalid metadata or repeated groups.
     """
     version = revision(children(node, 'revision')[0])
-    model = digest(children(node, 'model_digest')[0])
+    models = children(node, 'model_digest')
+    model = digest(models[0]) if models else None
     groups: list[Group] = []
     for group in children(node, 'group'):
         name = str(tokens(group)[1])

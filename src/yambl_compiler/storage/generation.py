@@ -211,6 +211,7 @@ def python_package(layout: Layout, package: str) -> str:
         "Reader",
         "DataStore",
         "TransactionReport",
+        "TransactionStatus",
         "ReadResult",
         "EntityRef",
         "Success",
@@ -231,6 +232,7 @@ def python_package(layout: Layout, package: str) -> str:
         "PROGRAMS",
         "Mapping",
         "Sequence",
+        "MODEL_DIGEST",
     }
     if len(set(public_names)) != len(public_names) or set(public_names) & reserved:
         raise ValueError("generated Python public-name collision")
@@ -251,11 +253,12 @@ def python_package(layout: Layout, package: str) -> str:
         "from ._computing import Omitted, UNSET",
         "from ._calculations import PROGRAMS",
         "from ._runtime import EntityHandle, Reader",
-        "from .transactions.repository import DataStore, TransactionReport",
+        "from .transactions.repository import DataStore, TransactionReport, TransactionStatus",
         "from ._validation import ValidationReport, ValidationIssue",
         "",
     ]
     lines.append('from ._value_types import ' + ', '.join(sorted(value_names.values())))
+    lines.extend(['', f'MODEL_DIGEST = {layout.model.model_digest!r}'])
     for target, name in sorted(codes.items()):
         dictionary = next((d for d in layout.model.definitions if d.identity == target), None)
         lines.extend(
@@ -554,6 +557,8 @@ def python_package(layout: Layout, package: str) -> str:
                         "ValidationReport",
                         "ValidationIssue",
                         "TransactionReport",
+                        "TransactionStatus",
+                        "MODEL_DIGEST",
                     ]
                 )
             ),

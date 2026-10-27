@@ -1,6 +1,7 @@
 """Edit detached physical records through model-bound business data images."""
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import date
 
@@ -31,6 +32,37 @@ class Data:
         self.tables = {name: [dict(row) for row in rows] for name, rows in tables.items()}
         self.schema = {t.name: t for t in layout.tables}
 
+    def select(self, table: str, keys: Mapping[str, object]) -> list[Row]:
+        """Select mutable candidate rows by physical equality coordinates.
+
+        :param table: Physical table name.
+        :param keys: Equality conditions.
+        :returns: Matching candidate-owned rows.
+        """
+        return [
+            row
+            for row in self.tables[table]
+            if all(row[key] == value for key, value in keys.items())
+        ]
+
+    def add(self, table: str, row: Row) -> None:
+        """Append a physical row to the candidate.
+
+        :param table: Physical table name.
+        :param row: Candidate-owned row.
+        :returns: None.
+        """
+        self.tables[table].append(row)
+
+    def remove(self, table: str, row: Row) -> None:
+        """Remove a physical row from the candidate.
+
+        :param table: Physical table name.
+        :param row: Candidate-owned row.
+        :returns: None.
+        """
+        self.tables[table].remove(row)
+
     def blank(self, table: str, values: Row) -> Row:
         """Fill physical defaults for a newly created record.
 
@@ -52,7 +84,7 @@ class Data:
         :raises ValueError: On absent IDs or incompatible actual types.
         """
         encoded = self.catalog.scalar(entity.id.type, id_)
-        row = next((r for r in self.tables[entity.table] if r[entity.column] == encoded), None)
+        row = next(iter(self.select(entity.table, {entity.column: encoded})), None)
         if row is None:
             raise ValueError(f'entity does not exist: {entity.definition.identity} {literal(id_)}')
         if entity.root not in self.layout.entities:
@@ -77,12 +109,12 @@ class Data:
         :raises ValueError: If the inheritance root already contains this ID.
         """
         encoded = self.catalog.scalar(entity.id.type, id_)
-        if any(r[entity.column] == encoded for r in self.tables[entity.table]):
+        if self.select(entity.table, {entity.column: encoded}):
             raise ValueError('entity ID already exists')
         values: Row = {entity.column: encoded}
         if entity.root in self.layout.entities:
             values['entity_type'] = entity.definition.identity
-        self.tables[entity.table].append(self.blank(entity.table, values))
+        self.add(entity.table, self.blank(entity.table, values))
 
     def coordinates(self, entity: Entity, field: Field, stored: StoredField) -> dict[str, str]:
         """Map public row coordinates to physical columns.
@@ -193,7 +225,7 @@ class Data:
         if stored.value:
             return self.catalog.literal(field.type, row[stored.value])
         keys = self.schema[stored.members].primary[:-1]
-        members = [r for r in self.tables[stored.members] if all(r[k] == row[k] for k in keys)]
+        members = self.select(stored.members, {k: row[k] for k in keys})
         if field.type.name == 'collection':
             values = [
                 self.catalog.literal(field.type.arguments[0], r['member_id']) for r in members
@@ -244,7 +276,7 @@ class Data:
         coords = self.coordinates(entity, field, stored)
         rows: list[tuple[Value, ...]] = []
         dimensions = {d.key: d.type for d in stored.dimensions}
-        for physical in self.tables[stored.table]:
+        for physical in self.select(stored.table, filters):
             if not self.matches(physical, filters, interval, field.category):
                 continue
             row = dict(physical)
@@ -277,7 +309,7 @@ class Data:
         if not stored.members:
             return []
         keys = self.schema[stored.members].primary[:-1]
-        return [dict(r) for r in self.tables[stored.members] if all(r[k] == owner[k] for k in keys)]
+        return [dict(r) for r in self.select(stored.members, {k: owner[k] for k in keys})]
 
     def erase(self, entity: Entity, stored: StoredField, row: Row) -> None:
         """Remove a field row while retaining unrelated shared-table fields.
@@ -289,13 +321,12 @@ class Data:
         """
         if stored.members:
             keys = self.schema[stored.members].primary[:-1]
-            self.tables[stored.members] = [
-                r for r in self.tables[stored.members] if not all(r[k] == row[k] for k in keys)
-            ]
+            for member in self.select(stored.members, {k: row[k] for k in keys}):
+                self.remove(stored.members, member)
         if stored.table != entity.table and (
             stored.key_values or len(self.schema[stored.table].fields) == 1
         ):
-            self.tables[stored.table].remove(row)
+            self.remove(stored.table, row)
         else:
             row[stored.state] = 'NO_ENTRY'
             if stored.value:
@@ -312,7 +343,7 @@ class Data:
         if field is None or stored is None:
             raise ValueError('scope deletion requires a field')
         filters, interval = self.selection(entity, field, stored, conditions)
-        for row in list(self.tables[stored.table]):
+        for row in self.select(stored.table, filters):
             if not self.matches(row, filters, interval, field.category):
                 continue
             members = self.member_rows(stored, row)
@@ -324,11 +355,10 @@ class Data:
                     fragments.append({**row, 'valid_from': interval[1]})
             self.erase(entity, stored, row)
             for fragment in fragments:
-                self.tables[stored.table].append(fragment)
+                self.add(stored.table, fragment)
                 if stored.members:
-                    self.tables[stored.members].extend(
-                        {**member, 'valid_from': fragment['valid_from']} for member in members
-                    )
+                    for member in members:
+                        self.add(stored.members, {**member, 'valid_from': fragment['valid_from']})
 
     def encode_members(
         self, entity: Entity, field: Field, stored: StoredField, row: Row, value: Value
@@ -467,15 +497,14 @@ class Data:
         self.clear(target, conditions)
         for row, members in additions:
             keys = self.schema[stored.table].primary
-            existing = next(
-                (r for r in self.tables[stored.table] if all(r[k] == row[k] for k in keys)), None
-            )
+            existing = next(iter(self.select(stored.table, {k: row[k] for k in keys})), None)
             if existing is None:
-                self.tables[stored.table].append(self.blank(stored.table, row))
+                self.add(stored.table, self.blank(stored.table, row))
             else:
                 existing.update(row)
             if stored.members:
-                self.tables[stored.members].extend(members)
+                for member in members:
+                    self.add(stored.members, member)
 
     def entity_images(self, entity: Entity, id_: Value) -> tuple[Image, ...]:
         """Capture an entity identity and every owned field without defaults.
@@ -514,9 +543,8 @@ class Data:
         for image in images[1:]:
             self.clear(image.target, (Condition(entity.id.name, id_),))
         encoded = self.catalog.scalar(entity.id.type, id_)
-        self.tables[entity.table] = [
-            r for r in self.tables[entity.table] if r[entity.column] != encoded
-        ]
+        for row in self.select(entity.table, {entity.column: encoded}):
+            self.remove(entity.table, row)
 
     def validate(self) -> None:
         """Validate physical record shapes, unique keys and owned-row references.

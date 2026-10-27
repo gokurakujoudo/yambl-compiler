@@ -171,6 +171,33 @@ class GroupTests(FilesystemCase):
         self.assertEqual(reader.get_child("c").value.read_enabled().status, Status.NOT_APPLICABLE)
         self.assertEqual(reader.get_security("s").value.read_coupon().status, Status.NOT_DEFINED)
 
+    def test_overloads_cannot_choose_different_storage_groups(self):
+        self.write(
+            'main.yambl',
+            "entity A { id key: string } "
+            "entity B inherits A { @overload @sparse('info') attr x: string } "
+            "entity C inherits A { @overload attr x: string }",
+        )
+        model = compile_repository(self.root)
+        branch_b = next(d for d in model.definitions if d.identity == 'B')
+        sparse = next(d for d in branch_b.fields[0].decorators if d.target == 'builtins.sparse')
+        branch_c = next(d for d in model.definitions if d.identity == 'C')
+        conflict = replace(
+            branch_c.fields[0],
+            decorators=(*branch_c.fields[0].decorators, replace(sparse, target='builtins.dense')),
+        )
+        model = replace(
+            model,
+            definitions=tuple(
+                replace(d, fields=(conflict,)) if d.identity == 'C' else d
+                for d in model.definitions
+            ),
+        )
+        with self.assertRaisesRegex(
+            ValueError, 'conflicting storage groups across field implementations'
+        ):
+            build_layout(model)
+
     def test_group_collisions_and_shared_overloads(self):
         source = "entity A { id key: string } entity B inherits A { @overload @sparse('info') attr x: string } entity C inherits A { @overload attr x: string }"
         self.write("main.yambl", source)
@@ -184,14 +211,14 @@ class GroupTests(FilesystemCase):
             [
                 l
                 for l in python_package(layout, "sample_model").splitlines()
-                if "contract_digest =" not in l
+                if "contract_digest =" not in l and not l.startswith("MODEL_DIGEST =")
             ],
             [
                 l
                 for l in python_package(
                     build_layout(compile_repository(self.root)), "sample_model"
                 ).splitlines()
-                if "contract_digest =" not in l
+                if "contract_digest =" not in l and not l.startswith("MODEL_DIGEST =")
             ],
         )
         declaration = next(d for d in model.definitions if d.identity == "B")

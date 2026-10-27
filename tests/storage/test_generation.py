@@ -24,6 +24,31 @@ class GenerationTests(FilesystemCase):
         self.write("main.yambl", SOURCE)
         self.model = compile_repository(self.root)
 
+    def test_sqlite_query_plans_use_identity_and_temporal_indexes(self):
+        output = self.root / 'indexes'
+        generate(self.model, output, 'sample_model')
+        with closing(sqlite3.connect(':memory:')) as db:
+            db.executescript((output / 'schema.sql').read_text(encoding='utf-8'))
+            identity = db.execute(
+                'EXPLAIN QUERY PLAN SELECT * FROM tb_a WHERE id = ?', ('a',)
+            ).fetchall()
+            snapshot = db.execute(
+                'EXPLAIN QUERY PLAN SELECT * FROM tb_a_price '
+                'WHERE id = ? AND dim_source = ? AND date >= ? AND date <= ?',
+                ('a', 'X', '2026-01-01', '2026-01-31'),
+            ).fetchall()
+            scd = db.execute(
+                'EXPLAIN QUERY PLAN SELECT * FROM tb_a_outstanding '
+                'WHERE id = ? AND valid_from <= ? AND valid_to > ?',
+                ('a', '2026-01-31', '2026-01-01'),
+            ).fetchall()
+        self.assertIn('INDEX', identity[0][-1])
+        self.assertIn('id=?', identity[0][-1])
+        self.assertIn('INDEX', snapshot[0][-1])
+        self.assertIn('date>?', snapshot[0][-1])
+        self.assertIn('INDEX', scd[0][-1])
+        self.assertIn('id=?', scd[0][-1])
+
     def test_all_documented_tables_match_sqlite_and_manifest(self):
         output = self.root / "output"
         layout = generate(self.model, output, "sample_model")

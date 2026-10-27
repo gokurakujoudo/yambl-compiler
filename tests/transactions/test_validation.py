@@ -73,6 +73,92 @@ class ValidationTests(CatalogCase):
             with self.subTest(op=op), self.assertRaisesRegex(ValueError, message):
                 validator.operation(op)
 
+    def test_plan_write_independence_and_optional_digest(self):
+        validator = PlanValidator(self.catalog.layout)
+        scope = (Condition('key', 'a'),)
+        insert = Operation('insert', 'A', ('key', 'text'), (('a', 'first'),))
+        update = Operation('update', 'A', ('key', 'count'), (('a', 1),))
+        first = Operation('replace', 'A.price', ('day', 'source', 'value'), (), scope)
+        second = Operation('delete', 'A.price', (), (), (*scope, Condition('source', 'One')))
+        repeated = Operation('update', 'A', ('key', 'text'), (('a', 'second'),))
+        for operations in ((insert, repeated), (first, second)):
+            with (
+                self.subTest(operations=operations),
+                self.assertRaisesRegex(ValueError, 'overlapping'),
+            ):
+                validator.validate(
+                    Plan('p', None, tuple(Group(str(i), (op,)) for i, op in enumerate(operations)))
+                )
+        validator.validate(Plan('p', None, (Group('g', (insert,)),)))
+        validator.validate(Plan('p', None, (Group('g', (insert, update, first)),)))
+        validator.validate(Plan('p', None, (Group('g', (update, first)),)))
+        validator.validate(
+            Plan(
+                'p',
+                None,
+                (Group('g', (insert, Operation('update', 'A', ('key', 'count'), (('b', 1),)))),),
+            )
+        )
+
+    def test_replacement_coordinates_must_be_within_scope(self):
+        validator = PlanValidator(self.catalog.layout)
+        scope = (Condition('key', 'a'),)
+        period = Condition('day', '2026-01-01', '2026-02-01')
+        cases = (
+            (Operation('replace', 'A.text', ('key', 'value'), (('b', 'name'),), scope), 'outside'),
+            (
+                Operation(
+                    'replace',
+                    'A.price',
+                    ('day', 'source', 'value'),
+                    (('2026-01-02', 'Two', 1),),
+                    (*scope, Condition('source', 'One')),
+                ),
+                'outside',
+            ),
+            (
+                Operation(
+                    'replace',
+                    'A.price',
+                    ('day', 'source', 'value'),
+                    (('2026-02-01', 'One', 1),),
+                    (*scope, period),
+                ),
+                'outside',
+            ),
+            (
+                Operation(
+                    'replace',
+                    'A.outstanding',
+                    ('valid_from', 'valid_to', 'value'),
+                    (('2026-01-01', '2026-02-02', 1),),
+                    (*scope, period),
+                ),
+                'crosses',
+            ),
+            (
+                Operation(
+                    'replace',
+                    'A.outstanding',
+                    ('valid_from', 'valid_to', 'value'),
+                    (('2026-01-02', '2026-01-02', 1),),
+                    (*scope, period),
+                ),
+                'crosses',
+            ),
+        )
+        for operation, message in cases:
+            with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, message):
+                validator.validate(Plan('p', None, (Group('g', (operation,)),)))
+        valid = Operation(
+            'replace',
+            'A.outstanding',
+            ('valid_from', 'valid_to', 'value'),
+            (('2026-01-01', '2026-02-01', 1),),
+            (*scope, period),
+        )
+        validator.validate(Plan('p', None, (Group('g', (valid,)),)))
+
     def test_fmc_plan_including_dynamic_decodes_matches_compiled_contract(self):
         repository = Path(__file__).parents[3] / 'fmc-data-model'
         plan = parse((repository / 'examples/demo.yaplan').read_text(encoding='utf-8'))

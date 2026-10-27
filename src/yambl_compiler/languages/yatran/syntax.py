@@ -62,6 +62,8 @@ def from_tree(node: Tree[Token]) -> Transaction:
         raise fail(node, f'invalid transaction metadata: {error}') from error
     checksum = digest(children(node, 'digest')[0])
     plan = plan_from_tree(children(node, 'plan')[0])
+    if plan.model is None:
+        raise fail(node, 'transaction plan requires a model digest')
     groups: list[TransactionGroup] = []
     for group in children(node, 'transaction_group'):
         name = str(tokens(group)[1])

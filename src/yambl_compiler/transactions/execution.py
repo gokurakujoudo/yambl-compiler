@@ -1,61 +1,17 @@
 """Build atomic candidate changes and preserve later edits during rollback."""
 
 import json
-from dataclasses import dataclass
 from decimal import Decimal
 
+from yambl_compiler.ir.model import Field
 from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol, Value
 from yambl_compiler.languages.shared.writing import literal
 from yambl_compiler.languages.yaplan.model import Operation, Plan
 from yambl_compiler.languages.yatran.model import Change, Image, Transaction, TransactionGroup
+from yambl_compiler.storage.backends import Row
+from yambl_compiler.storage.records import StoredField
+from yambl_compiler.transactions.binding import Entity
 from yambl_compiler.transactions.editing import Data
-
-
-@dataclass(frozen=True)
-class Claim:
-    """Identify an operation's write footprint before publishing any changes.
-
-    :param root: Shared entity identity root.
-    :param id: Canonical ID spelling.
-    :param field: Logical field, * for deletion, + for insertion.
-    :param conditions: Boundable scope conditions.
-    """
-
-    root: str
-    id: str
-    field: str
-    conditions: tuple[Condition, ...]
-
-
-def overlaps(left: Claim, right: Claim) -> bool:
-    """Detect overlapping write footprints, including wildcard coordinates.
-
-    :param left: Earlier operation claim.
-    :param right: New claim.
-    :returns: Whether both operations write the same logical data.
-    """
-    if (left.root, left.id) != (right.root, right.id):
-        return False
-    if '*' in (left.field, right.field):
-        return True
-    if '+' in (left.field, right.field):
-        return left.field == right.field
-    if left.field != right.field:
-        return False
-    other = {c.name: c for c in right.conditions}
-    for c in left.conditions:
-        if c.name not in other:
-            continue
-        d = other[c.name]
-        if c.end is None and d.end is None and c.value != d.value:
-            return False
-        if (
-            c.end is not None
-            and d.end is not None
-            and (str(c.end) <= str(d.value) or str(d.end) <= str(c.value))
-        ):
-            return False
-    return True
 
 
 class Execution:
@@ -68,24 +24,55 @@ class Execution:
         :returns: None.
         """
         self.data = data
-        self.claims: list[Claim] = []
+        self.claims: dict[tuple[str, str], set[str]] = {}
 
-    def claim(self, target: str, id_: Value, field: str, conditions: tuple[Condition, ...]) -> None:
-        """Reject overlap with any previously accepted operation.
+    def claim(self, target: str, id_: Value, field: str) -> None:
+        """Reject another write to an entity or its logical field.
 
         :param target: Entity type.
         :param id_: Business ID.
         :param field: Logical field or entity operation marker.
-        :param conditions: Scope coordinates.
         :returns: None.
         :raises ValueError: If the Plan contains overlapping writes.
         """
         entity = self.data.catalog.entity(target)
         id_text = str(self.data.catalog.scalar(entity.id.type, id_))
-        claim = Claim(entity.root, id_text, field, conditions)
-        if any(overlaps(previous, claim) for previous in self.claims):
+        claims = self.claims.setdefault((entity.root, id_text), set())
+        if field in claims or '*' in claims or (field == '*' and claims):
             raise ValueError(f'overlapping operations for {target}.{field}')
-        self.claims.append(claim)
+        claims.add(field)
+
+    def validate_claims(self, plan: Plan) -> None:
+        """Check independent entity and field writes across all plan groups.
+
+        :param plan: Model-bound or unbound Plan.
+        :returns: None without reading or changing instance data.
+        :raises ValueError: If operations write the same entity or field more than once.
+        """
+        self.claims.clear()
+        for group in plan.groups:
+            for operation in group.operations:
+                entity, field, _ = self.data.catalog.target(operation.target)
+                if operation.scope:
+                    owner = next((c for c in operation.scope if c.name == entity.id.name), None)
+                    if owner is None or owner.end is not None or field is None:
+                        raise ValueError('field scope requires owner ID')
+                    self.claim(entity.definition.identity, owner.value, field.identity)
+                    continue
+                if entity.id.name not in operation.columns:
+                    raise ValueError('entity operation requires its ID column')
+                id_index = operation.columns.index(entity.id.name)
+                for row in operation.rows:
+                    if operation.kind in ('insert', 'delete'):
+                        marker = '+' if operation.kind == 'insert' else '*'
+                        self.claim(entity.definition.identity, row[id_index], marker)
+                    if operation.kind != 'delete':
+                        for name in operation.columns:
+                            if name != entity.id.name:
+                                current, _ = self.data.catalog.field(entity, name)
+                                self.claim(
+                                    entity.definition.identity, row[id_index], current.identity
+                                )
 
     def field(self, operation: Operation) -> Change:
         """Execute one complete field scope and retain its before/after images.
@@ -100,8 +87,7 @@ class Execution:
         if owner is None or owner.end is not None:
             raise ValueError('field scope requires owner ID')
         actual = self.data.actual(entity, owner.value)
-        actual_field, _ = self.data.catalog.field(actual, field.name)
-        self.claim(actual.definition.identity, owner.value, actual_field.identity, operation.scope)
+        self.data.catalog.field(actual, field.name)
         before = self.data.image(operation.target, operation.scope)
         self.expect(operation, len(before.rows))
         if operation.kind == 'delete':
@@ -144,31 +130,120 @@ class Execution:
         entity = self.data.catalog.entity(operation.target)
         if operation.columns != (entity.id.name,):
             raise ValueError('entity deletion accepts only the ID column')
-        existing = {row[entity.column] for row in self.data.tables[entity.table]}
         return tuple(
             values
             for values in operation.rows
-            if self.data.catalog.scalar(entity.id.type, values[0]) in existing
+            if self.data.select(
+                entity.table,
+                {entity.column: self.data.catalog.scalar(entity.id.type, values[0])},
+            )
         )
 
     def validate_expectations(self, plan: Plan) -> None:
-        """Check explicit expectations against the unchanged repository snapshot.
+        """Check expectations using the snapshot and earlier planned identity rows.
 
-        :param plan: Parsed Plan with a matching model digest.
-        :returns: None; neither Plan operations nor storage writes are performed.
+        :param plan: Parsed Plan with an optional matching model digest.
+        :returns: None; no candidate data or storage writes are performed.
         :raises ValueError: On model mismatch, invalid selectors or count mismatch.
         """
-        if plan.model != self.data.layout.model.model_digest:
+        if plan.model is not None and plan.model != self.data.layout.model.model_digest:
             raise ValueError('Plan model digest does not match the repository')
+        planned: dict[str, dict[tuple[object, ...], Row]] = {}
+        inserted: dict[tuple[str, str], Entity] = {}
+
+        def mark(table: str, row: Row) -> None:
+            """Retain a planned row's identity and coordinates, not its payload.
+
+            :param table: Physical table holding the row.
+            :param row: Its identifying and coordinate values.
+            :returns: None.
+            """
+            key = tuple(row[column] for column in self.data.schema[table].primary)
+            planned.setdefault(table, {})[key] = row
+
+        def mark_field(
+            entity: Entity, field: Field, stored: StoredField, record: dict[str, Value]
+        ) -> None:
+            """Track a row created by a preceding field write.
+
+            :param entity: Declared field owner.
+            :param field: Model field.
+            :param stored: Physical field layout.
+            :param record: Field coordinates and value.
+            :returns: None.
+            """
+            coordinates = self.data.coordinates(entity, field, stored)
+            types = {entity.id.name: entity.id.type, **{d.key: d.type for d in stored.dimensions}}
+            row: Row = dict(stored.key_values)
+            for name, column in coordinates.items():
+                value = record[name]
+                row[column] = (
+                    self.data.catalog.scalar(types[name], value) if name in types else value
+                )
+            mark(stored.table, row)
+
         for group in plan.groups:
             for operation in group.operations:
+                entity, field, stored = self.data.catalog.target(operation.target)
                 if operation.expect is not None:
-                    count = (
-                        len(self.data.image(operation.target, operation.scope).rows)
-                        if operation.scope
-                        else len(self.matched_entity_rows(operation))
-                    )
+                    if operation.scope and field is not None and stored is not None:
+                        owner = next((c for c in operation.scope if c.name == entity.id.name), None)
+                        if owner is None or owner.end is not None:
+                            raise ValueError('field scope requires owner ID')
+                        id_text = str(self.data.catalog.scalar(entity.id.type, owner.value))
+                        actual = inserted.get((entity.root, id_text))
+                        if actual is not None:
+                            ancestor = actual.definition
+                            while (
+                                ancestor.identity != entity.definition.identity
+                                and ancestor.parent in self.data.catalog.definitions
+                            ):
+                                ancestor = self.data.catalog.definitions[ancestor.parent]
+                            if ancestor.identity != entity.definition.identity:
+                                raise ValueError('ID belongs to an incompatible entity type')
+                            self.data.catalog.field(actual, field.name)
+                        count = len(self.data.image(operation.target, operation.scope).rows)
+                        additions = planned.get(stored.table, {})
+                        if additions:
+                            filters, interval = self.data.selection(
+                                entity, field, stored, operation.scope
+                            )
+                            primary = self.data.schema[stored.table].primary
+                            existing = {
+                                tuple(row[key] for key in primary)
+                                for row in self.data.select(stored.table, filters)
+                                if self.data.matches(row, filters, interval, field.category)
+                            }
+                            count += sum(
+                                key not in existing
+                                and self.data.matches(row, filters, interval, field.category)
+                                for key, row in additions.items()
+                            )
+                    else:
+                        count = len(self.matched_entity_rows(operation))
                     self.expect(operation, count)
+                if operation.scope and field is not None and stored is not None:
+                    if operation.kind == 'replace':
+                        constants = {c.name: c.value for c in operation.scope if c.end is None}
+                        for row in operation.rows:
+                            mark_field(
+                                entity,
+                                field,
+                                stored,
+                                {**constants, **dict(zip(operation.columns, row, strict=True))},
+                            )
+                elif operation.kind in ('insert', 'update'):
+                    for row in operation.rows:
+                        record = dict(zip(operation.columns, row, strict=True))
+                        id_ = record[entity.id.name]
+                        if operation.kind == 'insert':
+                            value = self.data.catalog.scalar(entity.id.type, id_)
+                            inserted[(entity.root, str(value))] = entity
+                            mark(entity.table, {entity.column: value})
+                        for name in operation.columns:
+                            if name != entity.id.name:
+                                current, binding = self.data.catalog.field(entity, name)
+                                mark_field(entity, current, binding, record)
 
     def entities(self, operation: Operation) -> tuple[Change, ...]:
         """Execute a batch of ID-based entity mutations.
@@ -191,13 +266,11 @@ class Execution:
             id_ = record.pop(entity.id.name)
             scope = (Condition(entity.id.name, id_),)
             if operation.kind == 'insert':
-                self.claim(operation.target, id_, '+', scope)
                 self.data.insert(entity, id_)
                 actual = entity
             else:
                 actual = self.data.actual(entity, id_)
             if operation.kind == 'delete':
-                self.claim(operation.target, id_, '*', scope)
                 entity_before = self.data.entity_images(actual, id_)
                 self.data.delete(actual, id_, operation.owned_data)
                 changes.append(Change(actual.definition.identity, scope, entity_before, ()))
@@ -211,7 +284,6 @@ class Execution:
                 ):
                     raise ValueError('coordinate and collection fields require a field scope')
                 target = actual.definition.identity + '.' + name
-                self.claim(actual.definition.identity, id_, field.identity, scope)
                 before = self.data.image(target, scope)
                 self.data.put(target, scope, Image(target, ('value',), ((value,),)))
                 if operation.kind == 'update':
@@ -235,8 +307,22 @@ class Execution:
         :returns: Actual changes grouped by Plan group.
         :raises ValueError: On model mismatch or invalid operations.
         """
-        if plan.model != self.data.layout.model.model_digest:
+        result = self.prepare(plan)
+        self.data.validate()
+        return result
+
+    def prepare(self, plan: Plan) -> tuple[TransactionGroup, ...]:
+        """Prepare unvalidated candidate changes without publishing them.
+
+        The caller must validate the final candidate before it is published.
+
+        :param plan: Model-bound or unbound Plan.
+        :returns: Actual changes grouped by Plan group.
+        :raises ValueError: On model mismatch or invalid operations.
+        """
+        if plan.model is not None and plan.model != self.data.layout.model.model_digest:
             raise ValueError('Plan model digest does not match the repository')
+        self.validate_claims(plan)
         groups: list[TransactionGroup] = []
         for group in plan.groups:
             changes: list[Change] = []
@@ -246,7 +332,6 @@ class Execution:
                 else:
                     changes.extend(self.entities(operation))
             groups.append(TransactionGroup(group.name, tuple(changes)))
-        self.data.validate()
         return tuple(groups)
 
 
@@ -325,6 +410,24 @@ def rollback(
     :returns: Actual reverse changes and conflict warnings.
     :raises ValueError: On invalid selection or model mismatch.
     """
+    result = prepare_rollback(data, transaction, selected)
+    data.validate()
+    return result
+
+
+def prepare_rollback(
+    data: Data, transaction: Transaction, selected: tuple[str, ...] | None = None
+) -> tuple[TransactionGroup, ...]:
+    """Prepare an unvalidated rollback without publishing it.
+
+    The caller must validate the final candidate before it is published.
+
+    :param data: Detached candidate snapshot.
+    :param transaction: Validated source execution record.
+    :param selected: Unique group names, or None for every recorded group.
+    :returns: Actual reverse changes and conflict warnings.
+    :raises ValueError: On invalid selection or model mismatch.
+    """
     if transaction.plan.model != data.layout.model.model_digest:
         raise ValueError('Transaction model digest does not match the repository')
     names = {g.name for g in transaction.groups}
@@ -340,7 +443,7 @@ def rollback(
             entity, field, _ = data.catalog.target(change.target)
             id_ = next(c.value for c in change.scope if c.name == entity.id.name)
             encoded = data.catalog.scalar(entity.id.type, id_)
-            exists = any(r[entity.column] == encoded for r in data.tables[entity.table])
+            exists = bool(data.select(entity.table, {entity.column: encoded}))
             if exists:
                 try:
                     actual = data.actual(entity, id_)
@@ -372,5 +475,4 @@ def rollback(
                 after = (data.image(change.target, change.scope),)
             changes.append(Change(change.target, change.scope, current, after))
         result.append(TransactionGroup(group.name, tuple(changes), tuple(warnings)))
-    data.validate()
     return tuple(result)

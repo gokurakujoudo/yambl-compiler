@@ -109,7 +109,7 @@ class DataCliTests(CatalogCase):
         with patch.object(self.api.SampleData, 'export', side_effect=OSError('export unavailable')):
             code, reports, output = self.invoke('apply', config, '-o', 'source', str(self.plan))
         self.assertEqual(code, 0, output)
-        self.assertEqual(reports[0]['status'], 'publication_pending')
+        self.assertEqual(reports[0]['status'], 'export_pending')
         self.assertIn('export unavailable', reports[0]['publication_error'])
         with asyncio.run(self.api.SampleData.open(config)) as data:
             reader = data.read()
@@ -117,3 +117,22 @@ class DataCliTests(CatalogCase):
             reader.close()
         code, _, _ = self.invoke('apply', config, '-o', 'source', str(self.plan))
         self.assertNotEqual(code, 0)
+
+    def test_check_data_reports_reader_close_failure(self):
+        config = self.config('sqlite')
+        self.assertEqual(self.invoke('create', config)[0], 0)
+        backend_type = self.api.SampleData.open_backend.__globals__['SQLiteBackend']
+        close = backend_type.close
+        calls = 0
+
+        def failing_close(backend):
+            nonlocal calls
+            calls += 1
+            close(backend)
+            if calls == 2:
+                raise OSError('reader close unavailable')
+
+        with patch.object(backend_type, 'close', failing_close):
+            code, _, output = self.invoke('check-data', config)
+        self.assertNotEqual(code, 0)
+        self.assertIn('reader close failed', output)

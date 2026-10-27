@@ -33,8 +33,10 @@ from pathlib import Path
 import sqlite3
 import sys
 from unittest.mock import patch
+from uuid import uuid4
 from tests.support import load_generated
 from yambl_compiler.transactions import repository
+from yambl_compiler.transactions import incremental_publication as publication
 
 root, config, phase = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 module = load_generated(root / 'generated' / 'sample_model', 'sample_model')
@@ -42,15 +44,25 @@ class Store(repository.DataStore):
     reader_type = module.SampleReader
     schema_path = root / 'generated' / 'schema.sql'
 store = asyncio.run(Store.open(config))
-original_write = repository.write_file
 original_replace = Path.replace
 original_unlink = Path.unlink
 original_connect = sqlite3.connect
+original_prepare = repository.prepare_files
+original_fsync = os.fsync
 
-def write(path, content):
-    original_write(path, content)
-    if phase == 'prepare' and path.name == 'transaction.yatran':
+def fsync(fd):
+    original_fsync(fd)
+    if phase == 'prepare':
         os._exit(93)
+
+def prepare(*args, **kwargs):
+    with patch.object(publication.os, 'fsync', fsync):
+        result = original_prepare(*args, **kwargs)
+    if phase == 'cleanup':
+        orphan = store.path / 'versions' / str(uuid4())
+        (orphan / 'tables').mkdir(parents=True)
+        (orphan / 'repository.json').write_text('unpublished', encoding='utf-8')
+    return result
 
 def replace(path, target):
     if path.name == 'repository.pending' and phase == 'before_commit':
@@ -67,10 +79,12 @@ def unlink(path, *args, **kwargs):
     return result
 
 class Connection(sqlite3.Connection):
-    def __exit__(self, *args):
+    def commit(self):
+        assert self.execute('SELECT COUNT(*) FROM tb_yambl_transactions').fetchone()[0] == 1
+        assert self.execute("SELECT text FROM tb_a WHERE id='a'").fetchone()[0] == 'original'
         if phase == 'before_commit':
             os._exit(93)
-        result = super().__exit__(*args)
+        result = super().commit()
         if phase == 'after_commit':
             os._exit(93)
         return result
@@ -81,7 +95,7 @@ def connect(*args, **kwargs):
 def export(id_):
     os._exit(93)
 
-with patch.object(repository, 'write_file', write), patch.object(Path, 'replace', replace), patch.object(Path, 'unlink', unlink):
+with patch.object(repository, 'prepare_files', prepare), patch.object(Path, 'replace', replace), patch.object(Path, 'unlink', unlink):
     with patch.object(sqlite3, 'connect', connect):
         if phase == 'export':
             store.export = export
@@ -268,6 +282,150 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
                 reopened.close()
                 with self.assertRaises(FileExistsError):
                     await self.store_type.create(config)
+
+    async def test_open_and_read_do_not_materialize_all_tables(self):
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                created, config = await self.configured(backend)
+                created.close()
+                with patch.object(self.store_type, 'snapshot', side_effect=AssertionError('eager')):
+                    store = await self.store_type.open(config)
+                    self.addCleanup(store.close)
+                    with store.read() as reader:
+                        self.assertEqual(reader.get_a('absent').status, Status.NO_ENTRY)
+
+    async def test_reuse_parsed_plan_and_bind_optional_digest_on_commit(self):
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, _ = await self.configured(backend)
+                self.addCleanup(store.close)
+                source = self.write(
+                    f'{backend}-unbound.yaplan', dumps(replace(self.plan, model=None))
+                )
+                parsed = self.store_type.validate_plan_syntax(source)
+                self.assertIsNone(parsed.model)
+                source.unlink()
+                with self.assertLogs(self.store_type.apply.__module__, level='INFO') as logs:
+                    self.assertEqual(store.validate_plan_expectations(parsed).name, 'demo')
+                    report = store.apply(parsed)
+                self.assertIs(report.status, self.module.TransactionStatus.COMMITTED)
+                self.assertEqual(
+                    parse(report.path.read_text(encoding='utf-8')).plan.model, self.plan.model
+                )
+                self.assertTrue(any('phase=parse_and_bind' in line for line in logs.output))
+                self.assertTrue(any('phase=execute' in line for line in logs.output))
+                self.assertTrue(any('phase=publish' in line for line in logs.output))
+                undone = store.rollback(report.path)
+                self.assertIs(undone.status, self.module.TransactionStatus.COMMITTED)
+                self.assertIs(
+                    store.rollback(undone.path).status, self.module.TransactionStatus.COMMITTED
+                )
+                with self.assertRaisesRegex(ValueError, 'digest|model'):
+                    store.apply(replace(parsed, model='0' * 64))
+
+    async def test_validation_reader_close_failure_prevents_commit(self):
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, _ = await self.configured(backend)
+                self.addCleanup(store.close)
+                candidate_type = self.store_type.commit.__globals__['IncrementalData']
+                overlay_type = candidate_type.__init__.__globals__['Overlay']
+                with patch.object(overlay_type, 'close', side_effect=OSError('close failed')):
+                    with self.assertRaisesRegex(RuntimeError, 'reader close failed: close failed'):
+                        store.apply(self.plan_path)
+                with store.read() as reader:
+                    self.assertEqual(reader.get_a('a').status, Status.NO_ENTRY)
+
+    async def test_expect_after_prior_insert_by_id_on_both_backends(self):
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, _ = await self.configured(backend)
+                self.addCleanup(store.close)
+                inserted = Operation('insert', 'A', ('key',), (('b',),))
+                field = Operation(
+                    'replace',
+                    'A.text',
+                    ('value',),
+                    (('new',),),
+                    (Condition('key', 'b'),),
+                    expect='one',
+                )
+                plan = replace(
+                    self.plan,
+                    groups=(Group('insert', (inserted,)), Group('replace', (field,))),
+                )
+                source = self.write(f'{backend}-insert-expect.yaplan', dumps(plan))
+                checked = store.validate_plan_expectations(source)
+                self.assertEqual(checked.name, plan.name)
+                with store.read() as reader:
+                    self.assertEqual(reader.get_a('b').status, Status.NO_ENTRY)
+                report = store.apply(source)
+                with store.read() as reader:
+                    self.assertEqual(reader.get_a('b').value.read_text(), Success('new'))
+                store.rollback(report.path)
+                with store.read() as reader:
+                    self.assertEqual(reader.get_a('b').status, Status.NO_ENTRY)
+
+                temporal = Operation(
+                    'replace',
+                    'A.price',
+                    ('day', 'source', 'value'),
+                    (),
+                    (Condition('key', 'c'),),
+                    expect='any',
+                )
+                absent = replace(
+                    self.plan,
+                    groups=(
+                        Group('insert', (replace(inserted, rows=(('c',),)),)),
+                        Group('replace', (temporal,)),
+                    ),
+                )
+                source = self.write(f'{backend}-missing-expect.yaplan', dumps(absent))
+                with self.assertRaisesRegex(ValueError, 'expect any matched 0'):
+                    store.validate_plan_expectations(source)
+                with store.read() as reader:
+                    self.assertEqual(reader.get_a('c').status, Status.NO_ENTRY)
+
+    async def test_old_reader_loads_its_snapshot_after_another_process_commits(self):
+        worker = '''
+import asyncio, sys
+from pathlib import Path
+from tests.support import load_generated
+root, config, plan = map(Path, sys.argv[1:])
+module = load_generated(root / 'generated' / 'sample_model', 'sample_model')
+with asyncio.run(module.SampleData.open(config)) as store:
+    report = store.apply(plan)
+    assert report.status == module.TransactionStatus.COMMITTED, report
+'''
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, config = await self.configured(backend)
+                self.addCleanup(store.close)
+                store.apply(self.plan_path)
+                reader = store.read()
+                self.addCleanup(reader.close)
+                updated = replace(
+                    self.plan,
+                    groups=(
+                        Group(
+                            'update', (Operation('update', 'A', ('key', 'text'), (('a', 'new'),)),)
+                        ),
+                    ),
+                )
+                path = self.write(f'{backend}-external.yaplan', dumps(updated))
+                child = await asyncio.to_thread(
+                    subprocess.run,
+                    [sys.executable, '-c', worker, str(self.root), str(config), str(path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+                # The field has not been loaded before the other process committed.
+                self.assertEqual(reader.get_a('a').value.read_text(), Success('original'))
+                with store.read() as fresh:
+                    self.assertEqual(fresh.get_a('a').value.read_text(), Success('new'))
 
     async def test_writes_and_recovery_serialize_per_repository(self):
         for backend in ('sqlite', 'files'):
@@ -464,7 +622,8 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
                 'yambl_compiler.transactions.repository', level='WARNING'
             ) as messages:
                 reversed_report = store.rollback(transaction.path)
-            self.assertEqual(reversed_report.status, 'committed_with_warnings')
+            self.assertEqual(reversed_report.status, 'conflicts')
+            self.assertIs(reversed_report.status, self.module.TransactionStatus.CONFLICTS)
             self.assertEqual(reversed_report.changes, 1)
             self.assertEqual(len(reversed_report.warnings), 1)
             self.assertIn('A.text', messages.output[0])
@@ -615,18 +774,169 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
 
     async def test_export_failure_is_committed_and_recovers_without_reapply(self):
         for backend in ('sqlite', 'files'):
-            store, config = await self.configured(backend)
-            self.addCleanup(store.close)
-            with patch.object(store, 'export', side_effect=OSError('publication failed')):
-                report = store.apply(self.plan_path)
-            self.assertEqual(report.status, 'publication_pending')
-            self.assertFalse(report.path.exists())
-            reopened = await self.store_type.open(config)
-            self.addCleanup(reopened.close)
-            self.assertEqual(parse(report.path.read_text()).id, report.id)
-            with self.assertRaisesRegex(ValueError, 'already exists'):
-                reopened.apply(self.plan_path)
-            self.assertEqual(reopened.export(report.id), report.path)
+            for failure in (OSError, sqlite3.OperationalError, ValueError):
+                with self.subTest(backend=backend, failure=failure.__name__):
+                    store, config = await self.configured(backend, failure.__name__)
+                    self.addCleanup(store.close)
+                    with patch.object(store, 'export', side_effect=failure('publication failed')):
+                        report = store.apply(self.plan_path)
+                    self.assertIs(report.status, self.module.TransactionStatus.EXPORT_PENDING)
+                    self.assertEqual(report.publication_error, 'publication failed')
+                    self.assertFalse(report.path.exists())
+                    reopened = await self.store_type.open(config)
+                    self.addCleanup(reopened.close)
+                    self.assertEqual(parse(report.path.read_text(encoding='utf-8')).id, report.id)
+                    with self.assertRaisesRegex(ValueError, 'already exists'):
+                        reopened.apply(self.plan_path)
+                    self.assertEqual(reopened.export(report.id), report.path)
+
+    async def test_cleanup_failure_does_not_hide_commit_or_create_conflicts(self):
+        for backend in ('sqlite', 'files'):
+            for failure in (OSError, sqlite3.OperationalError, ValueError):
+                with self.subTest(backend=backend, failure=failure.__name__):
+                    store, config = await self.configured(backend, failure.__name__)
+                    self.addCleanup(store.close)
+                    cleanup = store.cleanup
+                    calls = 0
+
+                    def fail_after_recovery():
+                        nonlocal calls
+                        calls += 1
+                        if calls == 2:
+                            raise failure('cleanup failed')
+                        cleanup()
+
+                    with patch.object(store, 'cleanup', side_effect=fail_after_recovery):
+                        with self.assertLogs(
+                            self.store_type.apply.__module__, level='WARNING'
+                        ) as logs:
+                            report = store.apply(self.plan_path)
+                    self.assertEqual(calls, 2)
+                    self.assertIs(report.status, self.module.TransactionStatus.COMMITTED)
+                    self.assertEqual(report.warnings, ())
+                    self.assertTrue(any('cleanup failed' in line for line in logs.output))
+                    self.assertEqual(parse(report.path.read_text(encoding='utf-8')).id, report.id)
+                    reopened = await self.store_type.open(config)
+                    self.addCleanup(reopened.close)
+                    with self.assertRaisesRegex(ValueError, 'already exists'):
+                        reopened.apply(self.plan_path)
+
+    async def test_committed_report_survives_failed_writer_lock_release(self):
+        original_connect = sqlite3.connect
+        for backend in ('sqlite', 'files'):
+            for operation in ('apply', 'rollback'):
+                with self.subTest(backend=backend, operation=operation):
+                    store, config = await self.configured(backend, operation)
+                    self.addCleanup(store.close)
+                    source = store.apply(self.plan_path) if operation == 'rollback' else None
+                    held = []
+
+                    class FailedClose(sqlite3.Connection):
+                        def close(self):
+                            raise sqlite3.OperationalError('lock release failed')
+
+                    def connect(database, *args, **kwargs):
+                        if Path(database) == store.writer_lock.path:
+                            kwargs['factory'] = FailedClose
+                        connection = original_connect(database, *args, **kwargs)
+                        if isinstance(connection, FailedClose):
+                            held.append(connection)
+                        return connection
+
+                    def probe():
+                        return subprocess.run(
+                            [
+                                sys.executable,
+                                '-c',
+                                'import sqlite3,sys; '
+                                'c=sqlite3.connect(sys.argv[1],timeout=0); '
+                                'c.execute("BEGIN IMMEDIATE"); c.close()',
+                                str(store.writer_lock.path),
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=15,
+                            check=False,
+                        )
+
+                    try:
+                        with patch.object(sqlite3, 'connect', side_effect=connect):
+                            with self.assertLogs(
+                                self.store_type.apply.__module__, level='WARNING'
+                            ) as logs:
+                                report = (
+                                    store.apply(self.plan_path)
+                                    if source is None
+                                    else store.rollback(source.path)
+                                )
+                        self.assertIs(report.status, self.module.TransactionStatus.COMMITTED)
+                        self.assertTrue(report.path.exists())
+                        self.assertEqual(
+                            parse(report.path.read_text(encoding='utf-8')).id, report.id
+                        )
+                        self.assertTrue(any('lock release failed' in line for line in logs.output))
+                        self.assertTrue(any('lock may remain held' in line for line in logs.output))
+                        rows = store.snapshot().tables['tb_a']
+                        self.assertEqual(
+                            [row['id'] for row in rows], ['a'] if source is None else []
+                        )
+                        self.assertNotEqual(probe().returncode, 0)
+                    finally:
+                        for connection in held:
+                            sqlite3.Connection.close(connection)
+                    self.assertEqual(probe().returncode, 0)
+                    reopened = subprocess.run(
+                        [
+                            sys.executable,
+                            '-c',
+                            'import asyncio,sys; from pathlib import Path; '
+                            'from tests.support import load_generated; '
+                            'm=load_generated(Path(sys.argv[1]),"sample_model"); '
+                            's=asyncio.run(m.SampleData.open(Path(sys.argv[2]))); '
+                            'print(",".join(row["id"] for row in s.snapshot().tables["tb_a"])); '
+                            's.close()',
+                            str(self.root / 'generated' / 'sample_model'),
+                            str(config),
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=20,
+                        check=False,
+                    )
+                    self.assertEqual(reopened.returncode, 0, reopened.stderr)
+                    self.assertEqual(reopened.stdout.strip(), 'a' if source is None else '')
+
+                    before = store.snapshot().tables
+                    exports = sorted(store.transaction_directory().glob('*.yatran'))
+                    for failure in (sqlite3.OperationalError, ValueError):
+                        held.clear()
+                        try:
+                            with (
+                                patch.object(sqlite3, 'connect', side_effect=connect),
+                                patch.object(
+                                    store,
+                                    'open_backend',
+                                    side_effect=failure('candidate read failed'),
+                                ),
+                                self.assertRaisesRegex(failure, 'candidate read failed') as raised,
+                            ):
+                                if source is None:
+                                    store.apply(self.plan_path)
+                                else:
+                                    store.rollback(source.path)
+                            self.assertTrue(
+                                any(
+                                    'lock release failed' in note
+                                    for note in raised.exception.__notes__
+                                )
+                            )
+                        finally:
+                            for connection in held:
+                                sqlite3.Connection.close(connection)
+                        self.assertEqual(store.snapshot().tables, before)
+                        self.assertEqual(
+                            sorted(store.transaction_directory().glob('*.yatran')), exports
+                        )
 
     async def test_config_types_paths_and_closed_facade(self):
         for text in ("backend: 'unknown'\npath: 'data'", "backend: 'sqlite'\npath: 1"):
@@ -792,7 +1102,8 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
                 with patch.object(store, 'export', side_effect=OSError('still unavailable')):
                     with self.assertRaisesRegex(OSError, 'still unavailable'):
                         store.apply(empty_path)
-                self.assertEqual(store.read().get_a('a').value.text, Success('original'))
+                with store.read() as reader:
+                    self.assertEqual(reader.get_a('a').value.text, Success('original'))
                 report = store.apply(empty_path)
                 self.assertEqual(report.status, 'committed')
                 self.assertEqual(report.changes, 0)
@@ -959,8 +1270,8 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
         self.addCleanup(old_reader.close)
         report = store.apply(self.plan_path)
         self.assertEqual(marker.read_text(encoding='utf-8'), 'user file')
-        self.assertFalse((initial_version / 'tables').exists())
-        self.assertFalse((initial_version / 'repository.json').exists())
+        self.assertTrue((initial_version / 'tables').exists())
+        self.assertTrue((initial_version / 'repository.json').exists())
         self.assertEqual(old_reader.get_a('a').status, Status.NO_ENTRY)
         reader = store.read()
         self.addCleanup(reader.close)
@@ -968,27 +1279,77 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
         committed_version = store.file_version()
         original = report.path.read_bytes()
         store.rollback(report.path)
-        self.assertEqual(
-            list(committed_version.iterdir()), [committed_version / 'transaction.yatran']
-        )
+        self.assertTrue((committed_version / 'transaction.yatran').is_file())
+        self.assertTrue((committed_version / 'repository.json').is_file())
+        self.assertTrue((committed_version / 'tables').is_dir())
         report.path.unlink()
         reopened = await self.store_type.open(config)
         self.addCleanup(reopened.close)
         self.assertEqual(report.path.read_bytes(), original)
 
+    async def test_cleanup_handles_incomplete_generations_without_removing_unknown_files(self):
+        store, _ = await self.configured('files')
+        self.addCleanup(store.close)
+        versions = store.path / 'versions'
+        no_tables = versions / str(uuid4())
+        no_tables.mkdir()
+        (no_tables / 'repository.json').write_text('unpublished', encoding='utf-8')
+        (no_tables / 'transaction.yatran').write_text('unpublished', encoding='utf-8')
+        empty_indexes = versions / str(uuid4())
+        (empty_indexes / 'indexes').mkdir(parents=True)
+        (empty_indexes / 'transaction.yatran').write_text('unpublished', encoding='utf-8')
+        with_unknown = versions / str(uuid4())
+        tables = with_unknown / 'tables'
+        indexes = with_unknown / 'indexes'
+        tables.mkdir(parents=True)
+        indexes.mkdir()
+        (with_unknown / 'transaction.yatran').write_text('unpublished', encoding='utf-8')
+        (with_unknown / 'repository.json').write_text('unpublished', encoding='utf-8')
+        table_user_file = tables / 'user-file.txt'
+        index_user_file = indexes / 'user-index.txt'
+        table_user_file.write_text('table data to retain', encoding='utf-8')
+        index_user_file.write_text('index data to retain', encoding='utf-8')
+        managed = tables / (store.layout.tables[0].name + '.jsonl')
+        managed.write_text('unpublished', encoding='utf-8')
+        before = store.snapshot().tables
+
+        store.cleanup()
+
+        self.assertFalse(no_tables.exists())
+        self.assertFalse(empty_indexes.exists())
+        self.assertFalse(managed.exists())
+        self.assertFalse((with_unknown / 'transaction.yatran').exists())
+        self.assertEqual(table_user_file.read_text(encoding='utf-8'), 'table data to retain')
+        self.assertEqual(index_user_file.read_text(encoding='utf-8'), 'index data to retain')
+        self.assertEqual(store.snapshot().tables, before)
+
     async def test_cleanup_failure_keeps_commit_successful_and_retries_on_open(self):
         store, config = await self.configured('files')
         self.addCleanup(store.close)
         old_version = store.file_version()
+        orphan = store.path / 'versions' / str(uuid4())
         unlink = Path.unlink
+        cleanup = store.cleanup
+        calls = 0
+
+        def cleanup_with_orphan():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                (orphan / 'tables').mkdir(parents=True)
+                (orphan / 'repository.json').write_text('unpublished', encoding='utf-8')
+            cleanup()
 
         def failing_unlink(path, *args, **kwargs):
-            if path == old_version / 'repository.json':
+            if path == orphan / 'repository.json':
                 raise OSError('cleanup unavailable')
             return unlink(path, *args, **kwargs)
 
-        with patch.object(Path, 'unlink', failing_unlink):
-            with self.assertLogs('yambl_compiler.transactions.repository', level='WARNING') as logs:
+        with (
+            patch.object(Path, 'unlink', failing_unlink),
+            patch.object(store, 'cleanup', cleanup_with_orphan),
+        ):
+            with self.assertLogs(self.store_type.apply.__module__, level='WARNING') as logs:
                 report = store.apply(self.plan_path)
         self.assertEqual(report.status, 'committed')
         self.assertEqual(parse(report.path.read_text()).plan, self.plan)
@@ -996,7 +1357,8 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
         self.assertTrue(old_version.exists())
         reopened = await self.store_type.open(config)
         self.addCleanup(reopened.close)
-        self.assertFalse(old_version.exists())
+        self.assertTrue(old_version.exists())
+        self.assertFalse(orphan.exists())
         reader = reopened.read()
         self.addCleanup(reader.close)
         self.assertEqual(reader.get_a('a').value.text, Success('original'))
@@ -1024,10 +1386,8 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
                     documents = list(reopened.transaction_directory().glob('*.yatran'))
                     if backend == 'files':
                         for version in (reopened.path / 'versions').iterdir():
-                            if version != reopened.file_version():
-                                self.assertEqual(
-                                    list(version.iterdir()), [version / 'transaction.yatran']
-                                )
+                            self.assertTrue((version / 'repository.json').is_file())
+                            self.assertTrue((version / 'tables').is_dir())
                         self.assertFalse((reopened.path / 'repository.pending').exists())
                     if phase in ('prepare', 'before_commit'):
                         self.assertEqual(reopened.snapshot().tables, before)

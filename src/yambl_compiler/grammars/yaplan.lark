@@ -1,5 +1,5 @@
 start: plan
-plan: PLAN NAME "{" revision model_digest group* "}"
+plan: PLAN NAME "{" revision model_digest? group* "}"
 model_digest: MODEL STRING
 group: GROUP NAME "{" operation* "}"
 operation: KIND target expectation? owned? (scope (COLUMNS columns rows)? | columns rows)

@@ -7,7 +7,8 @@ from dataclasses import field as data_field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import ClassVar, Self, cast
+from types import TracebackType
+from typing import ClassVar, Protocol, Self, cast
 
 from yambl_compiler.ir.model import Field, Type
 from yambl_compiler.storage.backends import (
@@ -34,7 +35,24 @@ from yambl_compiler.storage.results import (
     Success,
 )
 from yambl_compiler.storage.session import Session
-from yambl_compiler.storage.validation import ValidationReport
+from yambl_compiler.storage.validation import ValidationIssue, ValidationReport
+
+
+class CandidateValidator(Protocol):
+    """Validate changed business fields using the owning reader's decoders."""
+
+    def validate_business(
+        self,
+        field: Callable[[str, str], Field | None],
+        read: Callable[[StoredField, Field, Row], ReadResult[object]],
+    ) -> None:
+        """Check changed business data and references.
+
+        :param field: Resolve an actual field implementation.
+        :param read: Decode a candidate field value.
+        :returns: None.
+        """
+        ...
 
 
 def has_error(value: object) -> bool:
@@ -230,7 +248,7 @@ class Reader:
         except (OSError, sqlite3.Error, ValueError, TypeError) as error:
             return NonNormalResult(Status.ERROR, str(error))
 
-    def close(self) -> ReadResult[None]:
+    def close(self) -> Success[None] | NonNormalResult:
         """Release this session; cached handle data remains available.
 
         :returns: Success or ERROR if closing fails.
@@ -241,6 +259,37 @@ class Reader:
             return Success(None)
         except (OSError, sqlite3.Error, ValueError) as error:
             return NonNormalResult(Status.ERROR, str(error))
+
+    def __enter__(self) -> Self:
+        """Enter an open reader's resource scope.
+
+        :returns: This reader.
+        :raises ValueError: If the reader is closed.
+        """
+        self._ready()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        """Close the reader and expose a close failure without hiding a body error.
+
+        :param exc_type: Body exception type, if the body failed.
+        :param exc_value: Body exception, if the body failed.
+        :param traceback: Body exception traceback, if the body failed.
+        :returns: None; body exceptions continue to propagate.
+        :raises RuntimeError: If closing fails after a successful body.
+        """
+        result = self.close()
+        if not isinstance(result, Success):
+            message = f'reader close failed: {result.message}'
+            if exc_value is not None:
+                exc_value.add_note(message)
+            else:
+                raise RuntimeError(message)
 
     def _ready(self) -> None:
         """Check session lifetime before all operations.
@@ -463,8 +512,10 @@ class Reader:
 
         try:
             self._ready()
+            if isinstance(self._backend, FileBackend):
+                self._backend.validate_indexes()
             data = {t.name: self._backend.rows(t.name, {}) for t in self._layout.tables}
-            return validate_data(
+            report = validate_data(
                 self._layout,
                 data,
                 lambda actual, identity: self._field(
@@ -472,8 +523,29 @@ class Reader:
                 ),
                 self._value,
             )
+            try:
+                self._configuration.load()
+            except (ValueError, TypeError, KeyError, InvalidOperation) as error:
+                return Success(
+                    ValidationReport(
+                        (*report.value.issues, ValidationIssue('tb_config_group', str(error)))
+                    )
+                )
+            return report
         except (OSError, sqlite3.Error, ValueError, TypeError, KeyError) as error:
             return NonNormalResult(Status.ERROR, str(error))
+
+    def validate_candidate(self, candidate: CandidateValidator) -> None:
+        """Validate changed business data using this reader's pinned snapshot.
+
+        The candidate and reader must refer to the same candidate snapshot.
+
+        :param candidate: Candidate with changed business records.
+        :returns: None.
+        :raises ValueError: If changed business data is invalid.
+        """
+        self._ready()
+        candidate.validate_business(self._batch.implementation, self._value)
 
     def _decode(self, type_: Type, value: object) -> object:
         """Decode and validate one stored scalar.

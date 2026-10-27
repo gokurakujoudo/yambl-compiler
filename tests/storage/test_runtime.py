@@ -96,6 +96,26 @@ class RuntimeTests(FilesystemCase):
         )
         self.writer.commit()
 
+    def test_reader_context_manager_closes_and_preserves_body_error(self):
+        reader = self.open()
+        with reader as entered:
+            self.assertIs(entered, reader)
+            self.assertEqual(reader.get_a('a').value.id, 'a')
+        self.assertEqual(reader.get_a('a').status, Status.ERROR)
+        with self.assertRaisesRegex(ValueError, 'reader is closed'):
+            with reader:
+                self.fail('closed reader entered')
+
+        reader = self.open()
+        with patch.object(reader._backend, 'close', side_effect=OSError('close failed')):
+            with self.assertRaisesRegex(RuntimeError, 'reader close failed: close failed'):
+                with reader:
+                    pass
+            with self.assertRaisesRegex(ValueError, 'body failed') as caught:
+                with reader:
+                    raise ValueError('body failed')
+        self.assertIn('reader close failed: close failed', caught.exception.__notes__)
+
     def test_handles_states_defaults_and_references(self):
         self.put("A.text", "hello")
         self.put("A.flag", 1)

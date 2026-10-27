@@ -61,6 +61,10 @@ class DocumentTests(unittest.TestCase):
 
     def test_transaction_metadata_and_images(self):
         text = dumps(transaction())
+        without_model = text.replace(f"    model '{DIGEST}'\n", '')
+        self.assertNotEqual(without_model, text)
+        with self.assertRaisesRegex(DocumentError, 'transaction plan requires a model digest'):
+            parse(without_model)
         for modified, message in [
             (text.replace('12345678-1234-1234-1234-123456789abc', 'bad'), 'metadata'),
             (text.replace('123456789abc', '123456789ABC'), 'metadata'),

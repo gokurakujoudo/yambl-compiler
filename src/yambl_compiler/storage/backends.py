@@ -4,6 +4,7 @@ import hashlib
 import json
 import sqlite3
 from bisect import bisect_left, bisect_right
+from collections import OrderedDict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -242,19 +243,30 @@ def repository_contents(layout: Layout, tables: Mapping[str, list[Row]]) -> dict
     :param tables: Complete table records from a template or example initializer.
     :returns: Relative filenames and UTF-8 text.
     """
-    contents = {
-        f"tables/{t.name}.jsonl": "".join(
-            json.dumps(r, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
-            for r in tables[t.name]
-        )
-        for t in layout.tables
-    }
+    contents: dict[str, str] = {}
+    for table in layout.tables:
+        rows: list[str] = []
+        offsets: list[str] = []
+        offset = 0
+        for row in tables[table.name]:
+            text = json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            length = len(text.encode("utf-8"))
+            item = [*[row[key] for key in table.primary], row.get("valid_to"), offset, length]
+            offsets.append(json.dumps(item, ensure_ascii=False, separators=(",", ":")) + "\n")
+            rows.append(text)
+            offset += length
+        contents[f"tables/{table.name}.jsonl"] = "".join(rows)
+        contents[f"indexes/{table.name}.jsonl"] = "".join(offsets)
     metadata = {
         "format_revision": 2,
         "layout_revision": LAYOUT_REVISION,
         "model_digest": layout.model.model_digest,
         "tables": {
             t.name: hashlib.sha256(contents[f"tables/{t.name}.jsonl"].encode()).hexdigest()
+            for t in layout.tables
+        },
+        "indexes": {
+            t.name: hashlib.sha256(contents[f"indexes/{t.name}.jsonl"].encode()).hexdigest()
             for t in layout.tables
         },
     }
@@ -285,7 +297,11 @@ class FileBackend:
         metadata = loads(self.files["repository"].read_text(encoding="utf-8"))
         if (
             not isinstance(metadata, dict)
-            or set(metadata) != {"format_revision", "layout_revision", "model_digest", "tables"}
+            or set(metadata)
+            not in (
+                {"format_revision", "layout_revision", "model_digest", "tables"},
+                {"format_revision", "layout_revision", "model_digest", "tables", "indexes"},
+            )
             or type(metadata["format_revision"]) is not int
             or metadata["format_revision"] != 2
             or type(metadata["layout_revision"]) is not int
@@ -306,8 +322,33 @@ class FileBackend:
         ):
             raise ValueError("invalid table digest manifest")
         self.hashes = cast(dict[str, str], hashes)
+        index_hashes = metadata.get("indexes", {})
+        if (
+            not isinstance(index_hashes, dict)
+            or ("indexes" in metadata and set(index_hashes) != set(self.tables))
+            or any(
+                not isinstance(v, str)
+                or len(v) != 64
+                or any(c not in "0123456789abcdef" for c in v)
+                for v in index_hashes.values()
+            )
+        ):
+            raise ValueError("invalid index digest manifest")
+        self.index_hashes = cast(dict[str, str], index_hashes)
+        if self.index_hashes:
+            original = self.stamps
+            for table in self.tables:
+                file = self.path / "indexes" / (table + ".jsonl")
+                if not file.resolve().is_relative_to(self.path) or file.is_symlink():
+                    raise ValueError("repository index escapes root or is a symlink")
+                self.files["index:" + table] = file
+            self.stamps = self._stamps()
+            if any(self.stamps[name] != stamp for name, stamp in original.items()):
+                raise ValueError("file repository changed while opening")
         self.cache: dict[str, list[Row]] = {}
         self.indexes: dict[tuple[str, tuple[str, ...]], dict[tuple[object, ...], list[Row]]] = {}
+        self.offsets: dict[str, list[Row]] = {}
+        self.row_cache: OrderedDict[tuple[str, tuple[int, int, int], int], Row] = OrderedDict()
         self.time_indexes: dict[
             tuple[str, tuple[tuple[str, object], ...], str], tuple[list[str], list[Row]]
         ] = {}
@@ -340,6 +381,27 @@ class FileBackend:
             self.failed = True
             raise ValueError("file repository changed; reopen the reader")
 
+    def check_snapshot(self) -> None:
+        """Verify that the pinned repository still names the same files.
+
+        :returns: None for an unchanged source snapshot.
+        :raises ValueError: If the source snapshot changed.
+        :raises OSError: If a source file cannot be inspected.
+        """
+        self._check()
+
+    def validate_indexes(self) -> None:
+        """Check every persisted index against its table when indexes exist.
+
+        :returns: None for a valid indexed or legacy unindexed snapshot.
+        :raises ValueError: If an index or table fails integrity validation.
+        :raises OSError: If a file cannot be read.
+        """
+        self._check()
+        if self.index_hashes:
+            for table in self.tables:
+                self._load_offsets(table)
+
     def rows(self, table: str, keys: Mapping[str, object]) -> list[Row]:
         """Load, validate and index a table on its first use.
 
@@ -350,8 +412,164 @@ class FileBackend:
         :raises OSError: On file access failure.
         """
         self._check()
+        if keys and self._indexed(table, tuple(keys)):
+            return self._read_offsets(table, self._select_offsets(table, tuple(keys.items())))
         self._load(table)
         return self._select(table, tuple(keys.items()))
+
+    def _indexed(self, table: str, columns: tuple[str, ...]) -> bool:
+        """Select the persistent index when its keys cover the requested equality filters.
+
+        :param table: Physical table name.
+        :param columns: Requested equality columns.
+        :returns: Whether offsets can satisfy the filters.
+        """
+        return bool(self.index_hashes) and set(columns).issubset(self.tables[table].primary)
+
+    def _load_offsets(self, table: str) -> None:
+        """Verify a table and load only its primary keys and byte offsets.
+
+        :param table: Physical table name.
+        :returns: None; the validated index is cached for this snapshot.
+        :raises ValueError: On malformed index, contents, or digest.
+        """
+        if table in self.offsets:
+            return
+        index_path = self.files["index:" + table]
+        content = index_path.read_bytes()
+        self._check()
+        if hashlib.sha256(content).hexdigest() != self.index_hashes[table]:
+            self.failed = True
+            raise ValueError(f"{index_path}: index digest mismatch")
+        table_path = self.files[table]
+        digest = hashlib.sha256()
+        with table_path.open("rb") as source:
+            while block := source.read(1024 * 1024):
+                digest.update(block)
+        self._check()
+        if digest.hexdigest() != self.hashes[table]:
+            self.failed = True
+            raise ValueError(f"{table_path}: table digest mismatch")
+        entries: list[Row] = []
+        seen: set[tuple[object, ...]] = set()
+        offset = 0
+        primary = self.tables[table].primary
+        has_end = any(column.name == "valid_to" for column in self.tables[table].columns)
+        for line, raw in enumerate(content.splitlines(), 1):
+            try:
+                item: object = json.loads(raw.decode("utf-8"))
+                if not isinstance(item, list):
+                    raise ValueError("invalid index record")
+                values = cast(list[object], item)
+                if len(values) != len(primary) + 3:
+                    raise ValueError("invalid index record")
+                key = tuple(values[: len(primary)])
+                end, start, length = values[-3:]
+                if (
+                    any(type(value) not in (str, int) for value in key)
+                    or (end is not None and not isinstance(end, str))
+                    or (has_end != (end is not None))
+                    or type(start) is not int
+                    or type(length) is not int
+                    or start != offset
+                    or length <= 0
+                    or key in seen
+                ):
+                    raise ValueError("invalid offset or duplicate index key")
+                offset += length
+                seen.add(key)
+                entry: Row = dict(zip(primary, key, strict=True))
+                entry.update(_offset=start, _length=length)
+                if end is not None:
+                    entry["valid_to"] = end
+                entries.append(entry)
+            except (ValueError, TypeError) as error:
+                raise ValueError(f"{table_path}:{line}: {table}: {error}") from error
+        if offset != self.stamps[table][1]:
+            raise ValueError(f"{table_path}: index does not cover table")
+        with table_path.open("rb") as source:
+            for line, entry in enumerate(entries, 1):
+                raw = source.read(cast(int, entry["_length"]))
+                self._decode_offset(table, entry, raw, line)
+        self._check()
+        self.offsets[table] = entries
+
+    def _select_offsets(self, table: str, keys: tuple[tuple[str, object], ...]) -> list[Row]:
+        """Find offset entries by their indexed primary-key columns.
+
+        :param table: Physical table name.
+        :param keys: Equality conditions.
+        :returns: Matching offset entries.
+        """
+        self._load_offsets(table)
+        columns = tuple(k for k, _ in keys)
+        index_key = ("offset:" + table, columns)
+        if index_key not in self.indexes:
+            index: dict[tuple[object, ...], list[Row]] = {}
+            for row in self.offsets[table]:
+                index.setdefault(tuple(row[k] for k in columns), []).append(row)
+            self.indexes[index_key] = index
+        return self.indexes[index_key].get(tuple(v for _, v in keys), [])
+
+    def _read_offsets(self, table: str, entries: Sequence[Row]) -> list[Row]:
+        """Read and validate only selected records from a verified table.
+
+        :param table: Physical table name.
+        :param entries: Selected primary keys and byte offsets.
+        :returns: Detached physical records.
+        :raises ValueError: On corrupt records or mismatched index keys.
+        """
+        found: dict[tuple[str, tuple[int, int, int], int], Row] = {}
+        pending: dict[tuple[str, tuple[int, int, int], int], Row] = {}
+        for entry in entries:
+            key = (table, self.stamps[table], cast(int, entry["_offset"]))
+            cached = self.row_cache.get(key)
+            if cached is None:
+                pending[key] = entry
+            else:
+                self.row_cache.move_to_end(key)
+                found[key] = cached
+        path = self.files[table]
+        if pending:
+            with path.open("rb") as source:
+                for key, entry in pending.items():
+                    source.seek(key[2])
+                    raw = source.read(cast(int, entry["_length"]))
+                    found[key] = self._decode_offset(table, entry, raw, None)
+        self._check()
+        for key in pending:
+            self.row_cache[key] = found[key]
+            if len(self.row_cache) > 1024:
+                self.row_cache.popitem(last=False)
+        return [
+            dict(found[(table, self.stamps[table], cast(int, entry["_offset"]))])
+            for entry in entries
+        ]
+
+    def _decode_offset(self, table: str, entry: Row, raw: bytes, line: int | None) -> Row:
+        """Validate one indexed record against its primary key and interval.
+
+        :param table: Physical table name.
+        :param entry: Indexed primary key and byte location.
+        :param raw: Complete encoded JSONL record.
+        :param line: Record line number when streaming the entire table.
+        :returns: Decoded physical row.
+        :raises ValueError: On malformed or inconsistent data.
+        """
+        try:
+            value = loads(raw.decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("expected row object")
+            row = cast(Row, value)
+            validate_row(self.layout, self.tables[table], row)
+            if any(row[key] != entry[key] for key in self.tables[table].primary):
+                raise ValueError("row does not match index")
+            if "valid_to" in entry and row.get("valid_to") != entry["valid_to"]:
+                raise ValueError("interval does not match index")
+            return row
+        except (ValueError, TypeError, KeyError) as error:
+            location = f":{line}" if line is not None else ""
+            raise ValueError(f"{self.files[table]}{location}: {table}: {error}") from error
 
     def _load(self, table: str) -> None:
         """Load and validate a table once per pinned session.
@@ -413,6 +631,46 @@ class FileBackend:
         if not selections:
             return []
         self._check()
+        if all(
+            selection.keys and self._indexed(table, tuple(key for key, _ in selection.keys))
+            for selection in selections
+        ):
+            selected: list[list[Row]] = []
+            for selection in selections:
+                entries = self._select_offsets(table, selection.keys)
+                if selection.temporal:
+                    index_key = ("offset:" + table, selection.keys, selection.temporal)
+                    if index_key not in self.time_indexes:
+                        column = "date" if selection.temporal == "snapshot" else "valid_from"
+                        ordered = sorted(entries, key=lambda row: str(row[column]))
+                        self.time_indexes[index_key] = (
+                            [str(row[column]) for row in ordered],
+                            ordered,
+                        )
+                    dates, ordered = self.time_indexes[index_key]
+                    end = bisect_right(dates, selection.end)
+                    if selection.temporal == "snapshot":
+                        entries = ordered[bisect_left(dates, selection.start) : end]
+                    else:
+                        entries = [r for r in ordered[:end] if str(r["valid_to"]) > selection.start]
+                selected.append(entries)
+            unique: dict[object, Row] = {}
+            for entries in selected:
+                for entry in entries:
+                    unique.setdefault(entry["_offset"], entry)
+            records = self._read_offsets(table, list(unique.values()))
+            by_offset = dict(zip(unique, records, strict=True))
+            return [
+                [
+                    (
+                        {column: by_offset[entry["_offset"]][column] for column in columns}
+                        if columns
+                        else dict(by_offset[entry["_offset"]])
+                    )
+                    for entry in entries
+                ]
+                for entries in selected
+            ]
         self._load(table)
         result: list[list[Row]] = []
         for selection in selections:
@@ -449,4 +707,6 @@ class FileBackend:
         self.failed = True
         self.cache.clear()
         self.indexes.clear()
+        self.offsets.clear()
+        self.row_cache.clear()
         self.time_indexes.clear()

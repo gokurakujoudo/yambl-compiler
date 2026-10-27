@@ -47,12 +47,12 @@ class Plan:
     """Bind a grouped data plan to one model revision.
 
     :param name: Human-readable plan identifier.
-    :param model: Model semantic SHA-256.
+    :param model: Optional model semantic SHA-256.
     :param groups: Named source-ordered groups.
     :param version: Document format revision.
     """
 
     name: str
-    model: str
+    model: str | None
     groups: tuple[Group, ...]
     version: int = 1

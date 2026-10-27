@@ -5,12 +5,15 @@ import logging
 import os
 import sqlite3
 import threading
-from contextlib import closing
-from dataclasses import dataclass
+from collections.abc import Generator
+from contextlib import closing, contextmanager
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from enum import StrEnum
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import ClassVar, Literal, Self, cast
+from time import perf_counter
+from typing import ClassVar, Self, cast
 from uuid import UUID, uuid4
 
 from yambl_compiler.languages.shared.documents import parse
@@ -23,14 +26,54 @@ from yambl_compiler.storage.records import Layout, quote
 from yambl_compiler.storage.results import Success
 from yambl_compiler.storage.runtime import Reader
 from yambl_compiler.transactions.editing import Data
-from yambl_compiler.transactions.execution import Execution, rollback
+from yambl_compiler.transactions.execution import Execution, prepare_rollback
+from yambl_compiler.transactions.incremental import IncrementalData
+from yambl_compiler.transactions.incremental_publication import prepare_files, publish_sqlite
+from yambl_compiler.transactions.locking import RepositoryLock
 from yambl_compiler.transactions.snapshot import SnapshotBackend
 from yambl_compiler.transactions.validation import PlanValidator
 from yambl_compiler.transactions.writing import dumps
 
 LOCKS: dict[str, threading.RLock] = {}
+WRITER_LOCKS: dict[str, RepositoryLock] = {}
 LOCK_GUARD = threading.Lock()
 LOGGER = logging.getLogger(__name__)
+
+
+@contextmanager
+def measure(backend: str, operation: str, phase: str) -> Generator[None, None, None]:
+    """Record elapsed time of one data operation phase, including failures.
+
+    :param backend: Configured backend name.
+    :param operation: Public operation being measured.
+    :param phase: Phase within that operation.
+    :yields: Control to the measured phase.
+    """
+    started = perf_counter()
+    try:
+        yield
+    finally:
+        LOGGER.info(
+            'backend=%s operation=%s phase=%s elapsed_ms=%.3f',
+            backend,
+            operation,
+            phase,
+            (perf_counter() - started) * 1000,
+        )
+
+
+def read_plan(source: Path | Plan, operation: str = 'Plan validation') -> Plan:
+    """Read a Plan once, or reuse an already parsed immutable Plan.
+
+    :param source: Plan source file or parsed Plan.
+    :param operation: Context used to identify a non-Plan input.
+    :returns: Parsed Plan.
+    :raises ValueError: If the source is not a Plan.
+    """
+    plan = source if isinstance(source, Plan) else parse(Path(source).read_text(encoding='utf-8'))
+    if not isinstance(plan, Plan):
+        raise ValueError(f'{operation} requires a Plan')
+    return plan
 
 
 @dataclass(frozen=True)
@@ -49,6 +92,14 @@ class FilePointer:
     transactions: tuple[str, ...]
 
 
+class TransactionStatus(StrEnum):
+    """Distinguish the outcomes of an already committed transaction."""
+
+    COMMITTED = 'committed'
+    CONFLICTS = 'conflicts'
+    EXPORT_PENDING = 'export_pending'
+
+
 @dataclass(frozen=True)
 class TransactionReport:
     """Report committed effects separately from recoverable publication failures.
@@ -63,7 +114,7 @@ class TransactionReport:
 
     id: str
     path: Path
-    status: Literal['committed', 'committed_with_warnings', 'publication_pending']
+    status: TransactionStatus
     changes: int
     warnings: tuple[str, ...]
     publication_error: str = ''
@@ -99,7 +150,9 @@ class DataStore:
         self.backend, self.path, self.layout = backend, path.resolve(), layout
         self.closed = False
         with LOCK_GUARD:
-            self.lock = LOCKS.setdefault(os.path.normcase(str(self.path)), threading.RLock())
+            key = os.path.normcase(str(self.path))
+            self.lock = LOCKS.setdefault(key, threading.RLock())
+            self.writer_lock = WRITER_LOCKS.setdefault(key, RepositoryLock(self.path))
 
     @classmethod
     async def configured(cls, config_path: Path) -> Self:
@@ -130,8 +183,9 @@ class DataStore:
         :returns: Open store.
         """
         store = await cls.configured(config_path)
-        with store.lock:
-            store.snapshot()
+        with measure(store.backend, 'open', 'validate_and_recover'), store.lock, store.writer_lock:
+            backend = store.open_backend()
+            backend.close()
             store.recover()
         return store
 
@@ -144,7 +198,7 @@ class DataStore:
         :raises FileExistsError: If the configured target already exists.
         """
         store = await cls.configured(config_path)
-        with store.lock:
+        with store.lock, store.writer_lock:
             if store.path.exists() or store.path.is_symlink():
                 raise FileExistsError(store.path)
             with TemporaryDirectory(
@@ -174,7 +228,8 @@ class DataStore:
                         {'key': 'model_digest', 'value': store.layout.model.model_digest},
                     ]
                     prepared.publish_files(Data(store.layout, tables), None)
-                prepared.snapshot()
+                backend = prepared.open_backend()
+                backend.close()
                 prepared.path.rename(store.path)
         return store
 
@@ -182,10 +237,12 @@ class DataStore:
         """Reject operations on a closed facade.
 
         :returns: None.
-        :raises ValueError: If the facade is closed.
+        :raises ValueError: If the facade is closed or a SQLite file has hard-link aliases.
         """
         if self.closed:
             raise ValueError('data store is closed')
+        if self.backend == 'sqlite' and self.path.exists() and self.path.stat().st_nlink > 1:
+            raise ValueError('SQLite repository must not have hard-link aliases')
 
     def file_version(self) -> Path:
         """Resolve the authoritative immutable file generation.
@@ -222,25 +279,30 @@ class DataStore:
         :returns: Complete candidate data.
         """
         self.ready()
-        backend = (
-            SQLiteBackend(self.path, self.layout)
-            if self.backend == 'sqlite'
-            else FileBackend(self.file_version(), self.layout)
-        )
+        backend = self.open_backend()
         try:
             return Data(self.layout, {t.name: backend.rows(t.name, {}) for t in self.layout.tables})
         finally:
             backend.close()
 
+    def open_backend(self) -> SQLiteBackend | FileBackend:
+        """Pin a backend without loading business rows.
+
+        :returns: Backend owned by the caller.
+        """
+        self.ready()
+        if self.backend == 'sqlite':
+            return SQLiteBackend(self.path, self.layout)
+        return FileBackend(self.file_version(), self.layout)
+
     def read(self) -> Reader:
         """Create a stable read session independent of later commits.
 
-        :returns: Generated reader with a pinned detached snapshot.
+        :returns: Generated reader with a pinned backend snapshot.
         """
         self.ready()
-        with self.lock:
-            data = self.snapshot()
-        return self.reader_type(SnapshotBackend(data.tables), self.layout)
+        with measure(self.backend, 'read', 'open_snapshot'), self.lock:
+            return self.reader_type(self.open_backend(), self.layout)
 
     def transaction_directory(self) -> Path:
         """Locate the backend-independent transaction export directory.
@@ -263,7 +325,7 @@ class DataStore:
         self.ready()
         if str(UUID(id_)) != id_:
             raise ValueError('invalid transaction ID')
-        with self.lock:
+        with self.lock, self.writer_lock:
             if self.backend == 'sqlite':
                 with closing(sqlite3.connect(self.path)) as connection:
                     row = connection.execute(
@@ -299,7 +361,7 @@ class DataStore:
         :returns: None.
         """
         self.ready()
-        with self.lock:
+        with self.lock, self.writer_lock:
             if self.backend == 'sqlite':
                 with closing(sqlite3.connect(self.path)) as connection:
                     ids = tuple(
@@ -326,14 +388,23 @@ class DataStore:
     def cleanup(self) -> None:
         """Remove obsolete snapshot files while retaining committed transaction records.
 
-        Read sessions own detached data, so they do not reference generation files.
-        Unrecognized files and directories are left in place.
+        Committed generations are retained because readers in this or another
+        process may still use them. Unrecognized files and directories are left in place.
 
         :returns: None.
         :raises OSError: If managed files cannot be removed safely.
         """
         if self.backend != 'files':
             return
+        with self.lock, self.writer_lock:
+            self._cleanup_files()
+
+    def _cleanup_files(self) -> None:
+        """Remove uncommitted files while holding the repository writer lock.
+
+        :returns: None.
+        :raises OSError: If managed files cannot be removed safely.
+        """
         metadata = self.file_pointer()
         versions = self.path / 'versions'
         if versions.is_symlink() or versions.is_junction():
@@ -348,18 +419,32 @@ class DataStore:
             if not canonical or not version.is_dir():
                 continue
             tables = version / 'tables'
-            if any(p.is_symlink() or p.is_junction() for p in (version, tables)):
+            indexes = version / 'indexes'
+            if any(p.is_symlink() or p.is_junction() for p in (version, tables, indexes)):
                 raise OSError('cannot clean a linked generation directory')
+            if version.name in metadata.transactions:
+                continue
+            # The initial generation has no transaction ID and can also have readers.
+            if not (version / 'transaction.yatran').exists():
+                try:
+                    backend = FileBackend(version, self.layout)
+                except OSError, ValueError, TypeError:
+                    pass
+                else:
+                    backend.close()
+                    continue
             paths = [version / 'repository.json']
             paths.extend(tables / (table.name + '.jsonl') for table in self.layout.tables)
-            if version.name not in metadata.transactions:
-                paths.append(version / 'transaction.yatran')
+            paths.extend(indexes / (table.name + '.jsonl') for table in self.layout.tables)
+            paths.append(version / 'transaction.yatran')
             for path in paths:
                 if path.is_symlink() or path.is_junction():
                     raise OSError('cannot clean a linked generation file')
                 path.unlink(missing_ok=True)
             if tables.exists() and not any(tables.iterdir()):
                 tables.rmdir()
+            if indexes.exists() and not any(indexes.iterdir()):
+                indexes.rmdir()
             if not any(version.iterdir()):
                 version.rmdir()
         (self.path / 'repository.pending').unlink(missing_ok=True)
@@ -394,6 +479,51 @@ class DataStore:
         write_file(temporary, json.dumps(metadata, sort_keys=True, separators=(',', ':')) + '\n')
         temporary.replace(pointer)
 
+    def publish_incremental_files(self, data: IncrementalData, transaction: Transaction) -> None:
+        """Prepare changed files and atomically publish an immutable generation.
+
+        :param data: Validated candidate on the pinned file generation.
+        :param transaction: Sealed transaction record.
+        :returns: None after the root pointer commit point.
+        """
+        source = data.overlay.backend
+        if not isinstance(source, FileBackend):
+            raise ValueError('file publication requires a file snapshot')
+        version = self.path / 'versions' / transaction.id
+        prepare_files(source, version, self.layout, data.overlay.changes(), transaction)
+        metadata = {
+            'format_revision': 2,
+            'model_digest': self.layout.model.model_digest,
+            'generation': transaction.id,
+            'transactions': [*self.file_pointer().transactions, transaction.id],
+        }
+        temporary = self.path / 'repository.pending'
+        write_file(temporary, json.dumps(metadata, sort_keys=True, separators=(',', ':')) + '\n')
+        temporary.replace(self.path / 'repository.json')
+
+    @contextmanager
+    def mutable_candidate(self, operation: str) -> Generator[IncrementalData, None, None]:
+        """Own a pinned candidate snapshot until its mutation has completed.
+
+        :param operation: Public operation name for timing logs.
+        :yields: Incremental candidate bound to one source snapshot.
+        """
+        with measure(self.backend, operation, 'snapshot'):
+            backend = self.open_backend()
+        try:
+            yield IncrementalData(self.layout, backend)
+        except BaseException as error:
+            try:
+                backend.close()
+            except (OSError, sqlite3.Error, ValueError) as close_error:
+                error.add_note(f'candidate snapshot close failed: {close_error}')
+            raise
+        else:
+            try:
+                backend.close()
+            except (OSError, sqlite3.Error, ValueError) as error:
+                LOGGER.warning('committed candidate snapshot close failed: %s', error)
+
     def commit(self, data: Data, transaction: Transaction) -> TransactionReport:
         """Validate and commit data together with its recoverable transaction record.
 
@@ -401,109 +531,130 @@ class DataStore:
         :param transaction: Sealed execution record.
         :returns: Explicit commit and publication outcome.
         """
-        data.validate()
-        reader = self.reader_type(SnapshotBackend(data.tables), self.layout)
-        try:
-            report = reader.validate()
-            if not isinstance(report, Success) or not report.value.valid:
-                raise ValueError(f'candidate data validation failed: {report}')
-        finally:
-            reader.close()
+        with measure(self.backend, 'commit', 'validate'):
+            data.validate()
+            if isinstance(data, IncrementalData):
+                with self.reader_type(data.overlay, self.layout) as reader:
+                    reader.validate_candidate(data)
+            else:
+                with self.reader_type(SnapshotBackend(data.tables), self.layout) as reader:
+                    report = reader.validate()
+                    if not isinstance(report, Success) or not report.value.valid:
+                        raise ValueError(f'candidate data validation failed: {report}')
         text = dumps(transaction)
-        if self.backend == 'sqlite':
-            with closing(sqlite3.connect(self.path)) as connection, connection:
-                connection.execute('BEGIN IMMEDIATE')
-                for table in reversed(self.layout.tables):
-                    connection.execute('DELETE FROM ' + quote(table.name))
-                for table in self.layout.tables:
-                    columns = tuple(c.name for c in table.columns)
-                    connection.executemany(
-                        'INSERT INTO '
-                        + quote(table.name)
-                        + ' ('
-                        + ', '.join(quote(c) for c in columns)
-                        + ') VALUES ('
-                        + ', '.join('?' for _ in columns)
-                        + ')',
-                        [tuple(row[c] for c in columns) for row in data.tables[table.name]],
+        with measure(self.backend, 'commit', 'publish'):
+            if isinstance(data, IncrementalData) and self.backend == 'sqlite':
+                data.overlay.backend.close()
+                publish_sqlite(self.path, self.layout, data.overlay.changes(), transaction)
+            elif isinstance(data, IncrementalData):
+                self.publish_incremental_files(data, transaction)
+            elif self.backend == 'sqlite':
+                with closing(sqlite3.connect(self.path)) as connection, connection:
+                    connection.execute('BEGIN IMMEDIATE')
+                    for table in reversed(self.layout.tables):
+                        connection.execute('DELETE FROM ' + quote(table.name))
+                    for table in self.layout.tables:
+                        columns = tuple(c.name for c in table.columns)
+                        connection.executemany(
+                            'INSERT INTO '
+                            + quote(table.name)
+                            + ' ('
+                            + ', '.join(quote(c) for c in columns)
+                            + ') VALUES ('
+                            + ', '.join('?' for _ in columns)
+                            + ')',
+                            [tuple(row[c] for c in columns) for row in data.tables[table.name]],
+                        )
+                    connection.execute(
+                        'INSERT INTO tb_yambl_transactions VALUES (?, ?)', (transaction.id, text)
                     )
-                connection.execute(
-                    'INSERT INTO tb_yambl_transactions VALUES (?, ?)', (transaction.id, text)
-                )
-        else:
-            self.publish_files(data, transaction)
+            else:
+                self.publish_files(data, transaction)
         warnings = tuple(w for group in transaction.groups for w in group.warnings)
         for warning in warnings:
             LOGGER.warning('%s: %s', transaction.id, warning)
         count = sum(len(g.changes) for g in transaction.groups)
         try:
-            path = self.export(transaction.id)
-        except OSError as error:
+            with measure(self.backend, 'commit', 'export'):
+                path = self.export(transaction.id)
+        except (OSError, sqlite3.Error, ValueError) as error:
             return TransactionReport(
                 transaction.id,
                 self.transaction_directory() / (transaction.id + '.yatran'),
-                'publication_pending',
+                TransactionStatus.EXPORT_PENDING,
                 count,
                 warnings,
                 str(error),
             )
         try:
             self.cleanup()
-        except OSError as error:
+        except (OSError, sqlite3.Error, ValueError) as error:
             LOGGER.warning('%s: obsolete snapshot cleanup pending: %s', transaction.id, error)
         return TransactionReport(
             transaction.id,
             path,
-            'committed_with_warnings' if warnings else 'committed',
+            TransactionStatus.CONFLICTS if warnings else TransactionStatus.COMMITTED,
             count,
             warnings,
         )
 
     @classmethod
-    def validate_plan_syntax(cls, plan_path: Path) -> Plan:
+    def validate_plan_syntax(cls, plan_path: Path | Plan) -> Plan:
         """Validate Plan syntax, names, coordinates and model-bound literal types.
 
-        :param plan_path: UTF-8 .yaplan source file.
+        :param plan_path: UTF-8 .yaplan source file or already parsed Plan.
         :returns: Parsed Plan on success, without opening a repository.
         :raises ValueError: On malformed contents or a non-Plan document.
         :raises OSError: If the input file cannot be read.
         """
-        plan = parse(Path(plan_path).read_text(encoding='utf-8'))
-        if not isinstance(plan, Plan):
-            raise ValueError('Plan validation requires a Plan')
+        plan = read_plan(plan_path)
         layout = load_contract(cls.reader_type.model_path, cls.reader_type.contract_digest)
         PlanValidator(layout).validate(plan)
         return plan
 
-    def validate_plan_expectations(self, plan_path: Path) -> Plan:
-        """Check Plan expectations against one unchanged repository snapshot.
+    def validate_plan_expectations(self, plan_path: Path | Plan) -> Plan:
+        """Check expectations against the snapshot and prior ID-based write coordinates.
 
-        :param plan_path: UTF-8 .yaplan source file.
-        :returns: Parsed Plan after syntax and expectation validation.
+        :param plan_path: UTF-8 .yaplan source file or already parsed Plan.
+        :returns: Parsed Plan after syntax and expectation validation; no data is written.
         :raises ValueError: On syntax, model, selector or expectation errors.
         :raises OSError: If input or repository data cannot be read.
         """
         self.ready()
-        plan = self.validate_plan_syntax(plan_path)
+        with measure(self.backend, 'validate_plan', 'parse_and_bind'):
+            plan = read_plan(plan_path)
+            PlanValidator(self.layout).validate(plan)
         with self.lock:
-            Execution(self.snapshot()).validate_expectations(plan)
+            with measure(self.backend, 'validate_plan', 'snapshot'):
+                backend = self.open_backend()
+            with closing(backend), measure(self.backend, 'validate_plan', 'expectations'):
+                data = IncrementalData(self.layout, backend)
+                Execution(data).validate_expectations(plan)
         return plan
 
-    def apply(self, plan_path: Path) -> TransactionReport:
+    def apply(self, plan_path: Path | Plan) -> TransactionReport:
         """Apply an entire Plan using the configured backend.
 
-        :param plan_path: .yaplan source file.
+        :param plan_path: .yaplan source file or already parsed Plan.
         :returns: Commit report.
         """
         self.ready()
-        with self.lock:
-            self.recover()
-            plan = parse(Path(plan_path).read_text(encoding='utf-8'))
-            if not isinstance(plan, Plan):
-                raise ValueError('apply requires a Plan')
-            data = self.snapshot()
-            groups = Execution(data).apply(plan)
-            return self.finish(data, plan, groups)
+        report: TransactionReport | None = None
+        try:
+            with self.lock, self.writer_lock:
+                self.recover()
+                with measure(self.backend, 'apply', 'parse_and_bind'):
+                    plan = read_plan(plan_path, 'apply')
+                    PlanValidator(self.layout).validate(plan)
+                with self.mutable_candidate('apply') as data:
+                    with measure(self.backend, 'apply', 'execute'):
+                        groups = Execution(data).prepare(plan)
+                    report = self.finish(data, plan, groups)
+        except sqlite3.Error as error:
+            if report is None:
+                raise
+            LOGGER.warning('%s: lock release failed; lock may remain held: %s', report.id, error)
+        return report
 
     def finish(
         self, data: Data, plan: Plan, groups: tuple[TransactionGroup, ...], source: str = ''
@@ -516,6 +667,8 @@ class DataStore:
         :param source: Source transaction for rollback.
         :returns: Commit report.
         """
+        if plan.model is None:
+            plan = replace(plan, model=data.layout.model.model_digest)
         transaction = seal(
             Transaction(
                 str(uuid4()),
@@ -537,14 +690,22 @@ class DataStore:
         :returns: Commit report including skipped conflicts.
         """
         self.ready()
-        with self.lock:
-            self.recover()
-            transaction = parse(Path(transaction_path).read_text(encoding='utf-8'))
-            if not isinstance(transaction, Transaction):
-                raise ValueError('rollback requires a Transaction')
-            data = self.snapshot()
-            result = rollback(data, transaction, groups)
-            return self.finish(data, transaction.plan, result, transaction.id)
+        report: TransactionReport | None = None
+        try:
+            with self.lock, self.writer_lock:
+                self.recover()
+                transaction = parse(Path(transaction_path).read_text(encoding='utf-8'))
+                if not isinstance(transaction, Transaction):
+                    raise ValueError('rollback requires a Transaction')
+                with self.mutable_candidate('rollback') as data:
+                    with measure(self.backend, 'rollback', 'execute'):
+                        result = prepare_rollback(data, transaction, groups)
+                    report = self.finish(data, transaction.plan, result, transaction.id)
+        except sqlite3.Error as error:
+            if report is None:
+                raise
+            LOGGER.warning('%s: lock release failed; lock may remain held: %s', report.id, error)
+        return report
 
     def close(self) -> None:
         """Close the facade without invalidating detached read sessions.

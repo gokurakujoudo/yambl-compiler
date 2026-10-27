@@ -15,6 +15,7 @@ from yambl_compiler.transactions.writing import dumps
 SCRIPT = '''
 import asyncio
 import importlib.abc
+import json
 from pathlib import Path
 import runpy
 import sys
@@ -26,7 +27,9 @@ class RejectCompiler(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, RejectCompiler())
 root = Path(sys.argv[1])
 sys.path.insert(0, str(root))
-from standalone_model import StandaloneData, Status, Success
+from standalone_model import MODEL_DIGEST, StandaloneData, Status, Success
+
+assert MODEL_DIGEST == json.loads((root / 'standalone_model/model.yambl-ir.json').read_text(encoding='utf-8'))['model_digest']
 
 async def exercise():
     for config in (root / 'sqlite.lclcfg', root / 'files.lclcfg'):
@@ -83,7 +86,7 @@ class GeneratedTransactionTests(CatalogCase):
                 f"backend: '{backend}'\npath: '{backend}.data'\n", encoding='utf-8'
             )
         child = subprocess.run(
-            [sys.executable, '-I', '-c', SCRIPT, str(output)],
+            [sys.executable, '-X', 'utf8', '-I', '-c', SCRIPT, str(output)],
             capture_output=True,
             text=True,
             timeout=45,

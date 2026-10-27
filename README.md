@@ -451,11 +451,13 @@ for syntax, scope rules, SCD splitting and explicit owned-data deletion.
 
 `FmcData.validate_plan_syntax(plan_path)` checks the Plan against the bundled model
 contract, including entity, field and coordinate names and literal types, without
-opening a repository. `data.validate_plan_expectations(plan_path)` adds explicit
-expectation checks against the current repository snapshot. Both return the parsed
-Plan on success or raise an error, and neither writes data. The snapshot check does
-not simulate earlier operations in the Plan; apply validates its actual candidate
-state again.
+opening a repository. A Plan may omit the model digest; `MODEL_DIGEST` in the
+generated package exposes the current digest. `data.validate_plan_expectations`
+checks expectations against the current snapshot and tracks identities and row
+coordinates established by earlier ID-based writes. It does not build a full
+candidate. Both validation methods return the parsed Plan and accept it as input
+for later validation or application; neither writes data. Apply validates the
+changed data and its affected relationships before committing.
 
 `data.apply(plan_path)` commits the entire Plan. `data.rollback(transaction_path,
 groups=None)` reverses all or selected groups while preserving conflicting later
@@ -466,18 +468,37 @@ conflict summary; `data.export(id)` exports a committed transaction by ID.
 python -m fmc_model rollback -o config repository.lclcfg -o source transaction.yatran
 ```
 
-Writes and recovery serialize within the process for each repository. SQLite
-commits business data and the execution record in one native transaction. Files
-use immutable generations and an atomic manifest switch. A `publication_pending`
+Writes and recovery serialize across cooperating generated interfaces using a
+persistent sibling `.<name>.yambl-lock` file. Lock acquisition times out after
+60 seconds and requires local filesystem SQLite locking; direct external writes
+are not coordinated. SQLite data files with multiple hard links are rejected to
+avoid bypassing the lock. Do not delete the lock file while processes are active.
+SQLite updates affected rows and commits the execution record in the same native
+transaction. The file backend streams changed tables into a new generation and
+reuses unchanged files with hard links. The local filesystem and process must
+support hard links; otherwise publication fails before the generation is switched.
+It switches the generation with an atomic manifest replacement. File generations
+are immutable: external writes can alter shared hard-linked files in multiple
+generations. First access validates the full indexed file table; changes to a
+table require streaming that table into the next generation. Recovery tests cover
+process interruption, not power loss. An `export_pending`
 result means data committed but the export needs recovery; reopen the repository
-to recover it. A `committed_with_warnings` rollback committed its eligible changes
-and skipped the reported conflicts. Neither result calls for reapplying the Plan.
+to recover it. A `conflicts` rollback committed its eligible changes and skipped
+the reported conflicts. These statuses replace `publication_pending` and
+`committed_with_warnings`; neither calls for reapplying the Plan.
 
 ## Data validation
 
-`reader.validate()` checks stored data and same-field reference cycles and returns
-an immutable report with `valid` and `issues`. Checks use the final candidate state
-before apply or rollback commits. They do not add business completeness rules.
+Apply and rollback validate changed rows, ownership, temporal intervals,
+configuration and affected reference cycles against the pinned candidate. They
+assume unchanged data was already valid. Writes that bypass the generated
+interface are outside its locking and validation contract.
+
+`reader.validate()` scans the complete repository and returns an immutable report
+with `valid` and `issues`. It checks physical records, collection ownership, SCD
+overlaps, ConfigGroup definitions and mapping values, and same-field reference
+cycles. Run it when the validity of existing data is unknown. These checks do not
+add business completeness rules.
 
 ```console
 python -m fmc_model check-data -o config repository.lclcfg

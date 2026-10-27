@@ -3,7 +3,9 @@
 import asyncio
 import contextlib
 import io
+import json
 import sqlite3
+from dataclasses import asdict
 from unittest.mock import patch
 
 from tests.support import FilesystemCase, load_generated
@@ -93,6 +95,12 @@ class ValidationTests(FilesystemCase):
         )
         self.assertEqual(cycles({("a", "b"), ("b", "c"), ("c", "b")}), [("b", "c", "b")])
 
+    def test_long_cycle_witness_is_iterative_and_deterministic(self):
+        count = 10000
+        nodes = [f'{i:05}' for i in range(count)]
+        edges = set(zip(nodes, nodes[1:] + nodes[:1], strict=True))
+        self.assertEqual(cycles(edges), [tuple(nodes + nodes[:1])])
+
     def test_field_and_root_scope_and_cross_inheritance_cycle(self):
         self.edge("parent", "a", "b")
         self.edge("other", "b", "a")
@@ -115,6 +123,95 @@ class ValidationTests(FilesystemCase):
         self.db.execute("INSERT INTO tb_node_children VALUES ('missing','a')")
         self.db.commit()
         self.assertIn('missing collection owner', str(self.report().value.issues))
+
+    def test_explicit_full_check_includes_scd_and_config_group_invariants(self):
+        self.edge('period', 'a', 'b', valid_from='2026-01-01', valid_to='2026-02-01')
+        self.edge('period', 'a', 'b', valid_from='2026-01-15', valid_to='2026-03-01')
+        self.db.execute("INSERT INTO tb_config_group (config_group_id) VALUES ('missing')")
+        self.db.execute(
+            "INSERT INTO tb_config_group (config_group_id, entity_type__state, entity_type, "
+            "priority__state, priority, when__state, then_set__state) "
+            "VALUES ('target', 'VALUE', 'Unknown', 'VALUE', '1', 'VALUE', 'VALUE')"
+        )
+        self.db.execute(
+            "INSERT INTO tb_config_group (config_group_id, entity_type__state, entity_type, "
+            "priority__state, priority, when__state, then_set__state) "
+            "VALUES ('wrong-field', 'VALUE', 'Node', 'VALUE', '1', 'VALUE', 'VALUE')"
+        )
+        self.db.execute(
+            "INSERT INTO tb_config_group_when VALUES ('wrong-field', 'Other.parent', ?) ",
+            ('{"type":{},"value":"a"}',),
+        )
+        self.db.commit()
+        expected = self.report().value
+        self.assertFalse(expected.valid)
+        messages = {issue.message for issue in expected.issues}
+        self.assertIn('overlapping SCD intervals', messages)
+        self.assertIn('ConfigGroup requires entity_type, priority, when and then_set', messages)
+        self.assertIn('ConfigGroup target must be a business entity', messages)
+        self.assertIn('ConfigGroup field is outside its target inheritance tree', messages)
+
+        self.db.row_factory = sqlite3.Row
+        rows = {
+            table.name: [dict(row) for row in self.db.execute('SELECT * FROM "' + table.name + '"')]
+            for table in self.layout.tables
+        }
+        files = self.root / 'files-invalid'
+        for name, content in repository_contents(self.layout, rows).items():
+            path = files / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding='utf-8', newline='\n')
+        reader = self.api.SampleReader.open_files(files).value
+        self.addCleanup(reader.close)
+        self.assertEqual(reader.validate().value, expected)
+        managed = self.root / 'managed-invalid'
+        with asyncio.run(self.api.SampleData.create(self.config('files', managed))) as store:
+            store.publish_files(Data(self.layout, rows), None)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertNotEqual(self.cli('sqlite', self.path), 0)
+            self.assertNotEqual(self.cli('files', managed), 0)
+        self.assertIn('overlapping SCD intervals', output.getvalue())
+
+    def test_explicit_full_check_validates_config_mapping_type_and_category(self):
+        self.db.execute(
+            "INSERT INTO tb_config_group (config_group_id, entity_type__state, entity_type, "
+            "priority__state, priority, when__state, then_set__state) "
+            "VALUES ('bad-map', 'VALUE', 'Node', 'VALUE', '1', 'VALUE', 'VALUE')"
+        )
+        type_ = self.layout.fields['Node.limit'].field.type
+        value = json.dumps({'type': asdict(type_), 'value': '1'})
+        self.db.execute(
+            "INSERT INTO tb_config_group_when VALUES ('bad-map', 'Node.limit', ?)", (value,)
+        )
+        self.db.commit()
+        report = self.report().value
+        self.assertIn('ConfigGroup requires stored static conditions', str(report.issues))
+        self.db.execute(
+            "UPDATE tb_config_group_when SET value=? WHERE config_group_id='bad-map'",
+            (json.dumps({'type': {}, 'value': '1'}),),
+        )
+        self.db.commit()
+        report = self.report().value
+        self.assertFalse(report.valid)
+        self.assertIn('tb_config_group', str(report.issues))
+
+    def test_explicit_file_check_rejects_corrupted_index(self):
+        self.db.row_factory = sqlite3.Row
+        rows = {
+            table.name: [dict(row) for row in self.db.execute('SELECT * FROM "' + table.name + '"')]
+            for table in self.layout.tables
+        }
+        files = self.root / 'files-bad-index'
+        for name, content in repository_contents(self.layout, rows).items():
+            path = files / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding='utf-8', newline='\n')
+        (files / 'indexes' / 'tb_node.jsonl').write_text('invalid\n', encoding='utf-8')
+        reader = self.api.SampleReader.open_files(files).value
+        self.addCleanup(reader.close)
+        result = reader.validate()
+        self.assertEqual(result.status, Status.ERROR)
+        self.assertIn('index digest mismatch', result.message)
 
     def test_cli_reports_read_failure_and_usage(self):
         self.db.execute('DROP TABLE tb_node_snap')

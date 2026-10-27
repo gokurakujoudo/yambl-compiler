@@ -150,6 +150,15 @@ delete core.Security.price scope (security_id='S1')
             parse(f"plan empty {{ version 1 model '{DIGEST}' }}"), Plan('empty', DIGEST, ())
         )
 
+    def test_model_digest_is_optional_and_round_trips(self):
+        text = "plan daily {\n    version 1\n    group first {\n    }\n}\n"
+        plan = parse(text)
+        self.assertEqual(plan, Plan('daily', None, (Group('first', ()),)))
+        self.assertEqual(dumps(plan), text)
+        self.assertEqual(format_document(text), text)
+        with self.assertRaisesRegex(DocumentError, 'SHA-256'):
+            parse(text.replace('    group first', "    model 'bad'\n    group first"))
+
     def test_empty_objects_inline_empty_comments_and_semantic_guard(self):
         from yambl_compiler.languages.shared.formatting import join_tokens
 

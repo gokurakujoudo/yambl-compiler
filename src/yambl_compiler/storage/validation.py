@@ -95,11 +95,13 @@ def cycles(edges: set[tuple[str, str]]) -> list[tuple[str, ...]]:
         if len(component) == 1 and (root, root) not in edges:
             continue
         path: list[str] = []
+        positions: dict[str, int] = {}
         node = min(component)
-        while node not in path:
+        while node not in positions:
+            positions[node] = len(path)
             path.append(node)
             node = min(graph[node] & component)
-        result.append(tuple([*path[path.index(node) :], node]))
+        result.append(tuple([*path[positions[node] :], node]))
     return sorted(result)
 
 
@@ -108,14 +110,14 @@ def validate_data(
     data: dict[str, list[Row]],
     select: Callable[[str, str], Field | None],
     read: Callable[[StoredField, Field, Row], ReadResult[object]],
-) -> ReadResult[ValidationReport]:
+) -> Success[ValidationReport]:
     """Scan both backends explicitly without changing normal lazy-read behavior.
 
     :param layout: Generated storage contract.
     :param data: Complete physical row snapshot.
     :param select: Resolve the actual field implementation.
     :param read: Decode one physical field row.
-    :returns: Data report, or ERROR if the repository cannot be read.
+    :returns: Data report for the supplied physical snapshot.
     """
     issues: list[ValidationIssue] = []
     tables = {t.name: t for t in layout.tables}
@@ -133,6 +135,62 @@ def validate_data(
                     issues.append(
                         ValidationIssue(
                             table.name, 'missing collection owner', tuple(str(row[k]) for k in keys)
+                        )
+                    )
+        if 'valid_to' in {column.name for column in table.columns}:
+            overlap_groups: dict[tuple[object, ...], list[tuple[str, str]]] = {}
+            for row in data[table.name]:
+                key = tuple(row[column] for column in table.primary if column != 'valid_from')
+                overlap_groups.setdefault(key, []).append(
+                    (str(row['valid_from']), str(row['valid_to']))
+                )
+            for key, intervals in overlap_groups.items():
+                ordered = sorted(intervals)
+                if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+                    issues.append(
+                        ValidationIssue(
+                            table.name,
+                            'overlapping SCD intervals',
+                            tuple(str(value) for value in key),
+                        )
+                    )
+    mappings: dict[str, dict[object, list[Row]]] = {}
+    for name in ('tb_config_group_when', 'tb_config_group_then_set'):
+        by_owner: dict[object, list[Row]] = {}
+        for member in data[name]:
+            by_owner.setdefault(member['config_group_id'], []).append(member)
+        mappings[name] = by_owner
+    for row in data['tb_config_group']:
+        id_ = str(row['config_group_id'])
+        if any(
+            row[name + '__state'] != 'VALUE'
+            for name in ('entity_type', 'priority', 'when', 'then_set')
+        ):
+            issues.append(
+                ValidationIssue(
+                    'tb_config_group',
+                    'ConfigGroup requires entity_type, priority, when and then_set',
+                    (id_,),
+                )
+            )
+            continue
+        target = str(row['entity_type'])
+        if target not in layout.roots:
+            issues.append(
+                ValidationIssue(
+                    'tb_config_group', 'ConfigGroup target must be a business entity', (id_,)
+                )
+            )
+            continue
+        for name in ('tb_config_group_when', 'tb_config_group_then_set'):
+            for member in mappings[name].get(row['config_group_id'], ()):
+                mapped_field = layout.fields.get(str(member['field']))
+                if mapped_field is None or mapped_field.root != layout.roots[target]:
+                    issues.append(
+                        ValidationIssue(
+                            name,
+                            'ConfigGroup field is outside its target inheritance tree',
+                            (id_,),
                         )
                     )
     groups: dict[tuple[str, tuple[tuple[str, str], ...], str], list[tuple[str, str, str, str]]] = {}

@@ -8,6 +8,7 @@ from yambl_compiler.languages.yaplan.model import Operation, Plan
 from yambl_compiler.storage.records import Layout, StoredField
 from yambl_compiler.transactions.binding import Entity
 from yambl_compiler.transactions.editing import STATES, Data
+from yambl_compiler.transactions.execution import Execution
 
 
 class PlanValidator:
@@ -76,7 +77,7 @@ class PlanValidator:
             return
         if not operation.scope or operation.kind not in ('replace', 'delete'):
             raise ValueError('field operations require replace or delete with scope')
-        self.data.selection(entity, field, stored, operation.scope)
+        filters, interval = self.data.selection(entity, field, stored, operation.scope)
         if operation.kind == 'delete':
             return
         constants = {c.name: c.value for c in operation.scope if c.end is None}
@@ -90,12 +91,28 @@ class PlanValidator:
         types = {entity.id.name: entity.id.type, **{d.key: d.type for d in stored.dimensions}}
         for row in operation.rows:
             record = {**constants, **dict(zip(operation.columns, row, strict=True))}
-            for name in coordinates:
+            physical: dict[str, object] = dict(stored.key_values)
+            for name, column in coordinates.items():
                 value = record[name]
                 if name in types:
-                    self.catalog.scalar(types[name], value)
+                    physical[column] = self.catalog.scalar(types[name], value)
                 elif not isinstance(value, str) or date.fromisoformat(value).isoformat() != value:
                     raise ValueError('expected ISO temporal coordinate')
+                else:
+                    physical[column] = value
+            if not self.data.matches(physical, filters, interval, field.category):
+                raise ValueError('replacement record is outside scope')
+            if (
+                field.category == 'scd'
+                and interval is not None
+                and not (
+                    interval[0]
+                    <= str(physical['valid_from'])
+                    < str(physical['valid_to'])
+                    <= interval[1]
+                )
+            ):
+                raise ValueError('replacement interval crosses scope boundary')
             self.value(entity, field, stored, record['value'])
 
     def validate(self, plan: Plan) -> None:
@@ -105,8 +122,9 @@ class PlanValidator:
         :returns: None.
         :raises ValueError: On model mismatch or invalid operations.
         """
-        if plan.model != self.data.layout.model.model_digest:
+        if plan.model is not None and plan.model != self.data.layout.model.model_digest:
             raise ValueError('Plan model digest does not match the repository')
         for group in plan.groups:
             for operation in group.operations:
                 self.operation(operation)
+        Execution(self.data).validate_claims(plan)

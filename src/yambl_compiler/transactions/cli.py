@@ -95,8 +95,7 @@ def commands(data_type: type[DataStore]) -> CommandGroup:
             if args.operation == 'create':
                 print(json.dumps({'status': 'created'}))
             elif args.operation == 'check_data':
-                reader = data.read()
-                try:
+                with data.read() as reader:
                     result = reader.validate()
                     valid = isinstance(result, Success) and result.value.valid
                     print(
@@ -107,8 +106,6 @@ def commands(data_type: type[DataStore]) -> CommandGroup:
                     if not valid:
                         status_mgr.update(ExecutionStatus.FAILURE)
                         return Outcome(ok=False)
-                finally:
-                    reader.close()
             else:
                 report = (
                     data.apply(Path(args.source))

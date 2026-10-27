@@ -32,11 +32,9 @@ def plan_lines(plan: Plan, depth: int = 0) -> list[str]:
     :returns: Source lines.
     """
     indent = '    ' * depth
-    lines = [
-        indent + 'plan ' + plan.name + ' {',
-        indent + '    version ' + str(plan.version),
-        indent + '    model ' + literal(plan.model),
-    ]
+    lines = [indent + 'plan ' + plan.name + ' {', indent + '    version ' + str(plan.version)]
+    if plan.model is not None:
+        lines.append(indent + '    model ' + literal(plan.model))
     for group in plan.groups:
         lines.append(indent + '    group ' + group.name + ' {')
         for operation in group.operations:
