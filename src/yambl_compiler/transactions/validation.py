@@ -1,0 +1,112 @@
+"""Validate Plan targets and literals using only the generated model contract."""
+
+from datetime import date
+
+from yambl_compiler.ir.model import Field
+from yambl_compiler.languages.shared.model import Symbol, Value
+from yambl_compiler.languages.yaplan.model import Operation, Plan
+from yambl_compiler.storage.records import Layout, StoredField
+from yambl_compiler.transactions.binding import Entity
+from yambl_compiler.transactions.editing import STATES, Data
+
+
+class PlanValidator:
+    """Check model-bound Plan contents without business data or storage writes."""
+
+    def __init__(self, layout: Layout) -> None:
+        """Retain schema helpers with empty, unused business tables.
+
+        :param layout: Bundled, validated storage contract.
+        :returns: None.
+        """
+        self.data = Data(layout, {})
+        self.catalog = self.data.catalog
+
+    def value(self, entity: Entity, field: Field, stored: StoredField, value: Value) -> None:
+        """Check a field literal using the same encoders as apply.
+
+        :param entity: Declared owner type.
+        :param field: Effective field declaration.
+        :param stored: Field storage contract.
+        :param value: Literal to check.
+        :returns: None.
+        :raises ValueError: On incompatible values or duplicate members.
+        """
+        if isinstance(value, Symbol) and value.name in STATES:
+            return
+        if stored.members:
+            keys = self.data.schema[stored.members].primary
+            # Owner columns are irrelevant to member literal encoding.
+            row: dict[str, object] = {key: None for key in keys}
+            members = self.data.encode_members(entity, field, stored, row, value)
+            identities = [tuple(member[key] for key in keys) for member in members]
+            if len(set(identities)) != len(identities):
+                raise ValueError('duplicate collection member')
+        else:
+            self.catalog.scalar(field.type, value)
+
+    def operation(self, operation: Operation) -> None:
+        """Check one entity batch or field scope against the model.
+
+        :param operation: Parsed operation.
+        :returns: None.
+        :raises ValueError: On invalid names, coordinates, types or operation shapes.
+        """
+        entity, field, stored = self.catalog.target(operation.target)
+        if field is None or stored is None:
+            if operation.scope or operation.kind == 'replace':
+                raise ValueError('scope operation requires a field target')
+            if entity.id.name not in operation.columns:
+                raise ValueError('entity operation requires its ID column')
+            for index, name in enumerate(operation.columns):
+                if name == entity.id.name:
+                    for row in operation.rows:
+                        self.catalog.scalar(entity.id.type, row[index])
+                    continue
+                current, binding = self.catalog.field(entity, name)
+                if (
+                    operation.kind == 'delete'
+                    or binding.dimensions
+                    or current.category in ('snapshot', 'scd')
+                    or (binding.members and operation.kind != 'insert')
+                ):
+                    raise ValueError('field requires a scope or is not writable')
+                for row in operation.rows:
+                    self.value(entity, current, binding, row[index])
+            return
+        if not operation.scope or operation.kind not in ('replace', 'delete'):
+            raise ValueError('field operations require replace or delete with scope')
+        self.data.selection(entity, field, stored, operation.scope)
+        if operation.kind == 'delete':
+            return
+        constants = {c.name: c.value for c in operation.scope if c.end is None}
+        coordinates = self.data.coordinates(entity, field, stored)
+        expected = set(coordinates) | {'value'}
+        if (
+            set(operation.columns) - expected
+            or expected - set(operation.columns) - constants.keys()
+        ):
+            raise ValueError('replacement columns must provide all coordinates and value')
+        types = {entity.id.name: entity.id.type, **{d.key: d.type for d in stored.dimensions}}
+        for row in operation.rows:
+            record = {**constants, **dict(zip(operation.columns, row, strict=True))}
+            for name in coordinates:
+                value = record[name]
+                if name in types:
+                    self.catalog.scalar(types[name], value)
+                elif not isinstance(value, str) or date.fromisoformat(value).isoformat() != value:
+                    raise ValueError('expected ISO temporal coordinate')
+            self.value(entity, field, stored, record['value'])
+
+    def validate(self, plan: Plan) -> None:
+        """Check the digest and every operation, including zero-row headers.
+
+        :param plan: Parsed Plan.
+        :returns: None.
+        :raises ValueError: On model mismatch or invalid operations.
+        """
+        if plan.model != self.data.layout.model.model_digest:
+            raise ValueError('Plan model digest does not match the repository')
+        for group in plan.groups:
+            for operation in group.operations:
+                self.operation(operation)

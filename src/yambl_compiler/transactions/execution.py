@@ -134,6 +134,42 @@ class Execution:
                 f'expect {operation.expect} matched {count} records: {operation.target}'
             )
 
+    def matched_entity_rows(self, operation: Operation) -> tuple[tuple[Value, ...], ...]:
+        """Select existing requested entity IDs without changing candidate data.
+
+        :param operation: Entity deletion with an ID column.
+        :returns: Requested rows whose IDs exist in this inheritance root.
+        :raises ValueError: On missing ID columns or incompatible ID literals.
+        """
+        entity = self.data.catalog.entity(operation.target)
+        if operation.columns != (entity.id.name,):
+            raise ValueError('entity deletion accepts only the ID column')
+        existing = {row[entity.column] for row in self.data.tables[entity.table]}
+        return tuple(
+            values
+            for values in operation.rows
+            if self.data.catalog.scalar(entity.id.type, values[0]) in existing
+        )
+
+    def validate_expectations(self, plan: Plan) -> None:
+        """Check explicit expectations against the unchanged repository snapshot.
+
+        :param plan: Parsed Plan with a matching model digest.
+        :returns: None; neither Plan operations nor storage writes are performed.
+        :raises ValueError: On model mismatch, invalid selectors or count mismatch.
+        """
+        if plan.model != self.data.layout.model.model_digest:
+            raise ValueError('Plan model digest does not match the repository')
+        for group in plan.groups:
+            for operation in group.operations:
+                if operation.expect is not None:
+                    count = (
+                        len(self.data.image(operation.target, operation.scope).rows)
+                        if operation.scope
+                        else len(self.matched_entity_rows(operation))
+                    )
+                    self.expect(operation, count)
+
     def entities(self, operation: Operation) -> tuple[Change, ...]:
         """Execute a batch of ID-based entity mutations.
 
@@ -147,13 +183,7 @@ class Execution:
             raise ValueError('entity deletion accepts only the ID column')
         selected = operation.rows
         if operation.kind == 'delete':
-            index = operation.columns.index(entity.id.name)
-            existing = {row[entity.column] for row in self.data.tables[entity.table]}
-            selected = tuple(
-                values
-                for values in operation.rows
-                if self.data.catalog.scalar(entity.id.type, values[index]) in existing
-            )
+            selected = self.matched_entity_rows(operation)
             self.expect(operation, len(selected))
         changes: list[Change] = []
         for values in selected:

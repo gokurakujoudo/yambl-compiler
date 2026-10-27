@@ -14,6 +14,7 @@ from unittest.mock import patch
 from tests.support import FilesystemCase, load_generated
 from yambl_compiler.ir import compile_repository
 from yambl_compiler.languages.shared.formatting import format_document
+from yambl_compiler.languages.shared.model import Condition
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
 
@@ -42,6 +43,24 @@ class FmcTests(FilesystemCase):
             with asyncio.run(module.FmcData.create(config)) as data:
                 report = data.apply(plan)
                 self.assertEqual(report.status, "committed")
+                for dictionary, codes in {
+                    'PortfolioGroupTypes': {'Example'},
+                    'TradingMarkets': {'ExampleMarket'},
+                    'PriceSources': {'Primary', 'Secondary', 'Unlisted'},
+                    'ExternalRatingSources': {'AgencyA', 'AgencyB'},
+                }.items():
+                    image = data.snapshot().image(
+                        'builtins.Decodes.entries', (Condition('decodes_id', dictionary),)
+                    )
+                    entries = image.rows[0][-1]
+                    self.assertEqual(
+                        {
+                            next(value for key, value in entry.items if key.name == 'code')
+                            for entry in entries
+                        },
+                        codes,
+                    )
+
                 undone = data.rollback(report.path)
                 self.assertEqual(undone.status, 'committed')
                 reader = data.read()

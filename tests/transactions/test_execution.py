@@ -108,6 +108,13 @@ class ExecutionTests(CatalogCase):
         self.assertEqual(self.apply(Group('g', (replace(op, expect=None),))).groups[0].changes, ())
         rollback(self.data, transaction)
 
+    def test_expectation_validation_rejects_wrong_model_and_id_columns(self):
+        execution = Execution(self.data)
+        with self.assertRaisesRegex(ValueError, 'digest'):
+            execution.validate_expectations(Plan('p', '0' * 64, ()))
+        with self.assertRaisesRegex(ValueError, 'ID column'):
+            execution.matched_entity_rows(Operation('delete', 'A', ('text',), ()))
+
     def test_candidate_field_entry_points_reject_entity_targets(self):
         for operation in (
             lambda: self.data.image('A', self.scope),

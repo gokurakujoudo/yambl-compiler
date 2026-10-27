@@ -83,6 +83,8 @@ def python_reference(source: str, package: str) -> str:
         "",
         "Use await Data.open(config_path) or await Data.create(config_path) on the generated model-specific Data class. The .lclcfg file selects the backend and repository path. data.read() returns a reader with a stable snapshot.",
         "",
+        "Data.validate_plan_syntax(plan_path) checks syntax, model identity, entity/field/coordinate names and literal types using the bundled contract, without opening a repository. data.validate_plan_expectations(plan_path) adds explicit expect checks against one unchanged repository snapshot. Both return the parsed Plan or raise ValueError; neither applies changes. apply rechecks expectations during execution.",
+        "",
         "Entities and coordinate records are frozen dataclasses. Entity equality retains object identity. References are resolved explicitly with reader.resolve(ref).",
         "",
         "Properties fetch all coordinates once. Methods cache normalized query arguments and reuse complete property data. ERROR is never cached. Cached data survives close; new backend reads return ERROR. Range methods return independent lists.",

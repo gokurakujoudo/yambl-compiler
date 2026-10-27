@@ -1,0 +1,84 @@
+"""Check Plan names and literal types without business repository data."""
+
+from pathlib import Path
+
+from tests.transactions.test_binding import CatalogCase
+from yambl_compiler.ir import compile_repository
+from yambl_compiler.languages.shared.documents import parse
+from yambl_compiler.languages.shared.model import Condition, Symbol
+from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
+from yambl_compiler.storage.layout import build_layout
+from yambl_compiler.transactions.validation import PlanValidator
+
+
+class ValidationTests(CatalogCase):
+    def test_model_validation_is_independent_of_instance_existence(self):
+        validator = PlanValidator(self.catalog.layout)
+        scope = (Condition('key', 'missing'),)
+        for op in (
+            Operation('insert', 'A', ('key', 'text', 'members'), (('absent', 'name', (1, 2)),)),
+            Operation('update', 'A', ('key', 'text'), (('absent', Symbol('EMPTY')),)),
+            Operation('delete', 'A', ('key',), (('absent',),)),
+            Operation('delete', 'A.price', (), (), scope, expect='any'),
+            Operation(
+                'replace', 'A.price', ('day', 'source', 'value'), (('2026-01-01', 'One', 2),), scope
+            ),
+            Operation('replace', 'A.text', ('value',), (('name',),), scope),
+        ):
+            with self.subTest(op=op):
+                validator.validate(
+                    Plan('p', self.catalog.layout.model.model_digest, (Group('g', (op,)),))
+                )
+        self.assertEqual(validator.data.tables, {})
+        with self.assertRaisesRegex(ValueError, 'digest'):
+            validator.validate(Plan('p', '0' * 64, ()))
+
+    def test_invalid_names_types_and_empty_headers(self):
+        validator = PlanValidator(self.catalog.layout)
+        scope = (Condition('key', 'missing'),)
+        cases = (
+            (Operation('insert', 'Unknown', ('key',), ()), 'unknown entity'),
+            (Operation('insert', 'A', ('key', 'unknown'), ()), 'not writable'),
+            (Operation('replace', 'A', ('key',), ()), 'field target'),
+            (Operation('insert', 'A', ('text',), ()), 'ID column'),
+            (Operation('insert', 'A', ('key',), ((1,),)), 'literal'),
+            (Operation('insert', 'A', ('key', 'count'), (('a', 'wrong'),)), 'integer'),
+            (Operation('delete', 'A', ('key', 'text'), ()), 'not writable'),
+            (Operation('insert', 'A', ('key', 'price'), ()), 'scope'),
+            (Operation('update', 'A', ('key', 'members'), ()), 'scope'),
+            (Operation('insert', 'A', ('key', 'members'), (('a', (1, 1)),)), 'duplicate'),
+            (Operation('insert', 'A', ('key', 'members'), (('a', ('bad',)),)), 'integer'),
+            (Operation('insert', 'A', ('key', 'members'), (('a', 'bad'),)), 'collection'),
+            (Operation('update', 'A.text', ('value',), ()), 'scope'),
+            (Operation('replace', 'A.text', ('bad',), (), scope), 'columns'),
+            (
+                Operation(
+                    'replace', 'A.price', ('day', 'source', 'value'), ((1, 'One', 2),), scope
+                ),
+                'ISO',
+            ),
+            (
+                Operation(
+                    'replace',
+                    'A.price',
+                    ('day', 'source', 'value'),
+                    (('20260101', 'One', 2),),
+                    scope,
+                ),
+                'ISO',
+            ),
+            (Operation('delete', 'A.text', (), (), (Condition('unknown', 1),)), 'coordinate'),
+        )
+        for op, message in cases:
+            with self.subTest(op=op), self.assertRaisesRegex(ValueError, message):
+                validator.operation(op)
+
+    def test_fmc_plan_including_dynamic_decodes_matches_compiled_contract(self):
+        repository = Path(__file__).parents[3] / 'fmc-data-model'
+        plan = parse((repository / 'examples/demo.yaplan').read_text(encoding='utf-8'))
+        PlanValidator(build_layout(compile_repository(repository))).validate(plan)
+        group = next(g for g in plan.groups if g.name == 'builtins_Decodes')
+        self.assertEqual(
+            {row[0] for row in group.operations[0].rows},
+            {'PortfolioGroupTypes', 'TradingMarkets', 'PriceSources', 'ExternalRatingSources'},
+        )

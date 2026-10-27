@@ -25,6 +25,7 @@ from yambl_compiler.storage.runtime import Reader
 from yambl_compiler.transactions.editing import Data
 from yambl_compiler.transactions.execution import Execution, rollback
 from yambl_compiler.transactions.snapshot import SnapshotBackend
+from yambl_compiler.transactions.validation import PlanValidator
 from yambl_compiler.transactions.writing import dumps
 
 LOCKS: dict[str, threading.RLock] = {}
@@ -457,6 +458,36 @@ class DataStore:
             count,
             warnings,
         )
+
+    @classmethod
+    def validate_plan_syntax(cls, plan_path: Path) -> Plan:
+        """Validate Plan syntax, names, coordinates and model-bound literal types.
+
+        :param plan_path: UTF-8 .yaplan source file.
+        :returns: Parsed Plan on success, without opening a repository.
+        :raises ValueError: On malformed contents or a non-Plan document.
+        :raises OSError: If the input file cannot be read.
+        """
+        plan = parse(Path(plan_path).read_text(encoding='utf-8'))
+        if not isinstance(plan, Plan):
+            raise ValueError('Plan validation requires a Plan')
+        layout = load_contract(cls.reader_type.model_path, cls.reader_type.contract_digest)
+        PlanValidator(layout).validate(plan)
+        return plan
+
+    def validate_plan_expectations(self, plan_path: Path) -> Plan:
+        """Check Plan expectations against one unchanged repository snapshot.
+
+        :param plan_path: UTF-8 .yaplan source file.
+        :returns: Parsed Plan after syntax and expectation validation.
+        :raises ValueError: On syntax, model, selector or expectation errors.
+        :raises OSError: If input or repository data cannot be read.
+        """
+        self.ready()
+        plan = self.validate_plan_syntax(plan_path)
+        with self.lock:
+            Execution(self.snapshot()).validate_expectations(plan)
+        return plan
 
     def apply(self, plan_path: Path) -> TransactionReport:
         """Apply an entire Plan using the configured backend.

@@ -449,6 +449,14 @@ actual before/after images, UTC execution time, groups, warnings and source
 transaction relationships. See the [transaction reference](../yambl/lang/syntex/transactions.md)
 for syntax, scope rules, SCD splitting and explicit owned-data deletion.
 
+`FmcData.validate_plan_syntax(plan_path)` checks the Plan against the bundled model
+contract, including entity, field and coordinate names and literal types, without
+opening a repository. `data.validate_plan_expectations(plan_path)` adds explicit
+expectation checks against the current repository snapshot. Both return the parsed
+Plan on success or raise an error, and neither writes data. The snapshot check does
+not simulate earlier operations in the Plan; apply validates its actual candidate
+state again.
+
 `data.apply(plan_path)` commits the entire Plan. `data.rollback(transaction_path,
 groups=None)` reverses all or selected groups while preserving conflicting later
 changes. Each operation returns a transaction ID, file path, change count and

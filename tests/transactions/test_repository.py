@@ -182,6 +182,57 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
                 with closing(store.read()) as reader:
                     self.assertEqual(reader.get_a('b').status, Status.NO_ENTRY)
 
+    async def test_two_plan_validation_levels_do_not_write(self):
+        self.assertEqual(self.store_type.validate_plan_syntax(self.plan_path).name, 'demo')
+        invalid = self.write('invalid.yaplan', 'not a plan')
+        with self.assertRaises(ValueError):
+            self.store_type.validate_plan_syntax(invalid)
+        invalid.write_text(
+            dumps(
+                replace(
+                    self.plan, groups=(Group('g', (Operation('insert', 'A', ('key', 'bad'), ()),)),)
+                )
+            ),
+            encoding='utf-8',
+        )
+        with self.assertRaisesRegex(ValueError, 'not writable'):
+            self.store_type.validate_plan_syntax(invalid)
+        for backend in ('sqlite', 'files'):
+            store, _ = await self.configured(backend)
+            self.addCleanup(store.close)
+            initial = store.apply(self.plan_path)
+            with self.assertRaisesRegex(ValueError, 'requires a Plan'):
+                self.store_type.validate_plan_syntax(initial.path)
+            before = store.snapshot().tables
+            files = {p.name: p.read_bytes() for p in store.transaction_directory().iterdir()}
+            for op, passes in (
+                (
+                    Operation('delete', 'A.text', (), (), (Condition('key', 'a'),), expect='one'),
+                    True,
+                ),
+                (
+                    Operation('delete', 'A.price', (), (), (Condition('key', 'a'),), expect='any'),
+                    False,
+                ),
+                (Operation('delete', 'A', ('key',), (('a',),), expect='one'), True),
+                (Operation('delete', 'A', ('key',), (('absent',),), expect='any'), False),
+                (Operation('update', 'A', ('key', 'text'), (('absent', 'name'),)), True),
+            ):
+                plan = replace(self.plan, groups=(Group('g', (op,)),))
+                path = self.write('validate.yaplan', dumps(plan))
+                self.assertEqual(
+                    store.validate_plan_syntax(path).groups[0].operations[0].target, op.target
+                )
+                if passes:
+                    self.assertEqual(store.validate_plan_expectations(path).name, plan.name)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'matched 0'):
+                        store.validate_plan_expectations(path)
+            self.assertEqual(store.snapshot().tables, before)
+            self.assertEqual(
+                {p.name: p.read_bytes() for p in store.transaction_directory().iterdir()}, files
+            )
+
     async def test_same_interface_and_pinned_reader_for_both_backends(self):
         for backend in ('sqlite', 'files'):
             with self.subTest(backend=backend):
