@@ -147,6 +147,41 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
         )
         return await self.store_type.create(config), config
 
+    async def test_expect_failure_is_atomic_and_inline_insert_round_trips(self):
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, _ = await self.configured(backend)
+                self.addCleanup(store.close)
+                store.apply(self.plan_path)
+                insert = Operation(
+                    'insert',
+                    'A',
+                    ('key', 'text', 'members'),
+                    (('b', 'second', (1, 2)), ('c', 'third', ())),
+                )
+                failure = Operation(
+                    'delete', 'A.price', (), (), (Condition('key', 'a'),), expect='any'
+                )
+                path = self.write(
+                    'batch.yaplan',
+                    dumps(replace(self.plan, groups=(Group('A', (insert, failure)),))),
+                )
+                with self.assertRaisesRegex(ValueError, 'expect any matched 0'):
+                    store.apply(path)
+                with closing(store.read()) as reader:
+                    self.assertEqual(reader.get_a('b').status, Status.NO_ENTRY)
+                    self.assertEqual(reader.get_a('a').value.text, Success('original'))
+                path.write_text(
+                    dumps(replace(self.plan, groups=(Group('A', (insert,)),))), encoding='utf-8'
+                )
+                result = store.apply(path)
+                with closing(store.read()) as reader:
+                    self.assertEqual(reader.get_a('b').value.text, Success('second'))
+                    self.assertEqual(len(reader.get_a('b').value.members.value), 2)
+                store.rollback(result.path)
+                with closing(store.read()) as reader:
+                    self.assertEqual(reader.get_a('b').status, Status.NO_ENTRY)
+
     async def test_same_interface_and_pinned_reader_for_both_backends(self):
         for backend in ('sqlite', 'files'):
             with self.subTest(backend=backend):

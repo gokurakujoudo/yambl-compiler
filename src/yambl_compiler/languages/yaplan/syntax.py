@@ -18,6 +18,10 @@ def operation(node: Tree[Token]) -> Operation:
     first = tokens(node)[0]
     kind = cast(Literal['insert', 'update', 'delete', 'replace'], str(first))
     target = str(tokens(children(node, 'target')[0])[0])
+    expectations = children(node, 'expectation')
+    expect = cast(Literal['one', 'any'], str(tokens(expectations[0])[1])) if expectations else None
+    if expect and kind not in ('replace', 'delete'):
+        raise fail(node, 'expect is only valid for replace or delete')
     owned = bool(children(node, 'owned'))
     scopes = children(node, 'scope')
     if owned and kind != 'delete':
@@ -31,7 +35,7 @@ def operation(node: Tree[Token]) -> Operation:
     if conditions and kind == 'delete':
         if headings:
             raise fail(node, 'field delete cannot contain data rows')
-        return Operation(kind, target, (), (), conditions, line=first.line or 1)
+        return Operation(kind, target, (), (), conditions, line=first.line or 1, expect=expect)
     if not headings:
         raise fail(node, 'replace requires columns and data rows')
     names = columns(headings[0])
@@ -43,6 +47,7 @@ def operation(node: Tree[Token]) -> Operation:
         conditions,
         owned,
         first.line or 1,
+        expect,
     )
 
 

@@ -103,6 +103,7 @@ class Execution:
         actual_field, _ = self.data.catalog.field(actual, field.name)
         self.claim(actual.definition.identity, owner.value, actual_field.identity, operation.scope)
         before = self.data.image(operation.target, operation.scope)
+        self.expect(operation, len(before.rows))
         if operation.kind == 'delete':
             self.data.clear(operation.target, operation.scope)
         elif operation.kind == 'replace':
@@ -120,6 +121,19 @@ class Execution:
             (self.data.image(operation.target, operation.scope),),
         )
 
+    def expect(self, operation: Operation, count: int) -> None:
+        """Check the number of matched records before a mutation.
+
+        :param operation: Requested mutation and optional expectation.
+        :param count: Actual number of matching records.
+        :returns: None.
+        :raises ValueError: If the count violates the expectation.
+        """
+        if (operation.expect == 'one' and count != 1) or (operation.expect == 'any' and count < 1):
+            raise ValueError(
+                f'expect {operation.expect} matched {count} records: {operation.target}'
+            )
+
     def entities(self, operation: Operation) -> tuple[Change, ...]:
         """Execute a batch of ID-based entity mutations.
 
@@ -131,8 +145,18 @@ class Execution:
             raise ValueError('entity operation requires its ID column')
         if operation.kind == 'delete' and operation.columns != (entity.id.name,):
             raise ValueError('entity deletion accepts only the ID column')
+        selected = operation.rows
+        if operation.kind == 'delete':
+            index = operation.columns.index(entity.id.name)
+            existing = {row[entity.column] for row in self.data.tables[entity.table]}
+            selected = tuple(
+                values
+                for values in operation.rows
+                if self.data.catalog.scalar(entity.id.type, values[index]) in existing
+            )
+            self.expect(operation, len(selected))
         changes: list[Change] = []
-        for values in operation.rows:
+        for values in selected:
             record = dict(zip(operation.columns, values, strict=True))
             id_ = record.pop(entity.id.name)
             scope = (Condition(entity.id.name, id_),)
@@ -150,7 +174,11 @@ class Execution:
                 continue
             for name, value in record.items():
                 field, stored = self.data.catalog.field(actual, name)
-                if stored.dimensions or field.category in ('snapshot', 'scd') or stored.members:
+                if (
+                    stored.dimensions
+                    or field.category in ('snapshot', 'scd')
+                    or (stored.members and operation.kind != 'insert')
+                ):
                     raise ValueError('coordinate and collection fields require a field scope')
                 target = actual.definition.identity + '.' + name
                 self.claim(actual.definition.identity, id_, field.identity, scope)

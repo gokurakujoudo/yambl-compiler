@@ -12,6 +12,8 @@ def operation_lines(operation: Operation, depth: int) -> list[str]:
     :returns: Operation lines.
     """
     header = operation.kind + ' ' + operation.target
+    if operation.expect:
+        header += ' expect ' + operation.expect
     if operation.owned_data:
         header += ' owned_data delete_all'
     if operation.scope:

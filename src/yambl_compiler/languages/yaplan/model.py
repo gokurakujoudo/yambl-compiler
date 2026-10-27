@@ -17,6 +17,7 @@ class Operation:
     :param scope: Field selection conditions.
     :param owned_data: Whether entity deletion includes owned records.
     :param line: One-based source line of the operation.
+    :param expect: Optional required match cardinality before mutation.
     """
 
     kind: Literal['insert', 'update', 'delete', 'replace']
@@ -26,6 +27,7 @@ class Operation:
     scope: tuple[Condition, ...] = ()
     owned_data: bool = False
     line: int = field(default=1, compare=False)
+    expect: Literal['one', 'any'] | None = None
 
 
 @dataclass(frozen=True)

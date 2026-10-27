@@ -42,6 +42,72 @@ class ExecutionTests(CatalogCase):
         selected = self.scope if scope is None else scope
         self.data.put(target, selected, Image(target, columns, rows))
 
+    def test_expect_counts_existing_scope_records(self):
+        from yambl_compiler.languages.shared.documents import parse
+        from yambl_compiler.transactions.writing import dumps
+
+        for kind in ('replace', 'delete'):
+            for count in (0, 1, 2):
+                for expect in (None, 'one', 'any'):
+                    with self.subTest(kind=kind, count=count, expect=expect):
+                        self.put(
+                            'A.price',
+                            tuple(('2026-01-0' + str(i + 1), 'One', i + 1) for i in range(count)),
+                            ('day', 'source', 'value'),
+                        )
+                        before = self.data.image('A.price', self.scope)
+                        op = Operation(
+                            kind,
+                            'A.price',
+                            ('day', 'source', 'value') if kind == 'replace' else (),
+                            (),
+                            self.scope,
+                            expect=expect,
+                        )
+                        if (expect == 'one' and count != 1) or (expect == 'any' and count == 0):
+                            with self.assertRaisesRegex(
+                                ValueError, f'expect {expect} matched {count}'
+                            ):
+                                self.apply(Group('g', (op,)))
+                            self.assertEqual(self.data.image('A.price', self.scope), before)
+                        else:
+                            transaction = self.apply(Group('g', (op,)))
+                            self.assertEqual(self.data.image('A.price', self.scope).rows, ())
+                            self.assertEqual(parse(dumps(transaction)), transaction)
+
+    def test_batch_insert_static_collections_and_delete_expectation(self):
+        from dataclasses import replace
+
+        transaction = self.apply(
+            Group(
+                'g',
+                (
+                    Operation(
+                        'insert',
+                        'A',
+                        ('key', 'text', 'members'),
+                        (('b', 'second', (1, 2)), ('c', 'third', ())),
+                    ),
+                ),
+            )
+        )
+        self.assertEqual(
+            self.data.image('A.members', (Condition('key', 'b'),)).rows, (('b', (1, 2)),)
+        )
+        self.assertEqual(
+            self.data.image('A.text', (Condition('key', 'c'),)).rows, (('c', 'third'),)
+        )
+        op = Operation(
+            'delete', 'A', ('key',), (('b',), ('c',), ('absent',)), owned_data=True, expect='one'
+        )
+        with self.assertRaisesRegex(ValueError, 'matched 2'):
+            self.apply(Group('g', (op,)))
+        self.apply(Group('g', (replace(op, expect='any'),)))
+        with self.assertRaisesRegex(ValueError, 'matched 0'):
+            self.apply(Group('g', (replace(op, expect='any'),)))
+        self.assertEqual(self.apply(Group('g', (replace(op, expect=None),))).groups[0].changes, ())
+        rollback(self.data, transaction)
+
     def test_candidate_field_entry_points_reject_entity_targets(self):
         for operation in (
             lambda: self.data.image('A', self.scope),
