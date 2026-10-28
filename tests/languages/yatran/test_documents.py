@@ -59,6 +59,24 @@ class DocumentTests(unittest.TestCase):
         self.assertNotEqual(rollback.digest, value.digest)
         self.assertEqual(semantic_digest(replace(value, digest='other')), value.digest)
 
+    def test_transaction_ids_accept_snowflake_and_legacy_uuid(self):
+        for id_, source in (
+            ('1', '123456789012345678'),
+            ('123456789012345678', '87654321-1234-1234-1234-123456789abc'),
+            ('12345678-1234-1234-1234-123456789abc', '1'),
+        ):
+            with self.subTest(id=id_, source=source):
+                value = seal(replace(transaction(), id=id_, source=source))
+                self.assertEqual(parse(dumps(value)), value)
+        for id_ in ('0', '01', '-1', '+1', '１２３', 'ABCDEFAB-1234-1234-1234-123456789ABC'):
+            with self.subTest(id=id_):
+                value = seal(replace(transaction(), id=id_))
+                with self.assertRaisesRegex(DocumentError, 'invalid transaction ID'):
+                    parse(dumps(value))
+                value = seal(replace(transaction(), source=id_))
+                with self.assertRaisesRegex(DocumentError, 'invalid transaction ID'):
+                    parse(dumps(value))
+
     def test_transaction_metadata_and_images(self):
         text = dumps(transaction())
         without_model = text.replace(f"    model '{DIGEST}'\n", '')

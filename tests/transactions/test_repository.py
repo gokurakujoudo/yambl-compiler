@@ -15,6 +15,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from lclang.error import LclError, render_error
+from lclang.utils import SnowflakeGenerator
 
 from tests.support import load_generated
 from tests.transactions.test_binding import CatalogCase
@@ -160,6 +161,49 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
             f'{backend}{suffix}.lclcfg', f"backend: '{backend}'\npath: '{backend}{suffix}.data'\n"
         )
         return await self.store_type.create(config), config
+
+    async def test_snowflake_ids_advance_after_generator_restart(self):
+        runtime = sys.modules[self.store_type.__mro__[1].__module__]
+        clock_ns = (1_704_067_200_000 + 86_400_000) * 1_000_000
+        with patch('lclang.utils.snowflake_id.time_ns', return_value=clock_ns):
+            for backend in ('sqlite', 'files'):
+                with self.subTest(backend=backend):
+                    with patch.object(runtime, 'ID_GENERATOR', SnowflakeGenerator(worker_id=0)):
+                        store, config = await self.configured(backend)
+                        self.addCleanup(store.close)
+                        if backend == 'files':
+                            initial = json.loads((store.path / 'repository.json').read_text())
+                            self.assertTrue(initial['generation'].isdecimal())
+                        first = store.apply(self.plan_path)
+                    with patch.object(runtime, 'ID_GENERATOR', SnowflakeGenerator(worker_id=0)):
+                        second = store.rollback(first.path)
+                    self.assertTrue(first.id.isdecimal())
+                    self.assertTrue(second.id.isdecimal())
+                    self.assertGreater(int(second.id), int(first.id))
+                    self.assertEqual(parse(second.path.read_text()).source, first.id)
+                    reopened = await self.store_type.open(config)
+                    reopened.close()
+
+    async def test_snowflake_id_rejects_clock_behind_repository_watermark(self):
+        runtime = sys.modules[self.store_type.__mro__[1].__module__]
+        now_ns = (1_704_067_200_000 + 86_400_000) * 1_000_000
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                with (
+                    patch('lclang.utils.snowflake_id.time_ns', return_value=now_ns),
+                    patch.object(runtime, 'ID_GENERATOR', SnowflakeGenerator(worker_id=0)),
+                ):
+                    store, _ = await self.configured(backend)
+                    self.addCleanup(store.close)
+                    first = store.apply(self.plan_path)
+                with (
+                    patch('lclang.utils.snowflake_id.time_ns', return_value=now_ns - 1_000_000),
+                    patch.object(runtime, 'ID_GENERATOR', SnowflakeGenerator(worker_id=0)),
+                    self.assertRaisesRegex(ValueError, 'cannot advance beyond repository IDs'),
+                ):
+                    store.rollback(first.path)
+                with closing(store.read()) as reader:
+                    self.assertEqual(reader.get_a('a').value.text, Success('original'))
 
     async def test_expect_failure_is_atomic_and_inline_insert_round_trips(self):
         for backend in ('sqlite', 'files'):
@@ -1063,7 +1107,7 @@ with asyncio.run(module.SampleData.open(config)) as store:
         for changes, message in (
             ({'transactions': [1]}, 'scalar type'),
             ({'transactions': ['ABCDEFAB-1234-1234-1234-123456789ABC']}, 'invalid file generation'),
-            ({'transactions': ['../outside']}, 'UUID'),
+            ({'transactions': ['../outside']}, 'invalid file generation'),
             ({'transactions': [report.id, report.id]}, 'duplicate committed'),
             ({'generation': str(uuid4())}, 'latest committed'),
             ({'format_revision': 1}, 'does not match'),

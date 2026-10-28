@@ -14,11 +14,13 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import perf_counter
 from typing import ClassVar, Self, cast
-from uuid import UUID, uuid4
+
+from lclang.utils import SnowflakeGenerator
 
 from yambl_compiler.languages.shared.documents import parse
 from yambl_compiler.languages.yaplan.model import Plan
 from yambl_compiler.languages.yatran.model import Transaction, TransactionGroup
+from yambl_compiler.languages.yatran.syntax import valid_id
 from yambl_compiler.languages.yatran.writing import seal
 from yambl_compiler.storage.backends import FileBackend, Row, SQLiteBackend, repository_contents
 from yambl_compiler.storage.contract import decode, load_contract, loads
@@ -38,6 +40,7 @@ LOCKS: dict[str, threading.RLock] = {}
 WRITER_LOCKS: dict[str, RepositoryLock] = {}
 LOCK_GUARD = threading.Lock()
 LOGGER = logging.getLogger(__name__)
+ID_GENERATOR = SnowflakeGenerator(worker_id=0)
 
 
 @contextmanager
@@ -82,8 +85,8 @@ class FilePointer:
 
     :param format_revision: File entry format revision.
     :param model_digest: Model semantic digest.
-    :param generation: Current immutable generation UUID.
-    :param transactions: Committed transaction UUIDs in commit order.
+    :param generation: Current immutable generation ID.
+    :param transactions: Committed transaction IDs in commit order.
     """
 
     format_revision: int
@@ -104,7 +107,7 @@ class TransactionStatus(StrEnum):
 class TransactionReport:
     """Report committed effects separately from recoverable publication failures.
 
-    :param id: Committed transaction UUID.
+    :param id: Committed transaction ID.
     :param path: Managed transaction export path.
     :param status: Commit and export outcome.
     :param changes: Number of actual rollback units.
@@ -265,7 +268,7 @@ class DataStore:
         if metadata.format_revision != 2 or metadata.model_digest != self.layout.model.model_digest:
             raise ValueError('file repository metadata does not match this model')
         for id_ in (metadata.generation, *metadata.transactions):
-            if str(UUID(id_)) != id_:
+            if not valid_id(id_):
                 raise ValueError('invalid file generation or transaction ID')
         if len(set(metadata.transactions)) != len(metadata.transactions):
             raise ValueError('duplicate committed transaction ID')
@@ -316,14 +319,14 @@ class DataStore:
         )
 
     def export(self, id_: str) -> Path:
-        """Recover or regenerate a committed transaction file by UUID.
+        """Recover or regenerate a committed transaction file by ID.
 
-        :param id_: Canonical transaction UUID.
+        :param id_: Canonical transaction ID.
         :returns: Published .yatran path.
         :raises ValueError: If the transaction is not committed in this repository.
         """
         self.ready()
-        if str(UUID(id_)) != id_:
+        if not valid_id(id_):
             raise ValueError('invalid transaction ID')
         with self.lock, self.writer_lock:
             if self.backend == 'sqlite':
@@ -412,11 +415,7 @@ class DataStore:
         for version in versions.iterdir():
             if version.name == metadata.generation:
                 continue
-            try:
-                canonical = str(UUID(version.name)) == version.name
-            except ValueError:
-                canonical = False
-            if not canonical or not version.is_dir():
+            if not valid_id(version.name) or not version.is_dir():
                 continue
             tables = version / 'tables'
             indexes = version / 'indexes'
@@ -449,6 +448,38 @@ class DataStore:
                 version.rmdir()
         (self.path / 'repository.pending').unlink(missing_ok=True)
 
+    def new_id(self) -> str:
+        """Allocate an ID above this repository's committed Snowflake watermark.
+
+        The caller holds the repository writer lock, so other processes cannot
+        publish between checking the watermark and committing the new ID.
+
+        :returns: Canonical decimal Snowflake ID.
+        :raises ValueError: If the generator cannot advance beyond the watermark.
+        """
+        if self.backend == 'sqlite':
+            with closing(sqlite3.connect(self.path)) as connection:
+                sqlite_ids = (
+                    str(row[0])
+                    for row in connection.execute('SELECT id FROM tb_yambl_transactions')
+                )
+                watermark = max(
+                    (int(id_) for id_ in sqlite_ids if id_.isascii() and id_.isdigit()), default=0
+                )
+        elif (self.path / 'repository.json').exists():
+            metadata = self.file_pointer()
+            ids = (metadata.generation, *metadata.transactions)
+            watermark = max((int(id_) for id_ in ids if id_.isascii() and id_.isdigit()), default=0)
+        else:
+            watermark = 0
+        for _ in range(4096):
+            candidate = ID_GENERATOR.next_id()
+            if candidate > watermark and (
+                self.backend != 'files' or not (self.path / 'versions' / str(candidate)).exists()
+            ):
+                return str(candidate)
+        raise ValueError('Snowflake generator cannot advance beyond repository IDs')
+
     def publish_files(self, data: Data, transaction: Transaction | None) -> None:
         """Prepare immutable files, then atomically switch the root manifest.
 
@@ -456,7 +487,7 @@ class DataStore:
         :param transaction: Commit record, or None for initial creation.
         :returns: None after the manifest commit point.
         """
-        id_ = transaction.id if transaction is not None else str(uuid4())
+        id_ = transaction.id if transaction is not None else self.new_id()
         version = self.path / 'versions' / id_
         version.mkdir(parents=True)
         contents = repository_contents(self.layout, data.tables)
@@ -671,7 +702,7 @@ class DataStore:
             plan = replace(plan, model=data.layout.model.model_digest)
         transaction = seal(
             Transaction(
-                str(uuid4()),
+                self.new_id(),
                 datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                 plan,
                 groups,

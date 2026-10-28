@@ -54,11 +54,11 @@ class TransactionGroup:
 class Transaction:
     """Keep a portable, model-bound execution record.
 
-    :param id: Transaction UUID.
+    :param id: Canonical transaction ID.
     :param time: UTC execution timestamp in ISO format, ending in Z.
     :param plan: Original normalized plan.
     :param groups: Executed groups and their actual results.
-    :param source: Source transaction UUID for rollback, empty for apply.
+    :param source: Source transaction ID for rollback, empty for apply.
     :param digest: SHA-256 of canonical semantic contents.
     :param version: Transaction format revision.
     """

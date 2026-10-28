@@ -22,6 +22,20 @@ from ..yaplan.syntax import from_tree as plan_from_tree
 from .model import Change, Image, Transaction, TransactionGroup
 
 
+def valid_id(value: str) -> bool:
+    """Accept canonical positive Snowflake IDs and existing canonical UUIDs.
+
+    :param value: Identifier from transaction or repository metadata.
+    :returns: Whether the identifier has a supported canonical form.
+    """
+    if re.fullmatch(r'[1-9][0-9]*', value):
+        return True
+    try:
+        return str(UUID(value)) == value
+    except ValueError:
+        return False
+
+
 def image(node: Tree[Token]) -> Image:
     """Decode an exact before or after image.
 
@@ -51,8 +65,8 @@ def from_tree(node: Tree[Token]) -> Transaction:
     sources = children(node, 'source')
     source = string(tokens(sources[0])[1]) if sources else ''
     try:
-        if str(UUID(id_)) != id_ or (source and str(UUID(source)) != source):
-            raise ValueError('noncanonical UUID')
+        if not valid_id(id_) or (source and not valid_id(source)):
+            raise ValueError('invalid transaction ID')
         if not re.fullmatch(
             r'[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z', time
         ):
