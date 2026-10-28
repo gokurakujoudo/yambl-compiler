@@ -87,6 +87,13 @@ def evaluate(expression: Expression, resolve: Callable[[str], object]) -> object
         return resolve(node.value)
     if node.kind == 'member' and node.operands[0].kind == 'name':
         return resolve(node.operands[0].value + '.' + node.value)
+    if (
+        node.kind == 'member'
+        and node.operands[0].kind == 'descriptor'
+        and node.operands[0].value == 'subtypes'
+        and node.operands[0].operands[0].kind == 'name'
+    ):
+        return resolve(node.operands[0].operands[0].value + '::subtypes.' + node.value)
     if node.kind == 'conditional':
         return child(node.operands[1] if child(node.operands[0]) else node.operands[2])
     if node.kind == 'unary':

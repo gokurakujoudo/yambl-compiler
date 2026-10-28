@@ -1,12 +1,12 @@
 """Check stored field values and coordinate-specific instance reference cycles."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import cast
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.storage.backends import Row, validate_row
-from yambl_compiler.storage.records import Layout, StoredField, table_name
+from yambl_compiler.storage.records import Layout, StoredField, mapped_field, table_name
 from yambl_compiler.storage.results import (
     EntityRef,
     NonNormalResult,
@@ -105,6 +105,44 @@ def cycles(edges: set[tuple[str, str]]) -> list[tuple[str, ...]]:
     return sorted(result)
 
 
+def validate_dictionaries(
+    layout: Layout,
+    select: Callable[[str, Mapping[str, object]], list[Row]],
+    dictionaries: set[str],
+) -> tuple[ValidationIssue, ...]:
+    """Check immutable model entries against a supplied data snapshot.
+
+    :param layout: Generated model contract.
+    :param select: Row selection on the same snapshot being validated.
+    :param dictionaries: Qualified dictionary identities to inspect.
+    :returns: Missing, changed or duplicate entry diagnostics.
+    """
+    issues: list[ValidationIssue] = []
+    for definition in layout.model.definitions:
+        if definition.kind != 'decodes' or definition.identity not in dictionaries:
+            continue
+        identity = definition.identity
+        headers = select('tb_decodes', {'decodes_id': identity})
+        if len(headers) != 1 or headers[0].get('entries__state') != 'VALUE':
+            issues.append(
+                ValidationIssue(identity, 'model dictionary missing or entries not VALUE')
+            )
+            continue
+        rows = select('tb_decodes_entries', {'decodes_id': identity})
+        entries = {str(row['code']): (str(row['decode']), str(row['ordering'])) for row in rows}
+        if len(entries) != len(rows):
+            issues.append(ValidationIssue(identity, 'duplicate dictionary code'))
+        expected = {entry.code: (entry.decode, entry.ordering) for entry in definition.entries}
+        for code, value in expected.items():
+            if entries.get(code) != value:
+                issues.append(ValidationIssue(identity, f'model dictionary entry changed: {code}'))
+        if (
+            definition.derived or any(c.target == 'builtins.flags' for c in definition.decorators)
+        ) and entries.keys() != expected.keys():
+            issues.append(ValidationIssue(identity, 'read-only dictionary entries changed'))
+    return tuple(issues)
+
+
 def validate_data(
     layout: Layout,
     data: dict[str, list[Row]],
@@ -120,6 +158,15 @@ def validate_data(
     :returns: Data report for the supplied physical snapshot.
     """
     issues: list[ValidationIssue] = []
+    issues.extend(
+        validate_dictionaries(
+            layout,
+            lambda name, keys: [
+                row for row in data[name] if all(row[key] == value for key, value in keys.items())
+            ],
+            {d.identity for d in layout.model.definitions if d.kind == 'decodes'},
+        )
+    )
     tables = {t.name: t for t in layout.tables}
     for table in layout.tables:
         for row in data[table.name]:
@@ -164,17 +211,17 @@ def validate_data(
         id_ = str(row['config_group_id'])
         if any(
             row[name + '__state'] != 'VALUE'
-            for name in ('entity_type', 'priority', 'when', 'then_set')
+            for name in ('target_entity_type', 'priority', 'when', 'then_set')
         ):
             issues.append(
                 ValidationIssue(
                     'tb_config_group',
-                    'ConfigGroup requires entity_type, priority, when and then_set',
+                    'ConfigGroup requires target_entity_type, priority, when and then_set',
                     (id_,),
                 )
             )
             continue
-        target = str(row['entity_type'])
+        target = str(row['target_entity_type'])
         if target not in layout.roots:
             issues.append(
                 ValidationIssue(
@@ -184,8 +231,8 @@ def validate_data(
             continue
         for name in ('tb_config_group_when', 'tb_config_group_then_set'):
             for member in mappings[name].get(row['config_group_id'], ()):
-                mapped_field = layout.fields.get(str(member['field']))
-                if mapped_field is None or mapped_field.root != layout.roots[target]:
+                mapped = mapped_field(layout, str(member['field']))
+                if mapped is None or mapped[1] != layout.roots[target]:
                     issues.append(
                         ValidationIssue(
                             name,
@@ -195,7 +242,10 @@ def validate_data(
                     )
     groups: dict[tuple[str, tuple[tuple[str, str], ...], str], list[tuple[str, str, str, str]]] = {}
     for identity, stored in layout.fields.items():
-        if stored.root not in layout.entities:
+        if (
+            stored.root not in layout.entities
+            or layout.entities[stored.root].source.origin == "builtin"
+        ):
             continue
         identities = {str(r["id"]): str(r["entity_type"]) for r in data[table_name(stored.root)]}
         for row in data[stored.table]:

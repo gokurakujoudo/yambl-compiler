@@ -170,6 +170,16 @@ class Computations:
             :param key_position: Whether a name denotes a structured field key.
             :returns: None.
             """
+            if (
+                expression.kind == 'member'
+                and expression.operands[0].kind == 'descriptor'
+                and expression.operands[0].value == 'subtypes'
+                and expression.operands[0].operands[0].kind == 'name'
+            ):
+                name = expression.operands[0].operands[0].value
+                symbol = unit.scope.get(name)
+                if symbol is not None and symbol.kind == 'entity':
+                    return
             if expression.kind == 'name' and not key_position:
                 symbol = unit.scope.get(expression.value)
                 if expression.value not in SIGNATURES and (
@@ -205,6 +215,8 @@ class Computations:
             :raises ValueError: For nonconstant dependencies or a failed constant.
             """
             root, dot, code = name.partition('.')
+            if dot and root.endswith('::subtypes'):
+                return code
             symbol = unit.scope.get(root)
             if symbol is not None and symbol.kind == 'constant':
                 self.constant(symbol.key, unit)
@@ -710,6 +722,16 @@ class Checker:
                         self.issue(
                             node, f'unknown Decodes code: {expected.args[0].name}.{node.value}'
                         )
+                elif (
+                    expected.name == 'code'
+                    and expected.args
+                    and expected.args[0].key in self.unit.world.subtypes
+                ):
+                    entries = self.unit.world.subtypes[expected.args[0].key]
+                    if node.value not in {entry.code for entry in entries}:
+                        self.issue(
+                            node, f'unknown Decodes code: {expected.args[0].name}.{node.value}'
+                        )
                 self.literal_hints[node.span] = self.hint(expected, node.span)
                 if expected.kind == 'reference':
                     ids = [
@@ -765,6 +787,32 @@ class Checker:
             receiver = node.operands[0]
             if receiver.kind == 'name' and receiver.value == 'input' and node.value in self.inputs:
                 return Value(self.inputs[node.value].type)
+            if (
+                receiver.kind == 'descriptor'
+                and receiver.value == 'subtypes'
+                and receiver.operands[0].kind == 'name'
+                and receiver.operands[0].value in self.unit.scope
+                and self.unit.scope[receiver.operands[0].value].kind == 'entity'
+            ):
+                name = Token(
+                    'NAME',
+                    receiver.operands[0].value,
+                    line=receiver.span.line,
+                    column=receiver.span.column,
+                )
+                subtype_syntax: Tree[Token] = Tree(
+                    'type_expr',
+                    [
+                        name,
+                        Tree('access', [Token('OP', '::'), Token('NAME', 'subtypes')]),
+                        Tree('access', [Token('OP', '.'), Token('NAME', node.value)]),
+                    ],
+                )
+                return Value(
+                    Resolver(self.unit, self.computations.diagnostics, {})
+                    .evaluate(subtype_syntax)
+                    .type
+                )
             if (
                 receiver.kind == "name"
                 and receiver.value in self.unit.scope

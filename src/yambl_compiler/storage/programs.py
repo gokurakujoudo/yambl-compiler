@@ -113,6 +113,14 @@ class Emitter:
             return f"engine.field({frame}, {emit(receiver)}, {access.identity!r}, {access.operation!r}, {args})"
         if node.kind == "member":
             receiver = node.operands[0]
+            if (
+                receiver.kind == 'descriptor'
+                and receiver.value == 'subtypes'
+                and receiver.operands[0].kind == 'name'
+                and receiver.operands[0].value in self.references
+            ):
+                target = self.references[receiver.operands[0].value] + '::subtypes'
+                return f"engine.code({frame}, {target!r}, {node.value!r})"
             if receiver.kind == "name" and receiver.value == "input":
                 return f"engine.input({frame}, {node.value!r})"
             if (

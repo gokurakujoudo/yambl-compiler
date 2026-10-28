@@ -1,0 +1,15 @@
+namespace core
+
+extend Security {
+    config attr price_fallback_days: integer = 20
+
+    dimension price_source_dimension {
+        value price_source: code<'PriceSources'>
+        hierarchy price_hierarchy: Hierarchy
+        fallback_days = self.price_fallback_days::value()
+    }
+
+    @temporal(as_of_date: date)
+    @dimension(price_source_dimension)
+    snapshot attr price: money
+}

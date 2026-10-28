@@ -59,8 +59,8 @@ class ArtifactTests(FilesystemCase):
 
     def test_relocated_sources_and_comment_changes_preserve_semantics(self):
         text = "namespace core entity A { id key: string config attr label: string = 'quote\\\'s' }"
-        first = compile_repository(self.repository(text, 'first', 'fmc'))
-        second = compile_repository(self.repository(text, 'second', 'fmc'))
+        first = compile_repository(self.repository(text, 'first', 'demo'))
+        second = compile_repository(self.repository(text, 'second', 'demo'))
         self.assertEqual(dumps(first), dumps(second))
         file = self.root / 'second/file0.yambl'
         file.write_text('# private comment\n---\nprivate Markdown\n---\n' + text, encoding='utf-8')

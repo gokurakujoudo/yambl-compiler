@@ -7,6 +7,7 @@ from lark import Token, Tree
 from yambl_compiler.ir.model import (
     Call,
     Definition,
+    Dimension,
     Expression,
     Field,
     Model,
@@ -233,16 +234,22 @@ class Restoring:
         return Tree('field', [*self.calls(field.decorators), Tree('field_body', parts)])
 
     def declaration(
-        self, definition: Definition, extension: tuple[Field, ...] | None = None
+        self,
+        definition: Definition,
+        extension: tuple[Field, ...] | None = None,
+        dimensions: tuple[Dimension, ...] = (),
     ) -> Document:
         """Restore a definition or one extension in its original lexical context.
 
         :param definition: Owning declaration.
         :param extension: Extension fields, or None for the declaration itself.
+        :param dimensions: Dimensions declared in this lexical context.
         :returns: In-memory document; no source text is reconstructed or parsed.
         """
-        source = extension[0].source if extension else definition.source
-        kind = 'extension' if extension else definition.kind
+        source = definition.source
+        if extension is not None:
+            source = extension[0].source if extension else dimensions[0].source
+        kind = 'extension' if extension is not None else definition.kind
         keyword = {'type_alias': 'type', 'extension': 'extend', 'constant': 'const'}.get(kind, kind)
         header_parts: list[Token | Tree[Token]] = []
         if definition.final and kind == 'entity':
@@ -253,7 +260,7 @@ class Restoring:
                 self.reference(definition.identity, source),
             ]
         )
-        if definition.parent and not extension:
+        if definition.parent and extension is None:
             parent = (
                 token('Entity', 'NAME', source)
                 if definition.parent == 'Entity'
@@ -263,7 +270,7 @@ class Restoring:
                 Tree('inheritance', [token('inherits', 'INHERITS', source), parent])
             )
         formals: list[Token | Tree[Token]] = []
-        for parameter in (() if extension else definition.parameters):
+        for parameter in (() if extension is not None else definition.parameters):
             p = parameter.source
             items: list[Token | Tree[Token]] = []
             if parameter.pair:
@@ -292,17 +299,17 @@ class Restoring:
         # Header span is independent of parameter/source ordering.
         header_parts.append(token('', 'IR_END', source))
         body: list[Token | Tree[Token]] = [
-            *self.calls(() if extension else definition.decorators),
+            *self.calls(() if extension is not None else definition.decorators),
             Tree(kind + '_header', header_parts),
         ]
-        if not extension and definition.expression:
+        if extension is None and definition.expression:
             body.append(self.expression(definition.expression))
-        if not extension and definition.initializer is not None:
+        if extension is None and definition.initializer is not None:
             for reference in definition.references:
                 self.reference(reference.value, definition.source)
             body.append(restore_expression(definition.initializer))
-        if not extension:
-            for dimension in definition.dimensions:
+        if dimensions:
+            for dimension in dimensions:
                 p = dimension.source
                 members: list[Token | Tree[Token]] = [
                     token("dimension", "DIMENSION", p),
@@ -345,10 +352,12 @@ class Restoring:
         body.extend(
             self.field(f)
             for f in (
-                extension if extension else tuple(f for f in definition.fields if not f.extension)
+                extension
+                if extension is not None
+                else tuple(f for f in definition.fields if not f.extension and not f.builtin)
             )
         )
-        for entry in (() if extension else definition.entries):
+        for entry in (() if extension is not None else definition.entries):
             if not entry.generated:
                 body.append(
                     Tree(
@@ -388,16 +397,32 @@ def restore(model: Model) -> Analysis:
     documents: list[Document] = []
     bindings: list[dict[str, EntityKey]] = []
     for definition in model.definitions:
-        adapter = Restoring()
-        documents.append(adapter.declaration(definition))
-        bindings.append(adapter.bindings)
-        groups: dict[tuple[str, str], list[Field]] = {}
+        if definition.derived:
+            continue
+        groups: dict[tuple[str, str], tuple[list[Field], list[Dimension]]] = {}
+        own_dimensions: list[Dimension] = []
+        for dimension in definition.dimensions:
+            source, owner = dimension.source, definition.source
+            if (
+                source.path == owner.path
+                and source.namespace == owner.namespace
+                and (owner.line, owner.column) <= (source.line, source.column)
+                and (source.end_line, source.end_column) <= (owner.end_line, owner.end_column)
+            ):
+                own_dimensions.append(dimension)
+            else:
+                groups.setdefault((source.path, source.namespace), ([], []))[1].append(dimension)
         for field in definition.fields:
             if field.extension:
-                groups.setdefault((field.source.path, field.source.namespace), []).append(field)
-        for fields in groups.values():
+                groups.setdefault((field.source.path, field.source.namespace), ([], []))[0].append(
+                    field
+                )
+        adapter = Restoring()
+        documents.append(adapter.declaration(definition, dimensions=tuple(own_dimensions)))
+        bindings.append(adapter.bindings)
+        for fields, dimensions in groups.values():
             adapter = Restoring()
-            documents.append(adapter.declaration(definition, tuple(fields)))
+            documents.append(adapter.declaration(definition, tuple(fields), tuple(dimensions)))
             bindings.append(adapter.bindings)
     diagnostics: list[Diagnostic] = []
     units = resolve_scopes(

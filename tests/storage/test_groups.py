@@ -180,16 +180,27 @@ class GroupTests(FilesystemCase):
         )
         model = compile_repository(self.root)
         branch_b = next(d for d in model.definitions if d.identity == 'B')
-        sparse = next(d for d in branch_b.fields[0].decorators if d.target == 'builtins.sparse')
+        field_b = next(field for field in branch_b.fields if field.name == 'x')
+        sparse = next(d for d in field_b.decorators if d.target == 'builtins.sparse')
         branch_c = next(d for d in model.definitions if d.identity == 'C')
+        field_c = next(field for field in branch_c.fields if field.name == 'x')
         conflict = replace(
-            branch_c.fields[0],
-            decorators=(*branch_c.fields[0].decorators, replace(sparse, target='builtins.dense')),
+            field_c,
+            decorators=(*field_c.decorators, replace(sparse, target='builtins.dense')),
         )
         model = replace(
             model,
             definitions=tuple(
-                replace(d, fields=(conflict,)) if d.identity == 'C' else d
+                (
+                    replace(
+                        d,
+                        fields=tuple(
+                            conflict if field.name == 'x' else field for field in d.fields
+                        ),
+                    )
+                    if d.identity == 'C'
+                    else d
+                )
                 for d in model.definitions
             ),
         )
@@ -222,7 +233,7 @@ class GroupTests(FilesystemCase):
             ],
         )
         declaration = next(d for d in model.definitions if d.identity == "B")
-        field = declaration.fields[0]
+        field = next(field for field in declaration.fields if field.name == 'x')
         call = next(c for c in field.decorators if c.target == "builtins.sparse")
         alternate = replace(call, target="builtins.dense")
         invalid = replace(
@@ -231,7 +242,14 @@ class GroupTests(FilesystemCase):
                 (
                     replace(
                         d,
-                        fields=(replace(field, decorators=(*field.decorators, alternate)),),
+                        fields=tuple(
+                            (
+                                replace(f, decorators=(*f.decorators, alternate))
+                                if f.name == 'x'
+                                else f
+                            )
+                            for f in d.fields
+                        ),
                     )
                     if d.identity == "B"
                     else d

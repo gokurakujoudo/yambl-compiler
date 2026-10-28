@@ -1,0 +1,6 @@
+namespace decodes
+
+decodes Currencies {
+    - 100 CNY: 'CNY'
+    - 200 USD: 'USD'
+}

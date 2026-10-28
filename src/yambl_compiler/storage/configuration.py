@@ -8,6 +8,7 @@ from yambl_compiler.ir.model import Type
 from yambl_compiler.storage.backends import Selection
 from yambl_compiler.storage.batch import Batch, FieldRequest
 from yambl_compiler.storage.contract import decode, loads
+from yambl_compiler.storage.records import mapped_field
 from yambl_compiler.storage.results import (
     EntityRef,
     NonNormalResult,
@@ -124,10 +125,10 @@ class Configuration:
             group_id = str(row["config_group_id"])
             if any(
                 row[name + "__state"] != "VALUE"
-                for name in ("priority", "entity_type", "when", "then_set")
+                for name in ("priority", "target_entity_type", "when", "then_set")
             ):
                 raise ValueError(
-                    f"ConfigGroup {group_id} requires priority, entity_type, when and then_set"
+                    f"ConfigGroup {group_id} requires priority, target_entity_type, when and then_set"
                 )
             raw = row["priority"]
             if not isinstance(raw, str):
@@ -135,16 +136,19 @@ class Configuration:
             priority = int(raw)
             if str(priority) != raw:
                 raise ValueError("ConfigGroup priority is not a canonical integer")
-            target = str(row["entity_type"])
-            if target not in reader.layout.entities:
+            target = str(row["target_entity_type"])
+            if (
+                target not in reader.layout.entities
+                or reader.layout.entities[target].source.origin != 'model'
+            ):
                 raise ValueError("ConfigGroup has an unknown target entity type")
             conditions = tuple(sorted(mappings["when"].get(group_id, []), key=lambda e: e.field))
             assignments = tuple(
                 sorted(mappings["then_set"].get(group_id, []), key=lambda e: e.field)
             )
             for entry in (*conditions, *assignments):
-                owner = reader.layout.fields[entry.field].root
-                if reader.layout.roots[target] != owner:
+                mapped = mapped_field(reader.layout, entry.field)
+                if mapped is None or reader.layout.roots[target] != mapped[1]:
                     raise ValueError(
                         "ConfigGroup mapping field belongs to another inheritance root"
                     )

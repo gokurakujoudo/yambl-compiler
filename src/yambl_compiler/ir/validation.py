@@ -39,6 +39,7 @@ REQUIRED = {
     'description',
     'temporal',
     'dimension',
+    'decodes_rank',
     'flags',
     'override',
     'overload',
@@ -207,6 +208,8 @@ def structural(model: Model) -> list[str]:
             if item.origin == 'builtin' and item.namespace != 'builtins':
                 issues.append(path + ': builtins require namespace builtins')
         elif isinstance(item, Definition):
+            if item.derived and item.kind != 'decodes':
+                issues.append(path + '.derived: only Decodes may be derived')
             identity = (
                 'model::'
                 if item.source.origin == 'model' and item.source.namespace == 'builtins'
@@ -307,7 +310,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
     """
     try:
         decode(encode(model), Model)
-        if model.format_revision != 6:
+        if model.format_revision != 7:
             return ('$.format_revision: unsupported IR revision; recompile the model repository',)
         issues = structural(model)
         if issues:

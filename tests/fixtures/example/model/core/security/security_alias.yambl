@@ -1,0 +1,19 @@
+namespace core
+
+decodes ClientIdTypes {
+    - 100 Gildata: 'Gildata'
+    - 200 Wind: 'Wind'
+    - 900 Internal: 'Internal'
+}
+
+extend Security {
+
+    dimension client_id_dimension {
+        value client_id_type: code<ClientIdTypes>
+    }
+
+    @temporal(as_of_date: date)
+    @dimension(client_id_dimension)
+    scd attr client_id: string
+
+}

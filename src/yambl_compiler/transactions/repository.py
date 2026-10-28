@@ -530,6 +530,33 @@ class DataStore:
             if isinstance(data, IncrementalData):
                 with self.reader_type(data.overlay, self.layout) as reader:
                     reader.validate_candidate(data)
+                    changes = data.overlay.changes()
+                    dictionaries = {
+                        str(row['decodes_id'])
+                        for table in ('tb_decodes', 'tb_decodes_entries')
+                        for change in changes.get(table, ())
+                        for row in (change.before, change.after)
+                        if row is not None
+                    }
+                    removed: dict[str, set[str]] = {}
+                    added: dict[str, set[str]] = {}
+                    for change in changes.get('tb_decodes_entries', ()):
+                        if change.before is not None:
+                            row = change.before
+                            removed.setdefault(str(row['decodes_id']), set()).add(str(row['code']))
+                        if change.after is not None:
+                            row = change.after
+                            added.setdefault(str(row['decodes_id']), set()).add(str(row['code']))
+                    for identity, values in removed.items():
+                        values.difference_update(added.get(identity, set()))
+                    if dictionaries:
+                        dictionary_report = reader.validate_dictionary_references(
+                            dictionaries, removed
+                        )
+                        if not dictionary_report.valid:
+                            raise ValueError(
+                                f'candidate dictionary validation failed: {dictionary_report}'
+                            )
             else:
                 with self.reader_type(SnapshotBackend(data.tables), self.layout) as reader:
                     report = reader.validate()

@@ -1,0 +1,27 @@
+namespace records
+
+entity Instrument {
+    id key: string
+    static attr name: string
+    dimension prices {
+        value venue: string
+    }
+    @dimension(prices)
+    @temporal(day: date)
+    snapshot attr price: decimal
+    @temporal(day: date)
+    scd attr rating: string
+}
+
+entity Entry {
+    id key: string
+    static attr amount: decimal
+}
+
+entity Basket {
+    id key: string
+    static attr entries: collection<Entry>
+    computed attr total: decimal {
+        return self.entries::value().sum_by(entry -> entry.amount::value())
+    }
+}

@@ -1,0 +1,16 @@
+namespace core
+
+@decodes_rank(125, 'Bond')
+entity Bond inherits Security {
+    static attr coupon: decimal
+
+    computed attr security_family: code<Security::subtypes> {
+        return Security::subtypes.Bond
+    }
+
+    @temporal(as_of_date: date)
+    scd attr notional_value: money
+
+    @override
+    config attr price_fallback_days: integer = 30
+}

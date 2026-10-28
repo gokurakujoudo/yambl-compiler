@@ -1,0 +1,20 @@
+namespace core
+
+from decodes import Currencies
+
+type security_id = string['[a-zA-Z0-9]{12}']
+
+entity Security {
+    id security_id: security_id
+
+    static attr security_name: string
+    static attr security_full_name: string
+
+    static attr issuer: Issuer
+
+    @title('Currency')
+    @description('Security\'s currency')
+    static attr currency: code<Currencies>
+
+    static attr market: code<'TradingMarkets'>
+}

@@ -1,0 +1,13 @@
+plan revise {
+    version 1
+    group prices {
+        replace demo.records.Instrument.price expect any scope (key='i1', venue='primary', day in ['2026-01-01', '2026-02-01')) columns (venue, day, value) {
+            'primary', '2026-01-10', 12.5
+        }
+    }
+    group ratings {
+        replace demo.records.Instrument.rating expect one scope (key='i1') columns (valid_from, valid_to, value) {
+            '2026-01-01', '2026-02-01', 'B'
+        }
+    }
+}

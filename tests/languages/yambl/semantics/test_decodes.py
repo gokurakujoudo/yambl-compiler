@@ -7,7 +7,7 @@ from yambl_compiler.languages.yambl.formatting.formatter import format_document
 from yambl_compiler.languages.yambl.semantics.entities import check_entities
 from yambl_compiler.languages.yambl.semantics.expressions import Resolver
 from yambl_compiler.languages.yambl.semantics.symbols import resolve_scopes
-from yambl_compiler.languages.yambl.semantics.validation import check
+from yambl_compiler.languages.yambl.semantics.validation import analyze, check
 from yambl_compiler.languages.yambl.syntax.parser import Diagnostic, children, parse
 
 VALID = '''@title('Access')
@@ -134,6 +134,99 @@ SYNTAX_ERRORS = [
 
 
 class DecodesTests(unittest.TestCase):
+    def test_subtype_dictionaries_are_independent_and_ranked_depth_first(self):
+        sources = [
+            document('namespace core entity Security {}'),
+            document(
+                """namespace bond from core import Security
+                @decodes_rank(-2, 'Alpha label') entity Alpha inherits Security {}
+                @decodes_rank(decode='Leaf label', k=10) entity Leaf inherits Alpha {}
+                @decodes_rank(-2, 'Beta label') entity Beta inherits Security {}
+                entity Child inherits Beta {}
+                entity Use { attr codes: code<Security::subtypes> }
+                type one = exact<Security::subtypes.Alpha>
+                const FIRST: code<Security::subtypes> = Security::subtypes.Alpha
+                """,
+                'bond.yambl',
+            ),
+        ]
+        analysis = analyze(sources)
+        self.assertEqual(list(analysis.diagnostics), [])
+        world = analysis.units[0].world
+        self.assertEqual(
+            [
+                (e.code, e.decode, e.ordering)
+                for e in world.subtypes[('core', 'Security::subtypes')]
+            ],
+            [
+                ('Alpha', 'Alpha label', -2),
+                ('Leaf', 'Leaf label', 8),
+                ('Beta', 'Beta label', -2),
+                ('Child', 'Child', 400),
+            ],
+        )
+        self.assertEqual(
+            [(e.code, e.ordering) for e in world.subtypes[('bond', 'Alpha::subtypes')]],
+            [('Leaf', 10)],
+        )
+        self.assertEqual(world.subtypes[('bond', 'Leaf::subtypes')], ())
+        self.assertEqual(world.subtypes[('builtins', 'Decodes::subtypes')], ())
+        self.assertIn(('bond', 'FIRST'), world.constant_expressions)
+        self.assertEqual(
+            check(
+                [
+                    document(
+                        'entity A {} entity B inherits A {} entity C { computed attr code: code<A::subtypes> { return A::subtypes.B } }'
+                    )
+                ]
+            ),
+            [],
+        )
+
+    def test_subtype_dictionary_errors_are_located(self):
+        cases = [
+            ("@decodes_rank(1, 'x') entity A {}", 'decodes_rank requires an explicit parent'),
+            ('entity A {} entity B { attr x: code<Entity::subtypes> }', ':: requires'),
+            (
+                'entity A {} entity B { attr x: code<A::subtypes> } type bad = exact<A::subtypes.Missing>',
+                'unknown Decodes code',
+            ),
+            (
+                "entity A {} entity B { computed attr x: code<A::subtypes> { return 'Missing' } }",
+                'unknown Decodes code',
+            ),
+        ]
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertTrue(any(expected in d.message for d in check([document(source)])))
+        sources = [
+            document('namespace base entity Root {}'),
+            document(
+                'namespace first from base import Root entity Same inherits Root {}', 'first.yambl'
+            ),
+            document(
+                'namespace second from base import Root entity Same inherits Root {}',
+                'second.yambl',
+            ),
+        ]
+        self.assertIn('duplicate subtype code: Same', [d.message for d in check(sources)])
+
+    def test_invalid_rank_keeps_default_entries(self):
+        for call, expected in (
+            ("@decodes_rank('bad', 'x')", 'incompatible decorator argument'),
+            ('@decodes_rank(4, 3)', 'incompatible decorator argument'),
+            ('@decodes_rank(k=2)', 'missing decorator argument: decode'),
+        ):
+            with self.subTest(call=call):
+                analysis = analyze(
+                    [document(f'entity Root {{}} {call} entity Child inherits Root {{}}')]
+                )
+                self.assertIn(expected, [d.message for d in analysis.diagnostics])
+                entries = analysis.units[0].world.subtypes[('', 'Root::subtypes')]
+                self.assertEqual(
+                    [(e.code, e.decode, e.ordering) for e in entries], [('Child', 'Child', 100)]
+                )
+
     def test_combined_categories_and_singleton_equivalence(self):
         doc = document(VALID)
         self.assertEqual(check([doc]), [])
@@ -145,13 +238,13 @@ class DecodesTests(unittest.TestCase):
         resolved = {name: resolver.resolve(syntax) for name, (_, syntax) in fields.items()}
         self.assertEqual(
             [t.name for t in resolved['keys'].members],
-            ['string', 'integer', 'bool', 'code', 'decimal', 'date'],
+            ['string', 'integer', 'bool', 'code', 'decimal', 'type', 'type', 'date'],
         )
         self.assertEqual(resolved['empty'].members, ())
         self.assertEqual([t.name for t in resolved['identity'].members], ['bool', 'decimal'])
         self.assertEqual(
             [t.name for t in resolved['union'].args[0].members],
-            ['string', 'integer', 'bool', 'code', 'decimal'],
+            ['string', 'integer', 'bool', 'code', 'decimal', 'type', 'type'],
         )
         self.assertIsNone(resolved['symbolic'].args[0].exact)
         self.assertIsNone(resolved['symbolic_difference'].args[0].exact)

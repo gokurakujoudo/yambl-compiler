@@ -101,7 +101,9 @@ class ExpressionTests(unittest.TestCase):
         self.assertEqual(resolved['c4'].dependency, 'self.kind::value')
         self.assertEqual(resolved['currency'].name, 'code')
         self.assertEqual(resolved['mapping'], resolved['shortcut'])
-        self.assertEqual([t.name for t in resolved['fields'].members], ['code', 'decimal'])
+        self.assertEqual(
+            [t.name for t in resolved['fields'].members], ['code', 'decimal', 'type', 'type']
+        )
         self.assertEqual(resolved['bond_fields'].members[0].exact, 'USD')
         self.assertEqual(resolved['aliases'].kind, 'collection')
         self.assertEqual(resolver.diagnostics, [])
@@ -169,7 +171,10 @@ class ExpressionTests(unittest.TestCase):
         self.assertEqual(check([document(source)]), [])
         resolver, fields, index = self.resolver(source)
         self.assertEqual(index.contracts[(('', 'Root'), 'x')].name, 'string')
-        self.assertEqual(resolver.resolve(fields['a'][1]).members, (Resolved('string', 'string'),))
+        self.assertEqual(
+            [member.name for member in resolver.resolve(fields['a'][1]).members],
+            ['type', 'type', 'string'],
+        )
         self.assertEqual(resolver.resolve(fields['b'][1]).members, ())
         self.assertEqual(index.identities[(('', 'Left'), 'x')], (('', 'Root'), 'x'))
         self.assertEqual(index.identities[(('', 'Other'), 'x')], (('', 'Other'), 'x'))

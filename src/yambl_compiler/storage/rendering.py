@@ -196,7 +196,11 @@ def manifest(layout: Layout) -> str:
         "identity_tables": {root: table_name(root) for root in sorted(set(roots.values()))},
         "tables": [asdict(t) for t in layout.tables],
         "fields": {
-            k: {**asdict(v), "readable": v.root in layout.entities}
+            k: {
+                **asdict(v),
+                "readable": v.root in layout.entities
+                and layout.entities[v.root].source.origin != "builtin",
+            }
             for k, v in layout.fields.items()
         },
     }

@@ -54,6 +54,22 @@ class Symbol:
     kind: DeclarationKind
 
 
+@dataclass(frozen=True)
+class SubtypeEntry:
+    """Describe one generated subtype dictionary entry.
+
+    :param target: Descendant entity identity.
+    :param code: Short descendant type name.
+    :param decode: Display text.
+    :param ordering: Dictionary-local ordering value.
+    """
+
+    target: EntityKey
+    code: str
+    decode: str
+    ordering: int
+
+
 @dataclass
 class World:
     """Share declarations and effective fields across lexical scopes.
@@ -65,6 +81,7 @@ class World:
     :param constants: Result constant meanings from the selected definitions.
     :param constant_expressions: Checked user constant initializers.
     :param dimensions: Entity-scoped named dimension declarations.
+    :param subtypes: Derived dictionary identities and depth-first entries.
     """
 
     declarations: dict[EntityKey, tuple[Unit, Tree[Token]]] = field(
@@ -83,6 +100,9 @@ class World:
     )
     dimensions: dict[EntityKey, dict[str, tuple[Unit, Tree[Token]]]] = field(
         default_factory=lambda: dict[EntityKey, dict[str, tuple[Unit, Tree[Token]]]]()
+    )
+    subtypes: dict[EntityKey, tuple[SubtypeEntry, ...]] = field(
+        default_factory=dict[EntityKey, tuple[SubtypeEntry, ...]]
     )
 
 

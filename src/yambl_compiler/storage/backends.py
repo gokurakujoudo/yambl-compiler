@@ -188,6 +188,8 @@ def validate_row(layout: Layout, table: Table, row: Row) -> None:
     """
     if set(row) != {c.name for c in table.columns}:
         raise ValueError("missing or unknown columns")
+    fields = [f for f in layout.fields.values() if f.table == table.name]
+    states = {f.state for f in fields}
     for column in table.columns:
         value = row[column.name]
         if value is None:
@@ -195,7 +197,7 @@ def validate_row(layout: Layout, table: Table, row: Row) -> None:
                 raise ValueError(f"NULL in {column.name}")
         elif type(value) is not (int if column.sql_type == "INTEGER" else str):
             raise ValueError(f"invalid column type: {column.name}")
-        if column.name.endswith("__state") or column.name == "state":
+        if column.name in states:
             if value not in ("VALUE", "NO_ENTRY", "EMPTY", "NOT_APPLICABLE"):
                 raise ValueError("invalid stored field state")
     if "valid_from" in table.primary and "valid_to" in row:
@@ -206,7 +208,6 @@ def validate_row(layout: Layout, table: Table, row: Row) -> None:
             raise ValueError("invalid SCD interval")
     if "date" in table.primary and date.fromisoformat(str(row["date"])).isoformat() != row["date"]:
         raise ValueError("invalid snapshot date")
-    fields = [f for f in layout.fields.values() if f.table == table.name]
     if table.name in ('tb_config_group_when', 'tb_config_group_then_set'):
         envelope = loads(str(row['value']))
         if (
@@ -215,7 +216,10 @@ def validate_row(layout: Layout, table: Table, row: Row) -> None:
             or 'value' not in envelope
         ):
             raise ValueError('invalid typed mapping envelope')
-    if "field" in row and fields and row["field"] not in table.fields:
+    if (
+        "field" in {key for f in fields for key, _ in f.key_values}
+        and row["field"] not in table.fields
+    ):
         raise ValueError("unknown logical field")
     for stored in fields:
         if any(row[k] != v for k, v in stored.key_values):

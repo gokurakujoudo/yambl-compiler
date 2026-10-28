@@ -1,0 +1,29 @@
+namespace core
+
+from decodes import IndustryTypes
+
+type issuer_id = string['[a-zA-Z0-9]{12}']
+
+entity Issuer {
+    id issuer_id: issuer_id
+
+    static attr issuer_name: string
+    static attr issuer_full_name: string
+
+    dimension industry_dimension {
+        value industry_type: code<IndustryTypes>
+    }
+
+    @temporal(as_of_date: date)
+    @dimension(industry_dimension)
+    scd attr industry: string
+
+    dimension rating_dimension {
+        value rating_source: code<'ExternalRatingSources'>
+        hierarchy rating_hierarchy: Hierarchy
+    }
+
+    @temporal(as_of_date: date)
+    @dimension(rating_dimension)
+    scd attr credit_rating: string
+}

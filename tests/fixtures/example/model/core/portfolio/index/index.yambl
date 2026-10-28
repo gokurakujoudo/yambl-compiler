@@ -1,0 +1,7 @@
+namespace core
+
+entity Index inherits Security {
+
+    @temporal(as_of_date: date)
+    snapshot attr index_level: decimal
+}

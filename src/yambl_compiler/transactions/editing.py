@@ -11,7 +11,7 @@ from yambl_compiler.languages.shared.writing import literal
 from yambl_compiler.languages.yatran.model import Image
 from yambl_compiler.storage.backends import Row, validate_row
 from yambl_compiler.storage.contract import loads
-from yambl_compiler.storage.records import Layout, StoredField
+from yambl_compiler.storage.records import Layout, StoredField, mapped_field
 from yambl_compiler.transactions.binding import Catalog, Entity, object_items
 
 STATES = ('NO_ENTRY', 'EMPTY', 'NOT_APPLICABLE')
@@ -31,6 +31,18 @@ class Data:
         self.layout = layout
         self.tables = {name: [dict(row) for row in rows] for name, rows in tables.items()}
         self.schema = {t.name: t for t in layout.tables}
+        self.logical_types = {field.identity: field.type for field in layout.model.fields}
+        self.catalog.code_members = self.dictionary_codes
+
+    def dictionary_codes(self, identity: str) -> set[str]:
+        """Read current members of a model-defined dictionary.
+
+        :param identity: Qualified dictionary identity.
+        :returns: Codes currently visible in this candidate snapshot.
+        """
+        return {
+            str(row['code']) for row in self.select('tb_decodes_entries', {'decodes_id': identity})
+        }
 
     def select(self, table: str, keys: Mapping[str, object]) -> list[Row]:
         """Select mutable candidate rows by physical equality coordinates.
@@ -87,7 +99,7 @@ class Data:
         row = next(iter(self.select(entity.table, {entity.column: encoded})), None)
         if row is None:
             raise ValueError(f'entity does not exist: {entity.definition.identity} {literal(id_)}')
-        if entity.root not in self.layout.entities:
+        if entity.definition.source.origin == 'builtin':
             return entity
         actual = self.catalog.entity(str(row['entity_type']))
         ancestor = actual.definition
@@ -112,7 +124,7 @@ class Data:
         if self.select(entity.table, {entity.column: encoded}):
             raise ValueError('entity ID already exists')
         values: Row = {entity.column: encoded}
-        if entity.root in self.layout.entities:
+        if entity.definition.source.origin == 'model':
             values['entity_type'] = entity.definition.identity
         self.add(entity.table, self.blank(entity.table, values))
 
@@ -179,7 +191,7 @@ class Data:
                 interval = start, end
             elif condition.name in types and condition.end is None:
                 column, type_ = types[condition.name]
-                filters[column] = self.catalog.scalar(type_, condition.value)
+                filters[column] = self.catalog.scalar(type_, condition.value, check_code=False)
             else:
                 raise ValueError(f'unknown or invalid scope coordinate: {condition.name}')
         if entity.column not in filters:
@@ -247,7 +259,10 @@ class Data:
         entries: list[tuple[Value, Value]] = []
         for member in sorted(members, key=lambda r: str(r['field'])):
             identity = str(member['field'])
-            type_ = self.layout.fields[identity].field.type
+            mapped = mapped_field(self.layout, identity)
+            if mapped is None:
+                raise ValueError('unknown configuration mapping field')
+            type_ = self.logical_types[identity]
             envelope = loads(str(member['value']))
             if not isinstance(envelope, dict) or 'value' not in envelope:
                 raise ValueError('invalid configuration mapping payload')
@@ -403,14 +418,14 @@ class Data:
             return result
         result = []
         for identity, item in object_items(value).items():
-            target = self.layout.fields.get(identity)
-            if target is None or target.field.category != (
+            target = mapped_field(self.layout, identity)
+            if target is None or target[0].category != (
                 'static' if field.name == 'when' else 'config'
             ):
                 raise ValueError(
                     'ConfigGroup mapping requires static conditions or config assignments'
                 )
-            type_ = target.field.type
+            type_ = self.logical_types[identity]
             if type_.name == 'collection':
                 if not isinstance(item, tuple):
                     raise ValueError('configuration collection requires a collection literal')
@@ -581,16 +596,21 @@ class Data:
         for row in self.tables['tb_config_group']:
             if any(
                 row[name + '__state'] != 'VALUE'
-                for name in ('entity_type', 'priority', 'when', 'then_set')
+                for name in ('target_entity_type', 'priority', 'when', 'then_set')
             ):
-                raise ValueError('ConfigGroup requires entity_type, priority, when and then_set')
-            target = str(row['entity_type'])
-            if target not in self.layout.roots:
+                raise ValueError(
+                    'ConfigGroup requires target_entity_type, priority, when and then_set'
+                )
+            target = str(row['target_entity_type'])
+            if (
+                target not in self.layout.roots
+                or self.layout.entities[target].source.origin != 'model'
+            ):
                 raise ValueError('ConfigGroup target must be a business entity')
             for mapping_table in ('tb_config_group_when', 'tb_config_group_then_set'):
                 for member in self.tables[mapping_table]:
                     if member['config_group_id'] != row['config_group_id']:
                         continue
-                    field = self.layout.fields.get(str(member['field']))
-                    if field is None or field.root != self.layout.roots[target]:
+                    field = mapped_field(self.layout, str(member['field']))
+                    if field is None or field[1] != self.layout.roots[target]:
                         raise ValueError('ConfigGroup field is outside its target inheritance tree')

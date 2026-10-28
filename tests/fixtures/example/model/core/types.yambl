@@ -1,0 +1,10 @@
+namespace core
+
+---
+# Monetary amounts
+
+`money` is a transparent alias for `decimal[19, 6]`. It adds no currency or
+rounding constraint. Prices, net assets and notional values use this shared name.
+---
+
+type money = decimal[19, 6]

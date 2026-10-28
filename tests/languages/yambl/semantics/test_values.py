@@ -19,7 +19,7 @@ class ValueTests(unittest.TestCase):
         ]
         self.assertEqual(check(docs), [])
         self.assertEqual(check(list(reversed(docs))), [])
-        self.assertEqual(check([replace(d, prefix='fmc', repository='repo') for d in docs]), [])
+        self.assertEqual(check([replace(d, prefix='demo', repository='repo') for d in docs]), [])
 
     def test_invalid_value_contracts(self):
         cases = [

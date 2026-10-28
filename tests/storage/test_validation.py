@@ -129,12 +129,12 @@ class ValidationTests(FilesystemCase):
         self.edge('period', 'a', 'b', valid_from='2026-01-15', valid_to='2026-03-01')
         self.db.execute("INSERT INTO tb_config_group (config_group_id) VALUES ('missing')")
         self.db.execute(
-            "INSERT INTO tb_config_group (config_group_id, entity_type__state, entity_type, "
+            "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, "
             "priority__state, priority, when__state, then_set__state) "
             "VALUES ('target', 'VALUE', 'Unknown', 'VALUE', '1', 'VALUE', 'VALUE')"
         )
         self.db.execute(
-            "INSERT INTO tb_config_group (config_group_id, entity_type__state, entity_type, "
+            "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, "
             "priority__state, priority, when__state, then_set__state) "
             "VALUES ('wrong-field', 'VALUE', 'Node', 'VALUE', '1', 'VALUE', 'VALUE')"
         )
@@ -147,7 +147,9 @@ class ValidationTests(FilesystemCase):
         self.assertFalse(expected.valid)
         messages = {issue.message for issue in expected.issues}
         self.assertIn('overlapping SCD intervals', messages)
-        self.assertIn('ConfigGroup requires entity_type, priority, when and then_set', messages)
+        self.assertIn(
+            'ConfigGroup requires target_entity_type, priority, when and then_set', messages
+        )
         self.assertIn('ConfigGroup target must be a business entity', messages)
         self.assertIn('ConfigGroup field is outside its target inheritance tree', messages)
 
@@ -174,7 +176,7 @@ class ValidationTests(FilesystemCase):
 
     def test_explicit_full_check_validates_config_mapping_type_and_category(self):
         self.db.execute(
-            "INSERT INTO tb_config_group (config_group_id, entity_type__state, entity_type, "
+            "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, "
             "priority__state, priority, when__state, then_set__state) "
             "VALUES ('bad-map', 'VALUE', 'Node', 'VALUE', '1', 'VALUE', 'VALUE')"
         )

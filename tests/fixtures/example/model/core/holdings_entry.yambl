@@ -1,0 +1,8 @@
+namespace core
+
+entity HoldingEntry {
+    id holdings_entry_id: snowflake_id
+
+    static attr security: Security
+    static attr quantity: decimal
+}

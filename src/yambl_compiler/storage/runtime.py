@@ -10,7 +10,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import ClassVar, Protocol, Self, cast
 
-from yambl_compiler.ir.model import Field, Type
+from yambl_compiler.ir.model import Field, LogicalField, Type
 from yambl_compiler.storage.backends import (
     Backend,
     FileBackend,
@@ -21,7 +21,7 @@ from yambl_compiler.storage.backends import (
 from yambl_compiler.storage.batch import Batch, FieldRequest
 from yambl_compiler.storage.computing import Computing, Frame, Program, Vector
 from yambl_compiler.storage.configuration import Configuration
-from yambl_compiler.storage.contract import load_contract
+from yambl_compiler.storage.contract import decode, load_contract, loads
 from yambl_compiler.storage.records import (
     Layout,
     StoredField,
@@ -35,7 +35,11 @@ from yambl_compiler.storage.results import (
     Success,
 )
 from yambl_compiler.storage.session import Session
-from yambl_compiler.storage.validation import ValidationIssue, ValidationReport
+from yambl_compiler.storage.validation import (
+    ValidationIssue,
+    ValidationReport,
+    validate_dictionaries,
+)
 
 
 class CandidateValidator(Protocol):
@@ -85,6 +89,28 @@ class EntityHandle:
     entity_type: str
     id: str | int
 
+    @property
+    def root_entity_type(self) -> str:
+        """Return the qualified inheritance root of this instance.
+
+        :returns: The actual instance's root entity type.
+        """
+        return self.reader.root_type(self.entity_type)
+
+    def read_entity_type(self) -> ReadResult[str]:
+        """Return the actual qualified entity type as a field result.
+
+        :returns: Actual entity type.
+        """
+        return Success(self.entity_type)
+
+    def read_root_entity_type(self) -> ReadResult[str]:
+        """Return the qualified inheritance root as a field result.
+
+        :returns: Root entity type.
+        """
+        return Success(self.root_entity_type)
+
 
 class Reader:
     """Own a SQLite read transaction and generated model bindings."""
@@ -95,6 +121,14 @@ class Reader:
     entity_types: ClassVar[dict[str, type[EntityHandle]]] = {}
     code_types: ClassVar[dict[str, type[str]]] = {}
     calculation_programs: ClassVar[dict[str, Program]] = {}
+
+    def root_type(self, entity_type: str) -> str:
+        """Find the inheritance root of a known entity type.
+
+        :param entity_type: Qualified entity type.
+        :returns: Qualified root entity type.
+        """
+        return self._layout.roots[entity_type]
 
     def __init__(self, backend: Backend, layout: Layout) -> None:
         """Take ownership of an opened connection.
@@ -108,6 +142,7 @@ class Reader:
         self._closed = False
         self._cache: dict[EntityHandle, dict[tuple[object, ...], ReadResult[object]]] = {}
         self._full: dict[EntityHandle, dict[str, tuple[Row, ...]]] = {}
+        self._dictionary_cache: dict[str, frozenset[str]] = {}
         self._handles: dict[tuple[str, str | int], EntityHandle] = {}
         self._implementations = {
             f.implementation: f for d in layout.model.definitions for f in d.fields
@@ -364,6 +399,15 @@ class Reader:
         :param when: Date for time fields.
         :returns: Field result, including defaults and non-normal states.
         """
+        try:
+            field = self._field(handle, identity)
+            if field is not None and field.builtin:
+                if dimensions or when is not None:
+                    raise ValueError("built-in type fields do not accept coordinates")
+                request = FieldRequest(EntityRef(handle.entity_type, handle.id), identity)
+                return self._batch.read((request,))[0]
+        except (ValueError, KeyError) as error:
+            return NonNormalResult(Status.ERROR, str(error))
         result = self._cached(
             handle,
             identity,
@@ -523,15 +567,18 @@ class Reader:
                 ),
                 self._value,
             )
+            dictionaries = {
+                d.identity for d in self._layout.model.definitions if d.kind == 'decodes'
+            }
+            dictionary_report = self.validate_dictionary_references(dictionaries)
+            issues = tuple(dict.fromkeys((*report.value.issues, *dictionary_report.issues)))
             try:
                 self._configuration.load()
             except (ValueError, TypeError, KeyError, InvalidOperation) as error:
                 return Success(
-                    ValidationReport(
-                        (*report.value.issues, ValidationIssue('tb_config_group', str(error)))
-                    )
+                    ValidationReport((*issues, ValidationIssue('tb_config_group', str(error))))
                 )
-            return report
+            return Success(ValidationReport(issues))
         except (OSError, sqlite3.Error, ValueError, TypeError, KeyError) as error:
             return NonNormalResult(Status.ERROR, str(error))
 
@@ -546,6 +593,123 @@ class Reader:
         """
         self._ready()
         candidate.validate_business(self._batch.implementation, self._value)
+
+    def validate_dictionary_references(
+        self, dictionaries: set[str], removed: dict[str, set[str]] | None = None
+    ) -> ValidationReport:
+        """Check selected dictionary contracts and their stored references.
+
+        :param dictionaries: Local dictionary identities affected by the candidate.
+        :param removed: Removed codes for mapping contracts widened to string.
+        :returns: Violations in this reader's pinned snapshot.
+        """
+        self._ready()
+        issues = list(validate_dictionaries(self._layout, self._backend.rows, dictionaries))
+        logicals = {f.identity: f for f in self._layout.model.fields}
+        owner_rows: dict[str, dict[str, str]] = {}
+        for identity, stored in self._layout.fields.items():
+            if (
+                stored.root not in self._layout.entities
+                or self._layout.entities[stored.root].source.origin != 'model'
+            ):
+                continue
+            logical = logicals[identity]
+            implementations = [self._implementations[name] for name in logical.implementations]
+            dimensions = [
+                d
+                for d in stored.dimensions
+                if d.type.name == 'code' and d.type.arguments[0].target in dictionaries
+            ]
+            has_code = any(
+                f.type.name == 'code' and f.type.arguments[0].target in dictionaries
+                for f in implementations
+            )
+            if not dimensions and not has_code:
+                continue
+            if stored.root not in owner_rows:
+                owner_rows[stored.root] = {
+                    str(row['id']): str(row['entity_type'])
+                    for row in self._backend.rows(table_name(stored.root), {})
+                }
+            for row in self._backend.rows(stored.table, dict(stored.key_values)):
+                owner = str(row['id'])
+                actual = owner_rows[stored.root].get(owner)
+                if actual not in self._layout.entities:
+                    continue
+                field = self._batch.implementation(actual, identity)
+                if field is None:
+                    continue
+                try:
+                    for dimension in dimensions:
+                        self._decode(dimension.type, row['dim_' + dimension.key])
+                    if (
+                        field.type.name == 'code'
+                        and field.type.arguments[0].target in dictionaries
+                        and row[stored.state] == 'VALUE'
+                    ):
+                        self._decode(field.type, row[stored.value])
+                except (ValueError, TypeError, KeyError, InvalidOperation) as error:
+                    issues.append(ValidationIssue(identity, str(error), (owner,)))
+        self._validate_dictionary_mappings(dictionaries, removed or {}, logicals, issues)
+        return ValidationReport(tuple(issues))
+
+    def _validate_dictionary_mappings(
+        self,
+        dictionaries: set[str],
+        removed: dict[str, set[str]],
+        logicals: dict[str, LogicalField],
+        issues: list[ValidationIssue],
+    ) -> None:
+        """Check affected ConfigGroup mapping values using their field contracts.
+
+        :param dictionaries: Local dictionaries being checked.
+        :param removed: Removed codes by dictionary.
+        :param logicals: Logical field contracts by identity.
+        :param issues: Destination for located failures.
+        :returns: None.
+        """
+        headers = {
+            str(row['config_group_id']): row for row in self._backend.rows('tb_config_group', {})
+        }
+        for table in ('tb_config_group_when', 'tb_config_group_then_set'):
+            for row in self._backend.rows(table, {}):
+                identity = str(row['field'])
+                logical = logicals.get(identity)
+                if logical is None:
+                    continue
+                type_ = logical.type
+                direct = type_.name == 'code' and type_.arguments[0].target in dictionaries
+                potential = {
+                    self._implementations[name].type.arguments[0].target
+                    for name in logical.implementations
+                    if self._implementations[name].type.name == 'code'
+                    and self._implementations[name].type.arguments[0].target in removed
+                }
+                if not direct and not potential:
+                    continue
+                group = str(row['config_group_id'])
+                try:
+                    envelope = loads(str(row['value']))
+                    if not isinstance(envelope, dict) or set(envelope) != {'type', 'value'}:
+                        raise ValueError('invalid ConfigGroup typed value envelope')
+                    if decode(envelope['type'], Type) != type_:
+                        raise ValueError(
+                            'ConfigGroup mapping value type disagrees with field contract'
+                        )
+                    if direct:
+                        self._configuration.value(type_, envelope['value'])
+                    else:
+                        target = str(headers[group]['target_entity_type'])
+                        for actual in logical.applicable:
+                            if not self._batch.is_type(actual, target):
+                                continue
+                            implementation = self._batch.implementation(actual, identity)
+                            if implementation is not None and implementation.type.name == 'code':
+                                dictionary = implementation.type.arguments[0].target
+                                if envelope['value'] in removed.get(dictionary, set()):
+                                    raise ValueError(f'unknown code for {dictionary}')
+                except (ValueError, TypeError, KeyError, InvalidOperation) as error:
+                    issues.append(ValidationIssue(table, str(error), (group,)))
 
     def _decode(self, type_: Type, value: object) -> object:
         """Decode and validate one stored scalar.
@@ -595,8 +759,23 @@ class Reader:
                     (d for d in self._layout.model.definitions if d.identity == target),
                     None,
                 )
-                if definition is not None and value not in {e.code for e in definition.entries}:
-                    raise ValueError(f"unknown code for {target}")
+                if definition is not None:
+                    if target not in self._dictionary_cache:
+                        self._ready()
+                        selection = [Selection((("decodes_id", target),))]
+                        headers = self._backend.rows_many(
+                            "tb_decodes", selection, ("entries__state",)
+                        )[0]
+                        if len(headers) != 1 or headers[0]["entries__state"] != "VALUE":
+                            raise ValueError(f"invalid dictionary state for {target}")
+                        self._dictionary_cache[target] = frozenset(
+                            str(row["code"])
+                            for row in self._backend.rows_many(
+                                "tb_decodes_entries", selection, ("code",)
+                            )[0]
+                        )
+                    if value not in self._dictionary_cache[target]:
+                        raise ValueError(f"unknown code for {target}")
                 result = self.code_types[target](value)
             else:
                 result = value
@@ -650,18 +829,9 @@ class Reader:
         :returns: Declared scalar ID type.
         :raises ValueError: If no unique ID contract exists.
         """
-        if target in self._layout.roots:
-            return self._layout.ids[self._layout.roots[target]].type
-        ids = [
-            f.type
-            for d in self._layout.model.definitions
-            if d.identity == target
-            for f in d.fields
-            if f.category == "id"
-        ]
-        if len(ids) != 1:
+        if target not in self._layout.roots:
             raise ValueError("reference requires one identifiable ID field")
-        return ids[0]
+        return self._layout.ids[self._layout.roots[target]].type
 
     def get(self, entity: str, id_value: object) -> ReadResult[EntityHandle]:
         """Fetch one identity and return its actual subtype handle.
@@ -674,10 +844,12 @@ class Reader:
             self._ready()
             root = self._layout.roots[entity]
             encoded = self._encode(self._layout.ids[root].type, id_value)
-            rows = self._backend.rows(table_name(root), {"id": encoded})
+            builtin = self._layout.entities[root].source.origin == "builtin"
+            id_name = self._layout.ids[root].name if builtin else "id"
+            rows = self._backend.rows(table_name(root), {id_name: encoded})
             if not rows:
                 return NonNormalResult(Status.NO_ENTRY)
-            actual = str(rows[0]["entity_type"])
+            actual = root if builtin else str(rows[0]["entity_type"])
             if actual not in self._layout.entities or self._layout.roots[actual] != root:
                 raise ValueError("invalid actual entity type")
             ancestor = actual
@@ -718,17 +890,20 @@ class Reader:
         try:
             self._ready()
             root = self._layout.roots[entity]
+            builtin = self._layout.entities[root].source.origin == "builtin"
+            id_name = self._layout.ids[root].name if builtin else "id"
             selections = [
-                Selection((("id", self._encode(self._layout.ids[root].type, value)),))
+                Selection(((id_name, self._encode(self._layout.ids[root].type, value)),))
                 for value in ids
             ]
-            batches = self._backend.rows_many(table_name(root), selections, ("id", "entity_type"))
+            columns = (id_name,) if builtin else (id_name, "entity_type")
+            batches = self._backend.rows_many(table_name(root), selections, columns)
             result: list[ReadResult[EntityHandle]] = []
             for value, rows in zip(ids, batches, strict=True):
                 if not rows:
                     result.append(NonNormalResult(Status.NO_ENTRY))
                     continue
-                actual = str(rows[0]["entity_type"])
+                actual = root if builtin else str(rows[0]["entity_type"])
                 if actual not in self._layout.entities or self._layout.roots[actual] != root:
                     raise ValueError("invalid actual entity type")
                 ancestor = actual

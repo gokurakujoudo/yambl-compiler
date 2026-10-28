@@ -1,0 +1,22 @@
+namespace core
+
+type portfolio_id = string['[a-zA-Z0-9]{12}']
+
+entity Portfolio {
+    id portfolio_id: portfolio_id
+    static attr name: string
+    static attr full_name: string
+
+    @temporal(as_of_date: date)
+    snapshot attr holdings: collection<HoldingEntry>
+}
+
+entity PortfolioGroup inherits Portfolio {
+    static attr portfolio_group_type: code<PortfolioGroupTypes>
+    static attr children: collection<Portfolio>
+}
+
+decodes PortfolioGroupTypes {
+    - 100 ProductSeries: 'Product Series'
+    - 200 FeatureGroup: 'Feature Group'
+}

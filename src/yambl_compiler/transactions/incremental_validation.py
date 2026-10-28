@@ -63,7 +63,10 @@ def validate_affected_cycles(
     """
     issues: list[ValidationIssue] = []
     for identity, stored in sorted(layout.fields.items()):
-        if stored.root not in layout.entities:
+        if (
+            stored.root not in layout.entities
+            or layout.entities[stored.root].source.origin != 'model'
+        ):
             continue
         kind = stored.field.type.kind
         if kind not in ('reference', 'collection'):

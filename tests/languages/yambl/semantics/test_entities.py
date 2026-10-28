@@ -105,10 +105,13 @@ class EntityTests(unittest.TestCase):
             index.identities[(('stock', 'Stock'), 'days')],
             (('root', 'Security'), 'days'),
         )
-        self.assertEqual(set(index.candidates(('root', 'Security'), 'static')), {'currency'})
+        self.assertEqual(
+            set(index.candidates(('root', 'Security'), 'static')),
+            {'currency', 'entity_type', 'root_entity_type'},
+        )
         self.assertEqual(
             set(index.candidates(('builtins', 'ConfigGroup'), 'static')),
-            {'entity_type', "priority"},
+            {'entity_type', 'root_entity_type', 'target_entity_type', 'priority'},
         )
         self.assertEqual(index.field_types(('absent', 'Absent')), {})
         self.assertEqual(check(list(reversed(sources))), [])
@@ -144,8 +147,11 @@ class EntityTests(unittest.TestCase):
         units = resolve_scopes(sources, diagnostics)
         entities = check_entities(units, diagnostics).fields
         self.assertEqual(diagnostics, [])
-        self.assertEqual(set(entities), {('core', 'Security'), ('core', 'Bond')})
-        self.assertEqual(set(entities[('core', 'Security')]), {'security_id', 'price'})
+        self.assertTrue({('core', 'Security'), ('core', 'Bond')} <= set(entities))
+        self.assertEqual(
+            set(entities[('core', 'Security')]),
+            {'security_id', 'price', 'entity_type', 'root_entity_type'},
+        )
         price = entities[('core', 'Security')]['price']
         self.assertEqual(price.unit.document.path, Path('extras.yambl'))
         body = children(price.declaration, 'field_body')[0]
@@ -153,6 +159,26 @@ class EntityTests(unittest.TestCase):
         self.assertEqual(str(tokens(children(price.declaration, 'annotation')[0])[-2]), "'Price'")
         self.assertEqual(check(sources), [])
         self.assertEqual(check(list(reversed(sources))), [])
+
+    def test_hidden_fields_share_identity_and_reject_redeclaration(self):
+        self.assertEqual(check_entities([], []).fields, {})
+        source = document('entity A {} entity B inherits A {} entity C inherits B {}')
+        index = check_entities(resolve_scopes([source], []), [])
+        for name in ('entity_type', 'root_entity_type'):
+            for entity in ('A', 'B', 'C'):
+                key = ('', entity)
+                self.assertTrue(index.fields[key][name].builtin)
+                self.assertEqual(index.identities[(key, name)], (('', 'A'), name))
+            self.assertTrue(index.fields[('builtins', 'Decodes')][name].builtin)
+            for definition in (
+                f'entity A {{ attr {name}: string }}',
+                f'entity A {{}} extend A {{ attr {name}: string }}',
+                f'entity A {{}} entity B inherits A {{ @override attr {name}: string }}',
+            ):
+                self.assertIn(
+                    f'reserved built-in field: {name}',
+                    [d.message for d in check([document(definition)])],
+                )
 
     def test_invalid_targets_cycles_and_duplicate_fields(self):
         cases = [

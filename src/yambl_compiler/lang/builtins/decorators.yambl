@@ -40,6 +40,8 @@ decorator @dense(cat: string)
 
 @targets(DecoratorTargets.Decodes)
 decorator @flags()
+@targets(DecoratorTargets.Entity)
+decorator @decodes_rank(k: integer, decode: string)
 @targets(DecoratorTargets.EntityAttr)
 decorator @override()
 @targets(DecoratorTargets.EntityAttr)

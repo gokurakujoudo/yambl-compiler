@@ -67,6 +67,18 @@ class ComputationTests(unittest.TestCase):
             [],
         )
 
+    def test_subtype_constant_requires_entity_and_literal_accepts_known_member(self):
+        errors = self.errors('const BAD: string = Missing::subtypes.Child')
+        self.assertIn('not a pure constant dependency: Missing', errors)
+        self.assertIn(
+            'constant expressions cannot read fields, inputs or non-normal results', errors
+        )
+        valid = self.analyze(
+            "entity Root {} entity Child inherits Root {} entity Test { computed attr result: code<Root::subtypes> { return 'Child' } }"
+        )
+        self.assertEqual([d for d in valid.diagnostics if d.severity == 'error'], [])
+        self.assertIn((('', 'Test'), 'result'), valid.calculations)
+
     def test_division_result_types(self):
         self.assertEqual(
             self.errors(

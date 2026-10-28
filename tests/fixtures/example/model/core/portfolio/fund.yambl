@@ -1,0 +1,7 @@
+namespace core
+
+entity Fund inherits Portfolio {
+
+    @temporal(as_of_date: date)
+    snapshot attr net_asset: money
+}

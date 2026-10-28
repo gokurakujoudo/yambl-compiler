@@ -212,8 +212,8 @@ class OverlayTests(FilesystemCase):
             'tb_config_group',
             {
                 'config_group_id': 'group',
-                'entity_type__state': 'VALUE',
-                'entity_type': 'Missing',
+                'target_entity_type__state': 'VALUE',
+                'target_entity_type': 'Missing',
                 'priority__state': 'VALUE',
                 'priority': '1',
                 'when__state': 'VALUE',
@@ -223,7 +223,9 @@ class OverlayTests(FilesystemCase):
         candidate.add('tb_config_group', group)
         with self.assertRaisesRegex(ValueError, 'target must be a business entity'):
             candidate.validate()
-        candidate.select('tb_config_group', {'config_group_id': 'group'})[0]['entity_type'] = 'A'
+        candidate.select('tb_config_group', {'config_group_id': 'group'})[0][
+            'target_entity_type'
+        ] = 'A'
         candidate.validate()
         candidate.add(
             'tb_config_group_when',
@@ -231,6 +233,15 @@ class OverlayTests(FilesystemCase):
                 'config_group_id': 'group',
                 'field': 'A.text',
                 'value': '{"type":{},"value":"x"}',
+            },
+        )
+        candidate.validate()
+        candidate.add(
+            'tb_config_group_when',
+            {
+                'config_group_id': 'group',
+                'field': 'A.entity_type',
+                'value': '{"type":{},"value":"A"}',
             },
         )
         candidate.validate()

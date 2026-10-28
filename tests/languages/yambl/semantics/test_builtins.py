@@ -128,7 +128,7 @@ class BuiltinTests(FilesystemCase):
         for text in [
             'entity Hierarchy {}',
             'namespace business entity Hierarchy {}',
-            'namespace fmc.builtins entity Hierarchy {}',
+            'namespace demo.builtins entity Hierarchy {}',
             'namespace builtins entity Entity {}',
             'namespace builtins value string {}',
         ]:

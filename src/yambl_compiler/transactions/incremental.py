@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.storage.backends import Backend, Row, validate_row
-from yambl_compiler.storage.records import Layout, StoredField, table_name
+from yambl_compiler.storage.records import Layout, StoredField, mapped_field, table_name
 from yambl_compiler.storage.results import NonNormalResult, ReadResult, Status
 from yambl_compiler.transactions.editing import Data
 from yambl_compiler.transactions.incremental_validation import validate_affected_cycles
@@ -99,6 +99,7 @@ class IncrementalData(Data):
                 for stored in self.layout.fields.values():
                     if (
                         stored.root in self.layout.entities
+                        and self.layout.entities[stored.root].source.origin == 'model'
                         and table_name(stored.root) == name
                         and stored.table != name
                     ):
@@ -109,18 +110,21 @@ class IncrementalData(Data):
             for row in self.select('tb_config_group', {'config_group_id': group_id}):
                 if any(
                     row[name + '__state'] != 'VALUE'
-                    for name in ('entity_type', 'priority', 'when', 'then_set')
+                    for name in ('target_entity_type', 'priority', 'when', 'then_set')
                 ):
                     raise ValueError(
-                        'ConfigGroup requires entity_type, priority, when and then_set'
+                        'ConfigGroup requires target_entity_type, priority, when and then_set'
                     )
-                target = str(row['entity_type'])
-                if target not in self.layout.roots:
+                target = str(row['target_entity_type'])
+                if (
+                    target not in self.layout.roots
+                    or self.layout.entities[target].source.origin != 'model'
+                ):
                     raise ValueError('ConfigGroup target must be a business entity')
                 for mapping_table in ('tb_config_group_when', 'tb_config_group_then_set'):
                     for member in self.select(mapping_table, {'config_group_id': group_id}):
-                        field = self.layout.fields.get(str(member['field']))
-                        if field is None or field.root != self.layout.roots[target]:
+                        field = mapped_field(self.layout, str(member['field']))
+                        if field is None or field[1] != self.layout.roots[target]:
                             raise ValueError(
                                 'ConfigGroup field is outside its target inheritance tree'
                             )
@@ -154,6 +158,7 @@ class IncrementalData(Data):
                     if (
                         stored.table != name
                         or stored.root not in self.layout.entities
+                        or self.layout.entities[stored.root].source.origin != 'model'
                         or any(row[key] != value for key, value in stored.key_values)
                     ):
                         continue

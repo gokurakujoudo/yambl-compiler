@@ -455,8 +455,8 @@ class DetachedCandidateValidationTests(CatalogCase):
             data.validate()
         group.update(
             {
-                'entity_type__state': 'VALUE',
-                'entity_type': 'Missing',
+                'target_entity_type__state': 'VALUE',
+                'target_entity_type': 'Missing',
                 'priority__state': 'VALUE',
                 'priority': '1',
                 'when__state': 'VALUE',
@@ -465,7 +465,7 @@ class DetachedCandidateValidationTests(CatalogCase):
         )
         with self.assertRaisesRegex(ValueError, 'target must be a business entity'):
             data.validate()
-        group['entity_type'] = 'A'
+        group['target_entity_type'] = 'A'
         data.tables['tb_config_group_when'].append(
             {'config_group_id': 'group', 'field': 'Other.label', 'value': '{"type":{},"value":"x"}'}
         )

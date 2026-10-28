@@ -136,9 +136,12 @@ class ConfigurationTests(DualTests):
 
         header = {
             "config_group_id": "g",
-            "entity_type": "A",
+            "target_entity_type": "A",
             "priority": "1",
-            **{k + "__state": "VALUE" for k in ("entity_type", "priority", "when", "then_set")},
+            **{
+                k + "__state": "VALUE"
+                for k in ("target_entity_type", "priority", "when", "then_set")
+            },
         }
         bad_cases = [
             ([header], [], [{**entry(), "config_group_id": "unknown"}]),
@@ -150,8 +153,8 @@ class ConfigurationTests(DualTests):
             ([{**header, "priority__state": "EMPTY"}], [], []),
             ([{**header, "priority": 1}], [], []),
             ([{**header, "priority": "01"}], [], []),
-            ([{**header, "entity_type": "missing"}], [], []),
-            ([{**header, "entity_type": "Other"}], [], [entry()]),
+            ([{**header, "target_entity_type": "missing"}], [], []),
+            ([{**header, "target_entity_type": "Other"}], [], [entry()]),
             ([header, header], [], []),
         ]
         for headers, conditions, assignments in bad_cases:
@@ -188,7 +191,7 @@ class ConfigurationTests(DualTests):
 
     def group(self, name, priority, assignments, conditions=None, target="A"):
         self.writer.execute(
-            "INSERT INTO tb_config_group (config_group_id, entity_type__state, entity_type, priority__state, priority, when__state, then_set__state) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, priority__state, priority, when__state, then_set__state) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (name, "VALUE", target, "VALUE", str(priority), "VALUE", "VALUE"),
         )
         fields = {f.identity: f.type for f in self.model.fields}
@@ -216,6 +219,16 @@ class ConfigurationTests(DualTests):
             self.assertEqual(reader.get_a("a").value.read_limit(), Success(20, "model_default"))
             reader.close()
             self.assertEqual(c.read_limit(), Success(3, "config_group", ("high",)))
+
+    def test_configuration_matches_hidden_type_fields_on_both_backends(self):
+        self.group('type', 10, {'A.limit': '9'}, {'A.entity_type': 'C', 'A.root_entity_type': 'A'})
+        path = self.files()
+        for reader in (self.open(), self.module.SampleReader.open_files(path).value):
+            self.addCleanup(reader.close)
+            self.assertEqual(reader.get_a('a').value.read_limit(), Success(20, 'model_default'))
+            self.assertEqual(
+                reader.get_a('c').value.read_limit(), Success(9, 'config_group', ('type',))
+            )
 
     def test_same_priority_merge_and_conflict(self):
         self.group("one", 5, {"A.limit": "2"})

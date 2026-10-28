@@ -6,8 +6,10 @@ from dataclasses import replace
 from tests.support import FilesystemCase
 from yambl_compiler.ir import compile_repository, validate_ir
 from yambl_compiler.ir.codec import dumps, loads
+from yambl_compiler.ir.restoring import restore
 from yambl_compiler.ir.validation import structural
 from yambl_compiler.languages.yambl.computation.records import Argument, Case
+from yambl_compiler.languages.yambl.syntax.parser import children
 
 
 class ComputationIRTests(FilesystemCase):
@@ -45,7 +47,7 @@ class ComputationIRTests(FilesystemCase):
             for field in definition["fields"]:
                 if field["calculation"]:
                     field["calculation"]["accesses"][0]["operation"] = "at"
-        with self.assertRaisesRegex(ValueError, r"\$.definitions\[0\].fields\[2\].calculation"):
+        with self.assertRaisesRegex(ValueError, r"\$.definitions\[0\].fields\[\d+\].calculation"):
             loads(json.dumps(wire))
         wire["format_revision"] = 5
         with self.assertRaisesRegex(ValueError, "unsupported IR revision; recompile"):
@@ -74,6 +76,53 @@ class ComputationIRTests(FilesystemCase):
         )
         self.assertEqual([p.name for p in field.calculation.inputs], ['day'])
         self.assertEqual(field.decorators[0].arguments[0].default.literal.text, '2026-01-01')
+
+    def test_dimension_extension_preserves_lexical_scope_and_source(self):
+        self.write(
+            'a.yambl',
+            "namespace core entity E { id key: string dimension direct { value place: string } } extend E { dimension same_file { value x: string } }",
+        )
+        self.write(
+            'extension.yambl',
+            "namespace core extend E { dimension prices { value source: code<'PriceSources'> } @dimension(prices) snapshot attr price: decimal }",
+        )
+        self.write(
+            'dimension_only.yambl',
+            "namespace core extend E { dimension ratings { value agency: code<'RatingSources'> } }",
+        )
+        model = compile_repository(self.root)
+        entity = next(d for d in model.definitions if d.identity == 'core.E')
+        dimensions = {d.name: d for d in entity.dimensions}
+        self.assertEqual(dimensions['direct'].source.path, 'a.yambl')
+        self.assertEqual(dimensions['prices'].source.path, 'extension.yambl')
+        self.assertEqual(dimensions['same_file'].source.path, 'a.yambl')
+        self.assertEqual(dimensions['ratings'].source.path, 'dimension_only.yambl')
+        self.assertEqual(
+            {d.name: d.sites[0].path for d in model.external_dictionaries},
+            {'core.PriceSources': 'extension.yambl', 'core.RatingSources': 'dimension_only.yambl'},
+        )
+        self.write('a.yambl', 'source unavailable')
+        self.write('extension.yambl', 'source unavailable')
+        self.write('dimension_only.yambl', 'source unavailable')
+        self.assertEqual(validate_ir(loads(dumps(model))), ())
+
+        direct = dimensions['direct'].source
+        enclosing = replace(
+            entity,
+            source=replace(entity.source, end_line=direct.end_line, end_column=direct.end_column),
+        )
+        widened = replace(
+            model, definitions=tuple(enclosing if d == entity else d for d in model.definitions)
+        )
+        analysis = restore(widened)
+        self.assertFalse([d for d in analysis.diagnostics if d.severity == 'error'])
+        owner = next(
+            unit
+            for unit in analysis.units
+            if unit.document.path.as_posix() == 'a.yambl' and children(unit.document.tree, 'entity')
+        )
+        declaration = children(owner.document.tree, 'entity')[0]
+        self.assertEqual(len(children(declaration, 'dimension')), 1)
 
     def test_malformed_calculation_nodes_report_json_paths(self):
         node = self.field.calculation.body.result

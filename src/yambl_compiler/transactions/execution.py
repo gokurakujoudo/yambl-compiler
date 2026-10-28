@@ -10,7 +10,7 @@ from yambl_compiler.languages.yaplan.model import Operation, Plan
 from yambl_compiler.languages.yatran.model import Change, Image, Transaction, TransactionGroup
 from yambl_compiler.storage.backends import Row
 from yambl_compiler.storage.records import StoredField
-from yambl_compiler.transactions.binding import Entity
+from yambl_compiler.transactions.binding import Entity, object_items
 from yambl_compiler.transactions.editing import Data
 
 
@@ -37,6 +37,7 @@ class Execution:
         """
         entity = self.data.catalog.entity(target)
         id_text = str(self.data.catalog.scalar(entity.id.type, id_))
+        self.data.catalog.check_writable_identity(entity, id_text, deleting=field == '*')
         claims = self.claims.setdefault((entity.root, id_text), set())
         if field in claims or '*' in claims or (field == '*' and claims):
             raise ValueError(f'overlapping operations for {target}.{field}')
@@ -150,6 +151,22 @@ class Execution:
             raise ValueError('Plan model digest does not match the repository')
         planned: dict[str, dict[tuple[object, ...], Row]] = {}
         inserted: dict[tuple[str, str], Entity] = {}
+        planned_codes: dict[str, set[str]] = {}
+        from yambl_compiler.transactions.validation import PlanValidator
+
+        validator = PlanValidator(self.data.layout)
+
+        def available_codes(identity: str) -> set[str]:
+            """Resolve planned dictionary membership or the original snapshot.
+
+            :param identity: Qualified dictionary identity.
+            :returns: Codes visible before the current Plan operation.
+            """
+            if identity in planned_codes:
+                return planned_codes[identity]
+            return self.data.dictionary_codes(identity)
+
+        validator.catalog.code_members = available_codes
 
         def mark(table: str, row: Row) -> None:
             """Retain a planned row's identity and coordinates, not its payload.
@@ -178,18 +195,17 @@ class Execution:
             for name, column in coordinates.items():
                 value = record[name]
                 row[column] = (
-                    self.data.catalog.scalar(types[name], value) if name in types else value
+                    validator.catalog.scalar(types[name], value) if name in types else value
                 )
             mark(stored.table, row)
 
         for group in plan.groups:
             for operation in group.operations:
+                validator.operation(operation)
                 entity, field, stored = self.data.catalog.target(operation.target)
                 if operation.expect is not None:
                     if operation.scope and field is not None and stored is not None:
-                        owner = next((c for c in operation.scope if c.name == entity.id.name), None)
-                        if owner is None or owner.end is not None:
-                            raise ValueError('field scope requires owner ID')
+                        owner = next(c for c in operation.scope if c.name == entity.id.name)
                         id_text = str(self.data.catalog.scalar(entity.id.type, owner.value))
                         actual = inserted.get((entity.root, id_text))
                         if actual is not None:
@@ -244,6 +260,19 @@ class Execution:
                             if name != entity.id.name:
                                 current, binding = self.data.catalog.field(entity, name)
                                 mark_field(entity, current, binding, record)
+                if operation.target == 'builtins.Decodes.entries':
+                    dictionary = next(c.value for c in operation.scope if c.name == 'decodes_id')
+                    if isinstance(dictionary, str) and dictionary in self.data.catalog.definitions:
+                        replacement_value = (
+                            operation.rows[0][operation.columns.index('value')]
+                            if operation.kind == 'replace' and operation.rows
+                            else ()
+                        )
+                        planned_codes[dictionary] = (
+                            {str(object_items(item)['code']) for item in replacement_value}
+                            if isinstance(replacement_value, tuple)
+                            else set()
+                        )
 
     def entities(self, operation: Operation) -> tuple[Change, ...]:
         """Execute a batch of ID-based entity mutations.
@@ -415,6 +444,23 @@ def rollback(
     return result
 
 
+def restore_image(data: Data, target: str, scope: tuple[Condition, ...], image: Image) -> None:
+    """Restore an image while deferring code membership to final candidate validation.
+
+    :param data: Detached rollback candidate.
+    :param target: Field target.
+    :param scope: Recorded field scope.
+    :param image: Original data image.
+    :returns: None.
+    """
+    original = data.catalog.code_members
+    data.catalog.code_members = lambda _: None
+    try:
+        data.put(target, scope, image)
+    finally:
+        data.catalog.code_members = original
+
+
 def prepare_rollback(
     data: Data, transaction: Transaction, selected: tuple[str, ...] | None = None
 ) -> tuple[TransactionGroup, ...]:
@@ -443,6 +489,7 @@ def prepare_rollback(
             entity, field, _ = data.catalog.target(change.target)
             id_ = next(c.value for c in change.scope if c.name == entity.id.name)
             encoded = data.catalog.scalar(entity.id.type, id_)
+            data.catalog.check_writable_identity(entity, str(encoded), deleting=field is None)
             exists = bool(data.select(entity.table, {entity.column: encoded}))
             if exists:
                 try:
@@ -466,12 +513,12 @@ def prepare_rollback(
                     restored = data.catalog.entity(change.before[0].target)
                     data.insert(restored, id_)
                     for image in change.before[1:]:
-                        data.put(image.target, change.scope, image)
+                        restore_image(data, image.target, change.scope, image)
                 after = data.entity_images(entity, id_) if change.before else ()
             else:
                 if len(change.before) != 1:
                     raise ValueError('field rollback requires one before image')
-                data.put(change.target, change.scope, change.before[0])
+                restore_image(data, change.target, change.scope, change.before[0])
                 after = (data.image(change.target, change.scope),)
             changes.append(Change(change.target, change.scope, current, after))
         result.append(TransactionGroup(group.name, tuple(changes), tuple(warnings)))

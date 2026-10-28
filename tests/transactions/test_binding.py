@@ -33,6 +33,7 @@ class BindingTests(CatalogCase):
         data = json.loads(fixture.read_text(encoding='utf-8'))
         self.write('model.yambl', data['model'])
         catalog = Catalog(build_layout(compile_repository(self.root)))
+        catalog.code_members = lambda _: None
         for case in data['cases']:
             with self.subTest(case=case):
                 entity = catalog.entity(case['entity'])
@@ -80,6 +81,21 @@ class BindingTests(CatalogCase):
         with self.assertRaisesRegex(ValueError, 'field has no storage: A.text'):
             without_field.field(self.entity, 'text')
 
+    def test_hidden_type_fields_are_not_writable_on_any_entity(self):
+        for entity_name in (
+            'A',
+            'B',
+            'C',
+            'builtins.Decodes',
+            'builtins.Hierarchy',
+            'builtins.ConfigGroup',
+        ):
+            entity = self.catalog.entity(entity_name)
+            for field_name in ('entity_type', 'root_entity_type'):
+                with self.subTest(entity=entity_name, field=field_name):
+                    with self.assertRaisesRegex(ValueError, 'field is not writable'):
+                        self.catalog.field(entity, field_name)
+
     def test_scalar_encoding_and_decoding(self):
         cases = [
             ('text', 'word', 'word'),
@@ -124,7 +140,7 @@ class BindingTests(CatalogCase):
 
     def test_type_names_and_dynamic_codes(self):
         config = self.catalog.entity('builtins.ConfigGroup')
-        type_ = self.catalog.field(config, 'entity_type')[0].type
+        type_ = self.catalog.field(config, 'target_entity_type')[0].type
         self.assertEqual(self.catalog.scalar(type_, Symbol('B')), 'B')
         self.assertEqual(self.catalog.literal(type_, 'A'), Symbol('A'))
         with self.assertRaisesRegex(ValueError, 'type name'):

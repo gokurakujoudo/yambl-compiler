@@ -9,8 +9,10 @@ from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol
 from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.languages.yatran.model import Image, Transaction
 from yambl_compiler.languages.yatran.writing import seal
+from yambl_compiler.transactions.binding import Catalog
 from yambl_compiler.transactions.editing import Data
 from yambl_compiler.transactions.execution import Execution, rollback, same
+from yambl_compiler.transactions.validation import PlanValidator
 
 
 class ExecutionTests(CatalogCase):
@@ -41,6 +43,73 @@ class ExecutionTests(CatalogCase):
     def put(self, target, rows, columns=('value',), scope=None):
         selected = self.scope if scope is None else scope
         self.data.put(target, selected, Image(target, columns, rows))
+
+    def mark_derived_dictionary(self, identity, derived=True):
+        layout = self.data.layout
+        definitions = layout.model.definitions
+        existing = next((d for d in definitions if d.identity == identity), None)
+        if existing is None:
+            declaration = next(d for d in definitions if d.identity == 'Currencies')
+            declaration = replace(
+                declaration, name=identity, identity=identity, entries=(), derived=derived
+            )
+            definitions = (*definitions, declaration)
+        else:
+            definitions = tuple(
+                replace(d, derived=derived) if d.identity == identity else d for d in definitions
+            )
+        model = replace(layout.model, definitions=definitions)
+        self.data.layout = replace(layout, model=model)
+        self.data.catalog = Catalog(self.data.layout)
+
+    def test_derived_dictionary_writes_are_rejected_before_mutation(self):
+        identity = 'A::subtypes'
+        entity = self.catalog.entity('builtins.Decodes')
+        if not self.data.select(entity.table, {entity.column: identity}):
+            self.data.insert(entity, identity)
+        self.mark_derived_dictionary(identity)
+        scope = (Condition('decodes_id', identity),)
+        operations = (
+            Operation('insert', 'builtins.Decodes', ('decodes_id',), ((identity,),)),
+            Operation('update', 'builtins.Decodes', ('decodes_id', 'entries'), ((identity, ()),)),
+            Operation(
+                'delete', 'builtins.Decodes', ('decodes_id',), ((identity,),), owned_data=True
+            ),
+            Operation('replace', 'builtins.Decodes.entries', ('value',), (((),),), scope),
+            Operation('delete', 'builtins.Decodes.entries', (), (), scope),
+        )
+        before = deepcopy(self.data.tables)
+        for operation in operations:
+            plan = Plan('derived', None, (Group('change', (operation,)),))
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(
+                    ValueError, 'derived dictionary is read-only: A::subtypes'
+                ):
+                    PlanValidator(self.data.layout).validate(plan)
+                with self.assertRaisesRegex(
+                    ValueError, 'derived dictionary is read-only: A::subtypes'
+                ):
+                    Execution(self.data).apply(plan)
+                self.assertEqual(self.data.tables, before)
+
+    def test_rollback_rejects_changes_to_a_derived_dictionary(self):
+        identity = 'A::subtypes'
+        entity = self.catalog.entity('builtins.Decodes')
+        if not self.data.select(entity.table, {entity.column: identity}):
+            self.data.insert(entity, identity)
+        self.mark_derived_dictionary(identity, False)
+        scope = (Condition('decodes_id', identity),)
+        transaction = self.apply(
+            Group(
+                'edit',
+                (Operation('replace', 'builtins.Decodes.entries', ('value',), (((),),), scope),),
+            )
+        )
+        self.mark_derived_dictionary(identity)
+        before = deepcopy(self.data.tables)
+        with self.assertRaisesRegex(ValueError, 'derived dictionary is read-only: A::subtypes'):
+            rollback(self.data, transaction)
+        self.assertEqual(self.data.tables, before)
 
     def test_expect_counts_existing_scope_records(self):
         from yambl_compiler.languages.shared.documents import parse
@@ -322,7 +391,7 @@ class ExecutionTests(CatalogCase):
             scope = (Condition('config_group_id', name),)
             self.data.insert(self.catalog.entity('builtins.ConfigGroup'), name)
             for field, value in (
-                ('entity_type', Symbol('A')),
+                ('target_entity_type', Symbol('A')),
                 ('priority', 1),
                 ('when', ObjectValue(())),
                 ('then_set', ObjectValue(((Symbol('A.peers'), ()),))),
@@ -371,7 +440,7 @@ class ExecutionTests(CatalogCase):
             rollback(self.data, malformed)
         self.assertEqual(self.data.tables, before)
 
-    def test_config_group_entity_type_is_a_business_attribute(self):
+    def test_config_group_target_entity_type_is_a_business_attribute(self):
         scope = (Condition("config_group_id", "group"),)
         transaction = self.apply(
             Group(
@@ -380,7 +449,7 @@ class ExecutionTests(CatalogCase):
                     Operation(
                         "insert",
                         "builtins.ConfigGroup",
-                        ("config_group_id", "entity_type", "priority"),
+                        ("config_group_id", "target_entity_type", "priority"),
                         (("group", Symbol("A"), 10),),
                     ),
                     Operation(
@@ -404,13 +473,51 @@ class ExecutionTests(CatalogCase):
         self.assertEqual(self.data.actual(entity, "group"), entity)
         original = self.data.entity_images(entity, "group")
         self.assertEqual(
-            self.data.image("builtins.ConfigGroup.entity_type", scope).rows,
+            self.data.image("builtins.ConfigGroup.target_entity_type", scope).rows,
             (("group", Symbol("A")),),
         )
         reversed_groups = rollback(self.data, transaction)
         self.assertEqual(self.data.tables["tb_config_group"], [])
         rollback(self.data, replace(transaction, groups=reversed_groups))
         self.assertEqual(self.data.entity_images(entity, "group"), original)
+
+    def test_config_group_hidden_type_conditions_round_trip(self):
+        scope = (Condition('config_group_id', 'typed'),)
+        conditions = ObjectValue(
+            ((Symbol('A.entity_type'), Symbol('C')), (Symbol('A.root_entity_type'), Symbol('A')))
+        )
+        transaction = self.apply(
+            Group(
+                'typed',
+                (
+                    Operation(
+                        'insert',
+                        'builtins.ConfigGroup',
+                        ('config_group_id', 'target_entity_type', 'priority'),
+                        (('typed', Symbol('A'), 1),),
+                    ),
+                    Operation(
+                        'replace', 'builtins.ConfigGroup.when', ('value',), ((conditions,),), scope
+                    ),
+                    Operation(
+                        'replace',
+                        'builtins.ConfigGroup.then_set',
+                        ('value',),
+                        ((ObjectValue(((Symbol('A.limit'), 7),)),),),
+                        scope,
+                    ),
+                ),
+            )
+        )
+        self.assertEqual(
+            self.data.image('builtins.ConfigGroup.when', scope).rows, (('typed', conditions),)
+        )
+        reversed_groups = rollback(self.data, transaction)
+        self.assertEqual(self.data.tables['tb_config_group'], [])
+        rollback(self.data, replace(transaction, groups=reversed_groups))
+        self.assertEqual(
+            self.data.image('builtins.ConfigGroup.when', scope).rows, (('typed', conditions),)
+        )
 
     def test_patch_rollback_preserves_later_fields(self):
         self.put('A.text', (('before',),))
@@ -440,7 +547,7 @@ class ExecutionTests(CatalogCase):
                     Operation(
                         'insert',
                         'builtins.ConfigGroup',
-                        ('config_group_id', 'entity_type', 'priority'),
+                        ('config_group_id', 'target_entity_type', 'priority'),
                         (('ordered', Symbol('A'), 1),),
                     ),
                     Operation(

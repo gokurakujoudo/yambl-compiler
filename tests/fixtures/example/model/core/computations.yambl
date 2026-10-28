@@ -1,0 +1,32 @@
+namespace core
+
+from decodes import IndustryTypes
+
+extend Security {
+    computed attr wind_level1_industry: string {
+        return self.issuer.industry::value(industry_type=IndustryTypes.WindIndustryLevel1)
+    }
+}
+
+extend HoldingEntry {
+    computed attr market_value: money {
+        return self.quantity::value() * self.security.price::best_available()
+    }
+}
+
+const OTHER_INDUSTRY: string = 'Other'
+
+extend Fund {
+
+    @extra_input_params(industry_date: date, 'Additional issuer\'s industry date if it is different from the as_of_date')
+    @extra_input_params(price_date: date, 'Additional price date if it is different from the as_of_date')
+    computed attr industry_market_value: mapping<string, money> {
+        let holdings = self.holdings::value()
+        return holdings.group_by(h ->
+            h.security.wind_level1_industry::value(as_of_date=input.industry_date ?? input.as_of_date)
+            .recover(case NOT_DEFINED, EMPTY, NO_ENTRY, NO_DATA, ENTITY_NOT_FOUND, NOT_APPLICABLE -> OTHER_INDUSTRY)
+        ).sum_by(h ->
+            h.market_value::value(as_of_date=input.price_date ?? input.as_of_date)
+        )
+    }
+}

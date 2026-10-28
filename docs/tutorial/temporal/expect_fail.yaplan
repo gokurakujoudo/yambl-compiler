@@ -1,0 +1,6 @@
+plan missing {
+    version 1
+    group check_missing {
+        delete demo.records.Instrument.price expect any scope (key='i1', venue='missing')
+    }
+}

@@ -5,6 +5,22 @@ import keyword
 from yambl_compiler.ir.model import Model, Type
 
 
+def code_type_name(target: str) -> str:
+    """Name the generated Python code type for a dictionary identity.
+
+    :param target: Qualified dictionary identity.
+    :returns: Valid Python class name.
+    :raises ValueError: If the identity cannot form a Python name.
+    """
+    local = target.rsplit('.', 1)[-1]
+    if local.endswith('::subtypes'):
+        local = local.removesuffix('::subtypes') + 'Subtypes'
+    name = local + 'Code'
+    if not name.isidentifier() or keyword.iskeyword(name):
+        raise ValueError(f'{target}: unsupported Python code type name')
+    return name
+
+
 def generate_values(model: Model) -> str:
     """Generate parser-independent dataclasses with precise field annotations.
 
@@ -29,7 +45,7 @@ def generate_values(model: Model) -> str:
             imports.add(name)
             return f'EntityRef[{name}]'
         if type_.name == 'code':
-            name = type_.arguments[0].target.rsplit('.', 1)[-1] + 'Code'
+            name = code_type_name(type_.arguments[0].target)
             imports.add(name)
             return name
         scalar = {

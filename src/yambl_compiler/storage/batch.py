@@ -68,17 +68,20 @@ class Batch:
         if groups:
             reader.ready()
         for root, refs in groups.items():
+            builtin = reader.layout.entities[root].source.origin == "builtin"
+            id_name = reader.layout.ids[root].name if builtin else "id"
             selections = [
-                Selection((("id", reader.encode(reader.layout.ids[root].type, ref.id)),))
+                Selection(((id_name, reader.encode(reader.layout.ids[root].type, ref.id)),))
                 for ref in refs
             ]
-            rows = reader.backend.rows_many(table_name(root), selections, ("id", "entity_type"))
+            columns = (id_name,) if builtin else (id_name, "entity_type")
+            rows = reader.backend.rows_many(table_name(root), selections, columns)
             for ref, group in zip(refs, rows, strict=True):
                 result: ReadResult[EntityRef[object]] = NonNormalResult(Status.ENTITY_NOT_FOUND)
                 if len(group) > 1:
                     result = NonNormalResult(Status.ERROR, "duplicate identity record")
                 elif group:
-                    actual = str(group[0]["entity_type"])
+                    actual = root if builtin else str(group[0]["entity_type"])
                     if actual not in reader.layout.entities or reader.layout.roots[actual] != root:
                         result = NonNormalResult(Status.ERROR, "invalid actual entity type")
                     elif self.is_type(actual, ref.target):
@@ -172,6 +175,13 @@ class Batch:
                 continue
             if field.category == "id":
                 results[i] = Success(request.owner.id)
+                continue
+            if field.builtin:
+                results[i] = Success(
+                    request.owner.target
+                    if field.name == "entity_type"
+                    else reader.layout.roots[request.owner.target]
+                )
                 continue
             stored = reader.layout.fields[request.identity]
             selection = self.selection(request, stored, field)

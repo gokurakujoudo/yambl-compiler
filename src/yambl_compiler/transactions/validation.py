@@ -1,12 +1,13 @@
 """Validate Plan targets and literals using only the generated model contract."""
 
 from datetime import date
+from typing import cast
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.languages.shared.model import Symbol, Value
 from yambl_compiler.languages.yaplan.model import Operation, Plan
 from yambl_compiler.storage.records import Layout, StoredField
-from yambl_compiler.transactions.binding import Entity
+from yambl_compiler.transactions.binding import Entity, object_items
 from yambl_compiler.transactions.editing import STATES, Data
 from yambl_compiler.transactions.execution import Execution
 
@@ -22,6 +23,33 @@ class PlanValidator:
         """
         self.data = Data(layout, {})
         self.catalog = self.data.catalog
+        self.codes: dict[str, set[str]] = {}
+        self.catalog.code_members = self.codes.get
+
+    def track_dictionary(self, operation: Operation) -> None:
+        """Track a complete local dictionary replacement and protect its original entries.
+
+        :param operation: Already type-checked Plan operation.
+        :returns: None after recording a known resulting code set.
+        :raises ValueError: If the replacement changes model-provided entries.
+        """
+        if operation.target != 'builtins.Decodes.entries':
+            return
+        identity = cast(str, next(c.value for c in operation.scope if c.name == 'decodes_id'))
+        definition = self.catalog.definitions.get(identity)
+        if definition is None or definition.kind != 'decodes':
+            return
+        value = (
+            operation.rows[0][operation.columns.index('value')]
+            if operation.kind == 'replace' and operation.rows
+            else ()
+        )
+        entries = [object_items(item) for item in value] if isinstance(value, tuple) else []
+        provided = {(item['code'], item['decode'], item['ordering']) for item in entries}
+        original = {(entry.code, entry.decode, int(entry.ordering)) for entry in definition.entries}
+        if not original <= provided:
+            raise ValueError(f'model dictionary entries are immutable: {identity}')
+        self.codes[identity] = {str(item['code']) for item in entries}
 
     def value(self, entity: Entity, field: Field, stored: StoredField, value: Value) -> None:
         """Check a field literal using the same encoders as apply.
@@ -124,7 +152,9 @@ class PlanValidator:
         """
         if plan.model is not None and plan.model != self.data.layout.model.model_digest:
             raise ValueError('Plan model digest does not match the repository')
+        self.codes.clear()
+        Execution(self.data).validate_claims(plan)
         for group in plan.groups:
             for operation in group.operations:
                 self.operation(operation)
-        Execution(self.data).validate_claims(plan)
+                self.track_dictionary(operation)

@@ -60,6 +60,7 @@ decodes Codes { - 1 First: 'First' }
             (lambda d: d.update(definitions=[]), 'incomplete embedded'),
             (lambda d: d.update(constants=[]), "eight result constants"),
             (lambda d: d.update(prefix='bad-prefix'), '$.prefix'),
+            (lambda d: self.definition(d, 'A').update(derived=True), 'only Decodes may be derived'),
             (lambda d: self.definition(d, 'A').update(identity='wrong'), '.identity'),
             (lambda d: self.definition(d, 'A').update(name='other.A'), '.name'),
             (
@@ -127,9 +128,9 @@ decodes Codes { - 1 First: 'First' }
                 'scalar literal',
             ),
             (
-                lambda d: self.definition(d, 'A')['fields'][0]['expression']['arguments'][0].update(
-                    target='Other'
-                ),
+                lambda d: next(
+                    f for f in self.definition(d, 'A')['fields'] if f['name'] == 'external'
+                )['expression']['arguments'][0].update(target='Other'),
                 'external dictionary identity',
             ),
         ]
@@ -191,7 +192,9 @@ decodes Codes { - 1 First: 'First' }
                 'duplicate decorator',
             ),
             (
-                lambda d: self.definition(d, 'B')['fields'][0].update(decorators=[]),
+                lambda d: next(
+                    f for f in self.definition(d, 'B')['fields'] if f['name'] == 'price'
+                ).update(decorators=[]),
                 'override',
             ),
             (
@@ -208,6 +211,65 @@ decodes Codes { - 1 First: 'First' }
             with self.subTest(error=error):
                 self.corrupted(mutate, error)
         self.assertEqual(validate_ir(self.model), ())  # Entity references may be recursive.
+
+    def test_derived_type_fields_are_rebuilt_and_checked(self):
+        entity = next(d for d in self.model.definitions if d.identity == 'business.B')
+        fields = {f.name: f for f in entity.fields}
+        self.assertTrue(fields['entity_type'].builtin)
+        self.assertEqual(fields['entity_type'].identity, 'business.A.entity_type')
+        self.assertEqual(fields['entity_type'].type.arguments[0].target, 'business.B')
+        self.assertEqual(fields['root_entity_type'].type.arguments[0].name, 'Entity')
+        self.assertEqual(validate_ir(self.model), ())
+        self.corrupted(
+            lambda d: next(
+                f for f in self.definition(d, 'B')['fields'] if f['name'] == 'entity_type'
+            ).update(builtin=False),
+            'reserved built-in field',
+        )
+        self.corrupted(
+            lambda d: next(
+                f for f in self.definition(d, 'B')['fields'] if f['name'] == 'root_entity_type'
+            ).update(identity='business.B.root_entity_type'),
+            'inconsistent semantic value',
+        )
+        self.corrupted(
+            lambda d: self.definition(d, 'B').update(
+                fields=[f for f in self.definition(d, 'B')['fields'] if f['name'] != 'entity_type']
+            ),
+            'inconsistent semantic value',
+        )
+        self.corrupted(
+            lambda d: next(
+                f for f in self.definition(d, 'B')['fields'] if f['name'] == 'entity_type'
+            )['type']['arguments'][0].update(target='business.A'),
+            'inconsistent semantic value',
+        )
+        self.corrupted(
+            lambda d: next(
+                f for f in self.definition(d, 'A')['fields'] if f['name'] == 'price'
+            ).update(builtin=True),
+            'override requires an inherited field',
+        )
+
+    def test_derived_subtype_dictionaries_are_rebuilt_and_checked(self):
+        dictionary = next(d for d in self.model.definitions if d.identity == 'business.A::subtypes')
+        self.assertTrue(dictionary.derived)
+        self.assertEqual(
+            [(entry.code, entry.decode, entry.ordering) for entry in dictionary.entries],
+            [('B', 'B', '100')],
+        )
+        leaf = next(d for d in self.model.definitions if d.identity == 'business.B::subtypes')
+        self.assertEqual(leaf.entries, ())
+        self.corrupted(
+            lambda d: self.definition(d, 'A::subtypes')['entries'][0].update(ordering='999'),
+            'inconsistent semantic value',
+        )
+        self.corrupted(
+            lambda d: d.update(
+                definitions=[x for x in d['definitions'] if x['identity'] != 'business.B::subtypes']
+            ),
+            'inconsistent semantic value',
+        )
 
     def test_validation_api_handles_wrong_dataclass_types_and_revision(self):
         self.assertIn('expected str', '\n'.join(validate_ir(replace(self.model, prefix=7))))

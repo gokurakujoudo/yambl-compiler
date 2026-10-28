@@ -1,0 +1,9 @@
+plan initial {
+    version 1
+    group items {
+        insert demo.catalog.Item (item_id, name, category, quantity) {
+            'item-1', 'Notebook', demo.catalog.Categories.Book, 3
+            'item-2', 'Ruler', demo.catalog.Categories.Tool, 5
+        }
+    }
+}

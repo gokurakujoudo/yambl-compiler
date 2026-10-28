@@ -1,0 +1,22 @@
+namespace examples
+
+from core import Fund
+
+---
+# Fund metadata
+
+This example adds documentation to a transparent Fund alias.
+Each model_note keeps its text and optional caller-defined source key/type.
+Its declared targets permit entity and type alias definitions.
+The decorators do not change Fund's fields or execute business rules.
+---
+
+@title(text='Model note')
+@targets(DecoratorTargets.Entity + DecoratorTargets.Type)
+@allow_multiple
+decorator @model_note(text: string, audience: string = 'Model readers', *variation?: string)
+
+@title(text='Annotated Fund reference')
+@model_note('Fund holdings and net assets have independent snapshots')
+@model_note(text='Source metadata', audience='Data engineers', source: string)
+type annotated_fund = Fund

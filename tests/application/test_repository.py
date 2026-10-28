@@ -12,9 +12,9 @@ from yambl_compiler.languages.yambl.semantics.validation import check
 
 class RepositoryTests(FilesystemCase):
     def test_literal_prefix_and_rejections(self):
-        path = self.write('yambl-root.lclcfg', "# comment\n\nprefix: 'fmc.data' # comment\n")
-        self.assertEqual(read_prefix(path), 'fmc.data')
-        for content in ['prefix: ""', "prefix: 'fmc'", 'prefix: "fmc.data"']:
+        path = self.write('yambl-root.lclcfg', "# comment\n\nprefix: 'demo.data' # comment\n")
+        self.assertEqual(read_prefix(path), 'demo.data')
+        for content in ['prefix: ""', "prefix: 'demo'", 'prefix: "demo.data"']:
             path.write_text(content, encoding='utf-8')
             self.assertIsInstance(read_prefix(path), str)
         for content in [
@@ -24,7 +24,7 @@ class RepositoryTests(FilesystemCase):
             "other: ''",
             "prefix: ''\nprefix: ''",
             "prefix: 'bad..name'",
-            "prefix: 'fmc' + '.core'",
+            "prefix: 'demo' + '.core'",
         ]:
             with self.subTest(content=content):
                 path.write_text(content, encoding='utf-8')
@@ -32,7 +32,7 @@ class RepositoryTests(FilesystemCase):
                     read_prefix(path)
 
     def test_whole_repository_and_relative_import(self):
-        root = self.write('yambl-root.lclcfg', "prefix: 'fmc'").parent
+        root = self.write('yambl-root.lclcfg', "prefix: 'demo'").parent
         source = self.write(
             'core/item.yambl',
             'namespace core from dict import Codes entity Item { attr x: code<Codes> }',
@@ -42,7 +42,7 @@ class RepositoryTests(FilesystemCase):
         self.assertTrue(run(source.parent, 'check').ok)
         self.assertIn('checked 2 file(s)', run(source, 'check').messages)
         source.write_text(
-            'namespace core from fmc.dict import Codes entity Item {}', encoding='utf-8'
+            'namespace core from demo.dict import Codes entity Item {}', encoding='utf-8'
         )
         self.assertFalse(run(source, 'check').ok)
         source.write_text('entity Item{}', encoding='utf-8')
@@ -63,9 +63,9 @@ class RepositoryTests(FilesystemCase):
         self.assertIsNone(find_root(self.root))
         path = self.write('a.yambl', 'entity A { attr h: Hierarchy }')
         self.assertTrue(run(path, 'check').ok)
-        first = replace(document('entity A {}'), prefix='fmc', repository='one')
+        first = replace(document('entity A {}'), prefix='demo', repository='one')
         second = replace(first, repository='two')
-        self.assertEqual(namespace(first), 'fmc')
+        self.assertEqual(namespace(first), 'demo')
         self.assertEqual(check([first, second]), [])
         units = resolve_scopes([first, second], [])
         self.assertNotEqual(units[0].scope['A'].key, units[1].scope['A'].key)

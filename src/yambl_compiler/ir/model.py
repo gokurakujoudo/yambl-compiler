@@ -259,6 +259,7 @@ class Field(Record):
     :param extension: Whether the field originated in an extend block.
     :param source: Original declaration location.
     :param calculation: Checked computation, absent for stored fields.
+    :param builtin: Whether the field is derived from the language definition.
     """
 
     name: str
@@ -273,6 +274,7 @@ class Field(Record):
     extension: bool
     source: Source
     calculation: Calculation | None = None
+    builtin: bool = False
 
 
 @dataclass(frozen=True)
@@ -384,6 +386,7 @@ class Definition(Record):
     :param dimensions: Entity-owned dimension declarations, including extensions.
     :param initializer: Checked pure constant expression, absent on other definitions.
     :param references: Lexical identities available to the constant initializer.
+    :param derived: Whether the declaration is derived from the language model.
     """
 
     kind: Literal['entity', 'value', 'type_alias', 'decorator', 'decodes', 'constant']
@@ -401,6 +404,7 @@ class Definition(Record):
     dimensions: tuple[Dimension, ...] = ()
     initializer: CalculationExpression | None = None
     references: tuple[Text, ...] = ()
+    derived: bool = False
 
 
 @dataclass(frozen=True)

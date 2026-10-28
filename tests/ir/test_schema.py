@@ -22,7 +22,13 @@ class SchemaTests(FilesystemCase):
             "entity A { dimension dimension_11 { value source: string }  @dimension(dimension_11) attr label: string } entity B inherits A { dimension dimension_91 { value source: string }  @override @dimension(dimension_91) static attr label: string }",
         )
         model = compile_repository(self.root)
-        fields = [f for d in model.definitions if d.source.origin == 'model' for f in d.fields]
+        fields = [
+            f
+            for d in model.definitions
+            if d.source.origin == 'model'
+            for f in d.fields
+            if not f.builtin
+        ]
         self.assertEqual([f.category for f in fields], ['static', 'static'])
         self.assertEqual(fields[0].identity, fields[1].identity)
         errors = check([document('entity A { attr keys: attrs<AttrCats.Attr, A> }')])

@@ -1,0 +1,6 @@
+namespace decodes
+
+decodes IndustryTypes {
+    - 100 WindIndustryLevel1: 'Wind industry level 1'
+    - 200 WindIndustryLevel2: 'Wind industry level 2'
+}

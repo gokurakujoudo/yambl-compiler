@@ -1,0 +1,17 @@
+namespace catalog
+
+decodes Categories {
+    - 100 Book: 'Book'
+    - 200 Tool: 'Tool'
+}
+
+entity Item {
+    id item_id: string
+    static attr name: string
+    static attr category: code<Categories>
+    static attr quantity: integer
+    config attr multiplier: integer = 2
+    computed attr doubled_quantity: integer {
+        return self.quantity::value() * self.multiplier::value()
+    }
+}

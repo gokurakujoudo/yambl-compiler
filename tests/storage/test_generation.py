@@ -1,20 +1,24 @@
 """Verify generated schema, documentation, imports and publication failures."""
 
+import ast
 import json
 import sqlite3
 from contextlib import closing
 from dataclasses import replace
+from enum import StrEnum
 from pathlib import Path
+from typing import Self
 from unittest.mock import patch
 
 from tests.storage.test_runtime import SOURCE
-from tests.support import FilesystemCase
+from tests.support import FilesystemCase, load_generated
 from yambl_compiler.application.cli import Arguments, run_generation
 from yambl_compiler.ir import compile_repository, write_ir
 from yambl_compiler.ir.codec import encode
 from yambl_compiler.storage.generation import generate, python_package
 from yambl_compiler.storage.layout import build_layout, quote, supported, type_label
 from yambl_compiler.storage.rendering import markdown_cell
+from yambl_compiler.storage.value_types import code_type_name, generate_values
 
 
 class GenerationTests(FilesystemCase):
@@ -23,6 +27,136 @@ class GenerationTests(FilesystemCase):
         self.write("yambl-root.lclcfg", "prefix: ''\n")
         self.write("main.yambl", SOURCE)
         self.model = compile_repository(self.root)
+
+    def test_subtype_dictionary_python_names_and_empty_enum(self):
+        model = self.compile(
+            "decodes Empty {} decodes Populated { - 100 Bond: 'Bond' } "
+            'entity Security { id key: string attr first: code<Empty> '
+            'attr second: code<Populated> }'
+        )
+        layout = build_layout(model)
+        targets = {'Empty': 'core.Empty::subtypes', 'Populated': 'core.Security::subtypes'}
+        definitions = tuple(
+            (
+                replace(d, name=targets[d.identity], identity=targets[d.identity], derived=True)
+                if d.identity in targets
+                else d
+            )
+            for d in model.definitions
+        )
+        fields = dict(layout.fields)
+        for identity in ('Security.first', 'Security.second'):
+            stored = fields[identity]
+            type_ = stored.field.type
+            arg = type_.arguments[0]
+            type_ = replace(type_, arguments=(replace(arg, target=targets[arg.target]),))
+            fields[identity] = replace(stored, field=replace(stored.field, type=type_))
+        layout = replace(layout, model=replace(model, definitions=definitions), fields=fields)
+        source = python_package(layout, 'sample_model')
+        parsed = ast.parse(source)
+        for name, expected in [('EmptySubtypesCode', []), ('SecuritySubtypesCode', ['Bond'])]:
+            node = next(n for n in parsed.body if isinstance(n, ast.ClassDef) and n.name == name)
+            namespace = {'StrEnum': StrEnum}
+            exec(
+                compile(ast.Module(body=[node], type_ignores=[]), '<generated>', 'exec'), namespace
+            )
+            enum = namespace[name]
+            self.assertEqual([member.value for member in enum], expected)
+            if expected:
+                self.assertEqual(enum('Bond').value, 'Bond')
+            else:
+                with self.assertRaises(TypeError):
+                    enum('Bond')
+        self.assertIn("'core.Security::subtypes': SecuritySubtypesCode", source)
+        self.assertEqual(code_type_name('core.Security::subtypes'), 'SecuritySubtypesCode')
+        self.assertEqual(code_type_name('core.Currencies'), 'CurrenciesCode')
+        with self.assertRaisesRegex(ValueError, 'unsupported Python code type name'):
+            code_type_name('invalid::other')
+
+        value = next(d for d in model.definitions if d.identity == 'builtins.decodes_entry')
+        subtype = fields['Security.second'].field.type
+        value = replace(value, fields=(replace(value.fields[0], type=subtype),))
+        value_source = generate_values(replace(model, definitions=(value,)))
+        self.assertIn('from . import SecuritySubtypesCode', value_source)
+        self.assertIn(': SecuritySubtypesCode', value_source)
+
+        entities = dict(layout.entities)
+        entities['Security'] = replace(entities['Security'], name='SecuritySubtypesCode')
+        with self.assertRaisesRegex(ValueError, 'public-name collision: SecuritySubtypesCode'):
+            python_package(replace(layout, entities=entities), 'sample_model')
+
+        conflicting = fields['Security.second']
+        arg = conflicting.field.type.arguments[0]
+        conflicting_type = replace(
+            conflicting.field.type, arguments=(replace(arg, target='core.EmptySubtypes'),)
+        )
+        fields['Security.second'] = replace(
+            conflicting, field=replace(conflicting.field, type=conflicting_type)
+        )
+        with self.assertRaisesRegex(
+            ValueError, 'EmptySubtypesCode.*core.Empty::subtypes.*core.EmptySubtypes'
+        ):
+            python_package(replace(layout, fields=fields), 'sample_model')
+
+    def test_ordinary_codes_accept_unregistered_extensions_without_caching(self):
+        model = self.compile(
+            "decodes Codes { - 100 One: 'One' } decodes Empty {} "
+            'entity A { id key: string attr first: code<Codes> attr second: code<Empty> '
+            'attr children: code<A::subtypes> } entity B inherits A {}'
+        )
+        layout = build_layout(model)
+
+        def classes(model):
+            source = python_package(replace(layout, model=model), 'sample_model')
+            parsed = ast.parse(source)
+            result = {}
+            for name in ('CodesCode', 'EmptyCode', 'ASubtypesCode'):
+                node = next(
+                    n for n in parsed.body if isinstance(n, ast.ClassDef) and n.name == name
+                )
+                namespace = {'StrEnum': StrEnum, 'Self': Self}
+                exec(
+                    compile(ast.Module(body=[node], type_ignores=[]), '<generated>', 'exec'),
+                    namespace,
+                )
+                result[name] = namespace[name]
+            return result
+
+        types = classes(model)
+        code = types['CodesCode']
+        self.assertIs(code('One'), code.One)
+        self.assertIsInstance(code.One, StrEnum)
+        first = code('New')
+        second = code('New')
+        self.assertEqual(first, 'New')
+        self.assertIsInstance(first, code)
+        self.assertIsNot(first, second)
+        self.assertIsNone(first.name)
+        self.assertEqual(list(code), [code.One])
+        with self.assertRaises(ValueError):
+            code(3)
+        self.assertEqual(types['EmptyCode']('New'), 'New')
+        self.assertEqual(types['ASubtypesCode'].B, 'B')
+        with self.assertRaises(ValueError):
+            types['ASubtypesCode']('New')
+
+        output = self.root / 'generated'
+        generate(model, output, 'sample_model')
+        module = load_generated(output / 'sample_model', 'sample_model')
+        self.assertEqual(module.CodesCode('New'), 'New')
+        self.assertIs(module.CodesCode('One'), module.CodesCode.One)
+        self.assertEqual(module.EmptyCode('New'), 'New')
+        with self.assertRaises(ValueError):
+            module.ASubtypesCode('New')
+
+        flags = next(d.decorators for d in model.definitions if d.identity == 'builtins.AttrCats')
+        definitions = tuple(
+            replace(d, decorators=flags) if d.identity == 'Codes' else d for d in model.definitions
+        )
+        closed = classes(replace(model, definitions=definitions))['CodesCode']
+        self.assertEqual(closed.One, 'One')
+        with self.assertRaises(ValueError):
+            closed('New')
 
     def test_sqlite_query_plans_use_identity_and_temporal_indexes(self):
         output = self.root / 'indexes'
@@ -117,7 +251,7 @@ class GenerationTests(FilesystemCase):
                     self.assertIn(table.name + "__index_" + str(i), reference)
             self.assertEqual(
                 dict(db.execute("SELECT * FROM tb_yambl_metadata")),
-                {"layout_revision": "6", "model_digest": self.model.model_digest},
+                {"layout_revision": "7", "model_digest": self.model.model_digest},
             )
         self.assertEqual(len(manifest["tables"]), len(layout.tables))
         self.assertIn("model default: 20", reference)
@@ -242,7 +376,7 @@ class GenerationTests(FilesystemCase):
             )
             db.execute("INSERT INTO tb_hierarchy_entries VALUES ('prices', 'Primary', '1')")
             db.execute(
-                "INSERT INTO tb_config_group (config_group_id, entity_type__state, entity_type, when__state, then_set__state) VALUES ('g', 'VALUE', 'A', 'VALUE', 'VALUE')"
+                "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, when__state, then_set__state) VALUES ('g', 'VALUE', 'A', 'VALUE', 'VALUE')"
             )
             encoded = json.dumps(
                 {"type": encode(layout.fields["A.text"].field.type), "value": "中'文"},
@@ -449,7 +583,7 @@ class GenerationTests(FilesystemCase):
             json.loads(schema_path.read_text(encoding="utf-8"))["$defs"]["Model"]["properties"][
                 "format_revision"
             ]["const"],
-            6,
+            7,
         )
         self.assertFalse(run_generation(replace(schema_args, output=""), False).ok)
         self.assertFalse(run_generation(replace(schema_args, output="schema.txt"), False).ok)

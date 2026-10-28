@@ -24,7 +24,7 @@ from yambl_compiler.storage.layout import Layout, build_layout, snake
 from yambl_compiler.storage.programs import programs
 from yambl_compiler.storage.records import LAYOUT_REVISION
 from yambl_compiler.storage.rendering import ddl, manifest, reference
-from yambl_compiler.storage.value_types import generate_values
+from yambl_compiler.storage.value_types import code_type_name, generate_values
 
 
 def python_package(layout: Layout, package: str) -> str:
@@ -57,12 +57,17 @@ def python_package(layout: Layout, package: str) -> str:
             return f"frozenset[{python_type(type_.arguments[0])}]"
         if type_.name == "code":
             target = type_.arguments[0].target
-            codes[target] = target.rsplit(".", 1)[-1] + "Code"
-            if not codes[target].isidentifier():
-                raise ValueError(f"{target}: unsupported Python code type name")
+            name = code_type_name(target)
+            for other, existing in codes.items():
+                if other != target and existing == name:
+                    raise ValueError(
+                        f"generated Python code type name collision: {name} ({other}, {target})"
+                    )
+            codes[target] = name
             return codes[target]
         return {
             "string": "str",
+            "type": "str",
             "bool": "bool",
             "integer": "int",
             "snowflake_id": "int",
@@ -77,7 +82,10 @@ def python_package(layout: Layout, package: str) -> str:
             for field in definition.fields:
                 python_type(field.type)
     for stored in layout.fields.values():
-        if stored.root not in layout.entities:
+        if (
+            stored.root not in layout.entities
+            or layout.entities[stored.root].source.origin == "builtin"
+        ):
             continue
         python_type(stored.field.type)
         for dim in stored.dimensions:
@@ -234,8 +242,11 @@ def python_package(layout: Layout, package: str) -> str:
         "Sequence",
         "MODEL_DIGEST",
     }
-    if len(set(public_names)) != len(public_names) or set(public_names) & reserved:
-        raise ValueError("generated Python public-name collision")
+    collisions = sorted(
+        name for name in set(public_names) if public_names.count(name) > 1 or name in reserved
+    )
+    if collisions:
+        raise ValueError("generated Python public-name collision: " + ", ".join(collisions))
     lines = [
         '"""Generated typed data access and transaction API."""',
         "",
@@ -247,7 +258,7 @@ def python_package(layout: Layout, package: str) -> str:
         "from decimal import Decimal",
         "from enum import StrEnum",
         "from pathlib import Path",
-        "from typing import cast",
+        "from typing import Self, cast",
         "",
         "from ._results import CalculationIssue, EntityRef, NonNormalResult, Partial, ReadResult, Status, Success",
         "from ._computing import Omitted, UNSET",
@@ -261,10 +272,16 @@ def python_package(layout: Layout, package: str) -> str:
     lines.extend(['', f'MODEL_DIGEST = {layout.model.model_digest!r}'])
     for target, name in sorted(codes.items()):
         dictionary = next((d for d in layout.model.definitions if d.identity == target), None)
+        extensible = bool(
+            dictionary
+            and not dictionary.derived
+            and not any(call.target == 'builtins.flags' for call in dictionary.decorators)
+        )
+        enum = bool(dictionary and (dictionary.entries or not extensible))
         lines.extend(
             [
                 "",
-                f'class {name}({"StrEnum" if dictionary else "str"}):',
+                f'class {name}({"StrEnum" if enum else "str"}):',
                 f'    """Codes belonging to {target}."""',
             ]
         )
@@ -277,6 +294,21 @@ def python_package(layout: Layout, package: str) -> str:
                 ):
                     raise ValueError(f"{target}.{entry.code}: unsupported Python enum member")
                 lines.append(f"    {entry.code} = {entry.code!r}")
+            if extensible and dictionary.entries:
+                lines.extend(
+                    [
+                        "",
+                        "    @classmethod",
+                        "    def _missing_(cls, value: object) -> Self | None:",
+                        '        """Create an unregistered code; the reader validates membership."""',
+                        "        if not isinstance(value, str):",
+                        "            return None",
+                        "        member = str.__new__(cls, value)",
+                        "        object.__setattr__(member, '_name_', None)",
+                        "        member._value_ = value",
+                        "        return member",
+                    ]
+                )
     for identity, name in records.items():
         stored = layout.fields[identity]
         f = stored.field
@@ -354,10 +386,27 @@ def python_package(layout: Layout, package: str) -> str:
         if layout.roots[key] != key:
             continue
         methods: set[str] = set()
-        root_fields = [s.field for s in layout.fields.values() if s.root == key]
+        root_fields = [
+            s.field
+            for s in layout.fields.values()
+            if s.root == key and entity.source.origin != "builtin"
+        ]
         method_names = {"read_" + f.name + suffix for f in root_fields for suffix in ("", "_range")}
         for f in root_fields:
-            if f.name in {"reader", "entity_type", "id", "_cache", "_full"} | method_names:
+            if (
+                f.name
+                in {
+                    "reader",
+                    "entity_type",
+                    "root_entity_type",
+                    "read_entity_type",
+                    "read_root_entity_type",
+                    "id",
+                    "_cache",
+                    "_full",
+                }
+                | method_names
+            ):
                 raise ValueError(f"{f.identity}: generated property collision")
         for identity, field in computed.items():
             if roots[identity] != key:
@@ -381,7 +430,7 @@ def python_package(layout: Layout, package: str) -> str:
                 ]
             )
         for stored in layout.fields.values():
-            if stored.root != key:
+            if stored.root != key or entity.source.origin == "builtin":
                 continue
             f = stored.field
             output = python_type(f.type)

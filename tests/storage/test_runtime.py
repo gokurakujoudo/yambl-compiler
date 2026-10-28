@@ -16,6 +16,8 @@ SOURCE = """
 decodes Currencies { - 1 USD: 'US dollar' - 2 CNY: '人民币' }
 entity A {
     id key: string
+    computed attr actual_type: type<A> { return self.entity_type::value() }
+    computed attr root_type: type<Entity> { return self.root_entity_type::value() }
     attr text: string
     attr flag: bool
     attr count: integer
@@ -142,6 +144,24 @@ class RuntimeTests(FilesystemCase):
         self.assertEqual(a.read_extra().status, Status.NOT_DEFINED)
         self.assertIsInstance(reader.get_a("b").value, self.module.B)
         self.assertIsInstance(reader.get_a("b").value, self.module.A)
+        child = reader.get_a("b").value
+        self.assertEqual(child.entity_type, "B")
+        self.assertEqual(child.root_entity_type, "A")
+        self.assertEqual(child.read_entity_type(), Success("B"))
+        self.assertEqual(child.read_root_entity_type(), Success("A"))
+        self.assertEqual(child.read_actual_type(), Success("B", "computation"))
+        self.assertEqual(child.read_root_type(), Success("A", "computation"))
+        self.assertEqual(reader.read(child, "A.entity_type", {}), Success("B"))
+        self.assertEqual(reader.read(child, "A.root_entity_type", {}), Success("A"))
+        self.assertEqual(reader.read(child, "A.entity_type", {"invalid": 1}).status, Status.ERROR)
+        self.assertEqual(a.read_root_entity_type(), Success("A"))
+        dictionary = reader.get_decodes("Currencies").value
+        self.assertEqual(dictionary.read_entity_type(), Success("builtins.Decodes"))
+        self.assertEqual(dictionary.read_root_entity_type(), Success("builtins.Decodes"))
+        self.assertEqual(
+            reader.get_decodes_many(["Currencies", "missing"]).value[1].status,
+            Status.NO_ENTRY,
+        )
         self.assertEqual(reader.get_b("a").status, Status.NO_ENTRY)
         batch = reader.get_a_many(["a", "missing", "a"]).value
         self.assertEqual(

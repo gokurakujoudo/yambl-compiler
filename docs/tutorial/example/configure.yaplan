@@ -1,0 +1,16 @@
+plan configure {
+    version 1
+    group dictionary {
+        replace builtins.Decodes.entries scope (decodes_id='demo.catalog.Categories') columns (value) {
+            [{code: 'Book', decode: 'Book', ordering: 100}, {code: 'Tool', decode: 'Tool', ordering: 200}, {code: 'Other', decode: 'Other', ordering: 300}]
+        }
+        insert demo.catalog.Item (item_id, name, category, quantity) {
+            'item-3', 'Case', demo.catalog.Categories.Other, 2
+        }
+    }
+    group configuration {
+        insert builtins.ConfigGroup (config_group_id, target_entity_type, priority, when, then_set) {
+            'books', demo.catalog.Item, 10, {demo.catalog.Item.category: demo.catalog.Categories.Book}, {demo.catalog.Item.multiplier: 3}
+        }
+    }
+}

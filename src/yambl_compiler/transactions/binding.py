@@ -1,5 +1,6 @@
 """Bind business transaction values and targets to a generated model contract."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -42,6 +43,7 @@ class Catalog:
         self.implementations = {
             f.implementation: f for d in layout.model.definitions for f in d.fields
         }
+        self.code_members: Callable[[str], set[str] | None] | None = None
 
     def entity(self, name: str) -> Entity:
         """Resolve a supported business or built-in entity.
@@ -53,7 +55,7 @@ class Catalog:
         definition = self.definitions.get(name)
         if definition is None or definition.kind != 'entity':
             raise ValueError(f'unknown entity: {name}')
-        if name in self.layout.roots:
+        if definition.source.origin == 'model' and name in self.layout.roots:
             root = self.layout.roots[name]
             return Entity(definition, root, self.layout.ids[root], table_name(root), 'id')
         if name not in ('builtins.Decodes', 'builtins.Hierarchy', 'builtins.ConfigGroup'):
@@ -69,10 +71,29 @@ class Catalog:
         """
         fields = (
             tuple(self.implementations[e.implementation] for e in entity.definition.effective)
-            if entity.definition.identity in self.layout.entities
+            if entity.definition.source.origin == 'model'
             else entity.definition.fields
         )
         return {f.name: f for f in fields}
+
+    def check_writable_identity(self, entity: Entity, id_: str, *, deleting: bool = False) -> None:
+        """Reject writes to model-derived dictionary instances.
+
+        :param entity: Target entity binding.
+        :param id_: Canonical entity ID.
+        :param deleting: Whether the whole entity is being deleted.
+        :returns: None when the identity is writable.
+        :raises ValueError: If the dictionary is derived from the model.
+        """
+        if entity.definition.identity == 'builtins.Decodes':
+            definition = self.definitions.get(id_)
+            if definition is not None and definition.kind == 'decodes':
+                if definition.derived:
+                    raise ValueError(f'derived dictionary is read-only: {id_}')
+                if any(call.target == 'builtins.flags' for call in definition.decorators):
+                    raise ValueError(f'flags dictionary is read-only: {id_}')
+                if deleting:
+                    raise ValueError(f'model dictionary cannot be deleted: {id_}')
 
     def field(self, entity: Entity, name: str) -> tuple[Field, StoredField]:
         """Resolve an effective writable field.
@@ -83,7 +104,7 @@ class Catalog:
         :raises ValueError: On an absent, ID or computed field.
         """
         field = self.fields(entity).get(name)
-        if field is None or field.category in ('id', 'computed'):
+        if field is None or field.builtin or field.category in ('id', 'computed'):
             raise ValueError(f'field is not writable: {entity.definition.identity}.{name}')
         stored = self.layout.fields.get(field.identity)
         if stored is None:
@@ -104,11 +125,12 @@ class Catalog:
         field, stored = self.field(entity, field_name)
         return entity, field, stored
 
-    def scalar(self, type_: Type, value: Value) -> str | int:
+    def scalar(self, type_: Type, value: Value, *, check_code: bool = True) -> str | int:
         """Validate a data literal and encode a physical scalar payload.
 
         :param type_: Resolved declared type.
         :param value: Parsed literal or model symbol.
+        :param check_code: Whether to validate local dictionary membership.
         :returns: Canonical storage text or boolean integer.
         :raises ValueError: On incompatible literals or declared constraints.
         """
@@ -154,8 +176,17 @@ class Catalog:
             if not isinstance(value, str):
                 raise ValueError('expected code name or string')
             definition = self.definitions.get(dictionary)
-            if definition is not None and value not in {e.code for e in definition.entries}:
-                raise ValueError(f'unknown code for {dictionary}: {value}')
+            if definition is not None and check_code:
+                fixed = definition.derived or any(
+                    call.target == 'builtins.flags' for call in definition.decorators
+                )
+                members = (
+                    self.code_members(dictionary)
+                    if self.code_members is not None and not fixed
+                    else {entry.code for entry in definition.entries}
+                )
+                if members is not None and value not in members:
+                    raise ValueError(f'unknown code for {dictionary}: {value}')
             encoded = value
         elif type_.name == 'type':
             if not isinstance(value, Symbol):
@@ -205,7 +236,7 @@ class Catalog:
                 value = Symbol(payload)
             else:
                 value = payload
-        self.scalar(type_, value)
+        self.scalar(type_, value, check_code=False)
         return value
 
 

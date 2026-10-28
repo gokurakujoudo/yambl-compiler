@@ -1,0 +1,160 @@
+plan example {
+    version 1
+    group builtins_Decodes {
+        insert builtins.Decodes (decodes_id, entries) {
+            'TradingMarkets', [{ code: 'ExampleMarket', decode: 'Example trading market', ordering: 100 }]
+            'PriceSources', [{ code: 'Primary', decode: 'Primary price source', ordering: 100 }, { code: 'Secondary', decode: 'Secondary price source', ordering: 200 }, { code: 'Unlisted', decode: 'Source outside the price hierarchy', ordering: 300 }]
+            'ExternalRatingSources', [{ code: 'AgencyA', decode: 'Rating agency A', ordering: 100 }, { code: 'AgencyB', decode: 'Rating agency B', ordering: 200 }]
+        }
+    }
+    group extend_Currencies {
+        replace builtins.Decodes.entries scope (decodes_id='decodes.Currencies') columns (value) {
+            [{ code: 'CNY', decode: 'CNY', ordering: 100 }, { code: 'USD', decode: 'USD', ordering: 200 }, { code: 'EUR', decode: 'Euro', ordering: 300 }]
+        }
+    }
+    group core_Portfolio {
+        insert core.Portfolio (portfolio_id) {
+            'PORT00000001'
+            'PORT00000002'
+            'PORT00000003'
+            'PORT00000004'
+            'PORT00000005'
+            'PORT00000006'
+        }
+    }
+    group core_Fund {
+        insert core.Fund (portfolio_id, full_name, name) {
+            'FUND00000001', EMPTY, 'Example fund'
+            'FUND00000002', 'Benchmark fund 2', 'Fund 2'
+            'FUND00000003', 'Benchmark fund 3', 'Fund 3'
+            'FUND00000004', 'Benchmark fund 4', 'Fund 4'
+            'FUND00000005', 'Benchmark fund 5', 'Fund 5'
+            'FUND00000006', 'Benchmark fund 6', 'Fund 6'
+        }
+        replace core.Fund.holdings scope (portfolio_id='FUND00000001') columns (as_of_date, value) {
+            '2026-01-02', [1, 2]
+            '2026-01-03', []
+            '2026-01-06', [1, 3, 4, 5, 6]
+        }
+        replace core.Fund.net_asset scope (portfolio_id='FUND00000001') columns (as_of_date, value) {
+            '2026-01-02', 1234567890123.125
+        }
+    }
+    group core_PortfolioGroup {
+        insert core.PortfolioGroup (portfolio_id, children, portfolio_group_type) {
+            'GRUP00000001', ['FUND00000001'], 'ProductSeries'
+            'GRUP00000002', ['FUND00000002'], 'ProductSeries'
+            'GRUP00000003', ['FUND00000003'], 'ProductSeries'
+            'GRUP00000004', ['FUND00000004'], 'ProductSeries'
+            'GRUP00000005', ['FUND00000005'], 'ProductSeries'
+            'GRUP00000006', ['FUND00000006'], 'ProductSeries'
+        }
+    }
+    group core_Security {
+        insert core.Security (security_id, currency, price_fallback_days, issuer) {
+            'SECU00000001', 'USD', 5, NO_ENTRY
+            'SECU00000003', 'CNY', 2, 'ISSR00000002'
+            'SECU00000004', 'CNY', 0, NO_ENTRY
+            'SECU00000005', 'CNY', NO_ENTRY, 'ISSR00000003'
+            'SECU00000006', 'CNY', 5, 'ISSR00000006'
+            'SECU00000007', 'CNY', 5, 'ISSR00000007'
+        }
+        replace core.Security.price scope (security_id='SECU00000003') columns (price_source, as_of_date, value) {
+            'Primary', '2026-01-03', 999.0
+            'Primary', '2026-01-07', 888.0
+            'Secondary', '2026-01-04', 10.0
+            'Unlisted', '2026-01-06', 777.0
+        }
+        replace core.Security.price scope (security_id='SECU00000004') columns (price_source, as_of_date, value) {
+            'Primary', '2026-01-06', 2.0
+        }
+        replace core.Security.price scope (security_id='SECU00000005') columns (price_source, as_of_date, value) {
+            'Primary', '2026-01-05', 80.0
+        }
+    }
+    group core_Bond {
+        insert core.Bond (security_id, coupon, currency, issue_date, issuer, issuer_name, market) {
+            'BOND00000001', 0.03, 'CNY', '2025-01-01', 'ISSR00000001', 'Example issuer', 'ExampleMarket'
+            'BOND00000002', NO_ENTRY, 'EUR', NO_ENTRY, 'ISSR00000001', NO_ENTRY, NO_ENTRY
+            'BOND00000003', 0.03, 'CNY', '2025-01-01', 'ISSR00000001', 'Example issuer', 'ExampleMarket'
+            'BOND00000004', 0.03, 'CNY', '2025-01-01', 'ISSR00000001', 'Example issuer', 'ExampleMarket'
+            'BOND00000005', 0.03, 'CNY', '2025-01-01', 'ISSR00000001', 'Example issuer', 'ExampleMarket'
+            'BOND00000006', 0.03, 'CNY', '2025-01-01', 'ISSR00000001', 'Example issuer', 'ExampleMarket'
+        }
+        replace core.Bond.notional_value scope (security_id='BOND00000001') columns (valid_from, valid_to, value) {
+            '1900-01-01', '2026-01-03', 100.0
+            '2026-01-03', '2026-01-05', 90.0
+            '2026-01-07', '2999-12-31', 80.0
+        }
+        replace core.Bond.price scope (security_id='BOND00000001') columns (price_source, as_of_date, value) {
+            'Primary', '2026-01-02', 101.25
+            'Primary', '2026-01-04', NOT_APPLICABLE
+            'Secondary', '2026-01-02', 101.2
+            'Secondary', '2026-01-05', 103.0
+        }
+        replace core.Bond.price scope (security_id='BOND00000002') columns (price_source, as_of_date, value) {
+            'Primary', '2026-01-06', 50.0
+            'Secondary', '2026-01-06', 51.0
+        }
+    }
+    group core_Index {
+        insert core.Index (security_id, security_name, currency) {
+            'INDX00000001', 'Example index 1', 'CNY'
+            'INDX00000002', 'Example index 2', 'CNY'
+            'INDX00000003', 'Example index 3', 'CNY'
+            'INDX00000004', 'Example index 4', 'CNY'
+            'INDX00000005', 'Example index 5', 'CNY'
+            'INDX00000006', 'Example index 6', 'CNY'
+        }
+        replace core.Index.index_level scope (security_id='INDX00000001') columns (as_of_date, value) {
+            '2026-01-02', 3100.25
+            '2026-01-06', 3150.5
+        }
+    }
+    group core_HoldingEntry {
+        insert core.HoldingEntry (holdings_entry_id, quantity, security) {
+            1, 100.5, 'BOND00000001'
+            2, 1.0, 'MISS00000001'
+            3, 2.0, 'BOND00000002'
+            4, 3.0, 'SECU00000003'
+            5, 4.0, 'SECU00000004'
+            6, 1.25, 'SECU00000005'
+        }
+    }
+    group core_Issuer {
+        insert core.Issuer (issuer_id, issuer_full_name, issuer_name) {
+            'ISSR00000001', 'Example Finance Company', 'Example finance issuer'
+            'ISSR00000002', NO_ENTRY, 'Unclassified example issuer'
+            'ISSR00000003', NO_ENTRY, 'Example technology issuer'
+            'ISSR00000004', 'Issuer 4', 'Issuer 4'
+            'ISSR00000005', 'Issuer 5', 'Issuer 5'
+            'ISSR00000006', 'Issuer 6', 'Issuer 6'
+        }
+        replace core.Issuer.credit_rating scope (issuer_id='ISSR00000001') columns (rating_source, valid_from, valid_to, value) {
+            'AgencyA', '1900-01-01', '2026-01-06', 'AA'
+            'AgencyA', '2026-01-06', '2999-12-31', 'AAA'
+            'AgencyB', '1900-01-01', '2999-12-31', 'A'
+        }
+        replace core.Issuer.industry scope (issuer_id='ISSR00000001') columns (industry_type, valid_from, valid_to, value) {
+            'WindIndustryLevel1', '1900-01-01', '2026-01-06', 'Industrials'
+            'WindIndustryLevel1', '2026-01-06', '2999-12-31', 'Financials'
+            'WindIndustryLevel2', '1900-01-01', '2999-12-31', 'Banking'
+        }
+        replace core.Issuer.industry scope (issuer_id='ISSR00000002') columns (industry_type, valid_from, valid_to, value) {
+            'WindIndustryLevel2', '1900-01-01', '2999-12-31', 'Software'
+        }
+        replace core.Issuer.industry scope (issuer_id='ISSR00000003') columns (industry_type, valid_from, valid_to, value) {
+            'WindIndustryLevel1', '1900-01-01', '2999-12-31', 'Technology'
+        }
+    }
+    group builtins_Hierarchy {
+        insert builtins.Hierarchy (hierarchy_id, hierarchy_entries) {
+            'LocalHierarchy', [{ entry_value: 'Primary', ordering: 100 }, { entry_value: 'Secondary', ordering: 200 }]
+        }
+    }
+    group builtins_ConfigGroup {
+        insert builtins.ConfigGroup (config_group_id, target_entity_type, priority, then_set, when) {
+            'technology_price_window', core.Security, 1000000000000000000000000000000, { core.Security.price_fallback_days: 1 }, { core.Security.issuer: 'ISSR00000003', core.Security.entity_type: core.Security, core.Security.root_entity_type: core.Security }
+        }
+    }
+}

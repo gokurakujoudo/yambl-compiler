@@ -27,6 +27,7 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     annotations,
     children,
     diagnostic,
+    parse,
     tokens,
 )
 
@@ -37,10 +38,12 @@ class FieldSite:
 
     :param unit: Source and scope of the field declaration.
     :param declaration: Attribute syntax, including metadata and source positions.
+    :param builtin: Whether this is a compiler-provided field.
     """
 
     unit: Unit
     declaration: Tree[Token]
+    builtin: bool = False
 
 
 @dataclass
@@ -171,6 +174,10 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
             for field in children(node, 'field'):
                 body = children(field, 'field_body')[0]
                 name = field_name(body)
+                if name in ('entity_type', 'root_entity_type'):
+                    diagnostics.append(
+                        diagnostic(unit.document, body, f'reserved built-in field: {name}')
+                    )
                 if name in target:
                     diagnostics.append(diagnostic(unit.document, body, f'duplicate field: {name}'))
                 target[name] = FieldSite(unit, field)
@@ -208,6 +215,9 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
                 for key, members in effective.items()
             }
         )
+    from yambl_compiler.languages.yambl.semantics.decodes import collect_subtypes
+
+    collect_subtypes(list(units), diagnostics)
     index = EntityIndex(fields, ancestors, effective, {})
     groups: dict[tuple[EntityKey, str], list[tuple[EntityKey, FieldSite]]] = {}
     for key in sorted(fields, key=lambda item: len(ancestors[item])):
@@ -291,6 +301,49 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
                 )
     for field_key, identity in index.identities.items():
         index.identities[field_key] = replacements.get(identity, identity)
+    declarations = units[0].world.declarations if units else {}
+    for key, (unit, declaration) in declarations.items():
+        if declaration.data != 'entity':
+            continue
+        if key not in index.fields:
+            index.fields[key] = {
+                field_name(children(field, 'field_body')[0]): FieldSite(unit, field)
+                for field in children(declaration, 'field')
+            }
+            index.effective[key] = dict(index.fields[key])
+        root = ancestors.get(key, [])[-1] if ancestors.get(key) else key
+        generated = parse(
+            f'entity Hidden {{ static attr entity_type: type<{key[1]}> '
+            'static attr root_entity_type: type<Entity> }'
+        )
+        assert not isinstance(generated, Diagnostic)
+        origin = tokens(header(declaration))[0]
+        for offset, field in enumerate(children(children(generated.tree, 'entity')[0], 'field')):
+            for subtree in field.iter_subtrees():
+                subtree.children = [
+                    (
+                        Token(
+                            child.type,
+                            str(child),
+                            start_pos=(origin.line or 1) * 1000000 + (origin.column or 1) + offset,
+                            line=origin.line,
+                            column=origin.column,
+                            end_line=origin.end_line,
+                            end_column=origin.end_column,
+                        )
+                        if isinstance(child, Token)
+                        else child
+                    )
+                    for child in subtree.children
+                ]
+            name = field_name(children(field, 'field_body')[0])
+            site = FieldSite(unit, field, True)
+            index.fields.setdefault(key, {})[name] = site
+            index.effective.setdefault(key, {})[name] = site
+            index.identities[(key, name)] = (root, name)
+        unit.world.fields[key] = {
+            name: (site.unit, site.declaration) for name, site in index.effective[key].items()
+        }
     return index
 
 

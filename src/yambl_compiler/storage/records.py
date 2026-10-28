@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from yambl_compiler.ir.model import Bound, Definition, Field, Model
 
-LAYOUT_REVISION = 6
+LAYOUT_REVISION = 7
 
 
 def quote(name: str) -> str:
@@ -132,3 +132,22 @@ class Layout:
     ids: dict[str, Field]
     fields: dict[str, StoredField]
     tables: tuple[Table, ...]
+
+
+def mapped_field(layout: Layout, identity: str) -> tuple[Field, str] | None:
+    """Resolve a stored or derived field and its inheritance root.
+
+    :param layout: Generated model and storage layout.
+    :param identity: Logical field identity.
+    :returns: Representative declaration and root, or None if unavailable.
+    """
+    stored = layout.fields.get(identity)
+    if stored is not None:
+        return stored.field, stored.root
+    for definition in layout.model.definitions:
+        if definition.identity != identity.rpartition('.')[0]:
+            continue
+        for declaration in definition.fields:
+            if declaration.builtin and declaration.identity == identity:
+                return declaration, layout.roots.get(definition.identity, definition.identity)
+    return None

@@ -174,7 +174,7 @@ def build_layout(model: Model) -> Layout:
         impls = [declarations[i] for i in logical.implementations]
         f = impls[0]
         owner = f.implementation.rsplit(".", 1)[0]
-        if owner not in entities or f.category in ("id", "computed"):
+        if owner not in entities or f.builtin or f.category in ("id", "computed"):
             continue
         dimensions = tuple(
             sorted(
@@ -371,6 +371,15 @@ def build_layout(model: Model) -> Layout:
     for table in builtin_tables(model, stored):
         claim(table.name, table.purpose)
         tables[table.name] = table
+    for definition in model.definitions:
+        if definition.identity in (
+            "builtins.Decodes",
+            "builtins.Hierarchy",
+            "builtins.ConfigGroup",
+        ):
+            entities[definition.identity] = definition
+            roots[definition.identity] = definition.identity
+            ids[definition.identity] = next(f for f in definition.fields if f.category == "id")
     return Layout(model, entities, roots, ids, stored, tuple(tables[k] for k in sorted(tables)))
 
 
@@ -433,7 +442,7 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
         )
         tables.append(table)
         for f in definition.fields:
-            if f.category == "id":
+            if f.category == "id" or f.builtin:
                 continue
             state = f.name + "__state"
             table.columns.append(

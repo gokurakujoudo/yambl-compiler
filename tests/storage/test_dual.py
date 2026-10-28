@@ -16,7 +16,7 @@ from yambl_compiler.storage.backends import (
     repository_contents,
     validate_row,
 )
-from yambl_compiler.storage.results import Status, Success
+from yambl_compiler.storage.results import EntityRef, Status, Success
 
 
 class DualTests(RuntimeTests):
@@ -35,6 +35,98 @@ class DualTests(RuntimeTests):
             file.parent.mkdir(exist_ok=True)
             file.write_text(text, encoding="utf-8", newline="\n")
         return path
+
+    def test_hidden_type_fields_and_builtin_identity_on_both_backends(self):
+        self.writer.execute("INSERT INTO tb_hierarchy (hierarchy_id) VALUES ('h')")
+        self.writer.execute("INSERT INTO tb_config_group (config_group_id) VALUES ('g')")
+        self.writer.commit()
+        path = self.files()
+        for reader in (self.open(), self.module.SampleReader.open_files(path).value):
+            self.addCleanup(reader.close)
+            child = reader.get_a('b').value
+            self.assertEqual(child.read_entity_type(), Success('B'))
+            self.assertEqual(child.read_root_entity_type(), Success('A'))
+            self.assertEqual(child.read_actual_type(), Success('B', 'computation'))
+            self.assertEqual(child.read_root_type(), Success('A', 'computation'))
+            reference = EntityRef('builtins.Decodes', 'Currencies')
+            self.assertEqual(reader._batch.entities([reference]), (Success(reference),))
+            dictionary = reader.get_decodes('Currencies').value
+            self.assertEqual(dictionary.read_entity_type(), Success('builtins.Decodes'))
+            self.assertEqual(dictionary.read_root_entity_type(), Success('builtins.Decodes'))
+            for handle, name in (
+                (reader.get_hierarchy('h').value, 'builtins.Hierarchy'),
+                (reader.get_config_group('g').value, 'builtins.ConfigGroup'),
+            ):
+                self.assertEqual(handle.read_entity_type(), Success(name))
+                self.assertEqual(handle.read_root_entity_type(), Success(name))
+
+    def test_extended_codes_follow_each_reader_snapshot(self):
+        self.put('A.currency', 'CNY')
+        self.writer.execute('PRAGMA journal_mode=WAL')
+        old_files = self.files()
+        old_sql = self.open()
+        old_file = self.module.SampleReader.open_files(old_files).value
+        self.addCleanup(old_file.close)
+        old_handles = [old_sql.get_a('a').value, old_file.get_a('a').value]
+        self.writer.execute(
+            "INSERT INTO tb_decodes_entries (decodes_id, code, decode, ordering) VALUES (?, ?, ?, ?)",
+            ('Currencies', 'EUR', 'Euro', '300'),
+        )
+        self.writer.execute('UPDATE tb_a SET currency = ? WHERE id = ?', ('EUR', 'a'))
+        self.writer.commit()
+        self.writer.row_factory = sqlite3.Row
+        rows = {
+            t.name: [dict(r) for r in self.writer.execute(f'SELECT * FROM "{t.name}"')]
+            for t in self.layout.tables
+        }
+        new_files = self.root / 'new-files'
+        new_files.mkdir()
+        for name, text in repository_contents(self.layout, rows).items():
+            file = new_files / name
+            file.parent.mkdir(exist_ok=True)
+            file.write_text(text, encoding='utf-8', newline='\n')
+        new_sql = self.open()
+        new_file = self.module.SampleReader.open_files(new_files).value
+        self.addCleanup(new_file.close)
+        for handle in old_handles:
+            self.assertIs(handle.read_currency().value, self.module.CurrenciesCode.CNY)
+            with self.assertRaisesRegex(ValueError, 'unknown code'):
+                handle.reader._decode(self.layout.fields['A.currency'].field.type, 'EUR')
+        for reader in (new_sql, new_file):
+            result = reader.get_a('a').value.read_currency()
+            self.assertIsInstance(result.value, self.module.CurrenciesCode)
+            self.assertEqual(str(result.value), 'EUR')
+            self.assertIsNone(result.value.name)
+            self.assertEqual(result.value.value, 'EUR')
+            another = self.module.CurrenciesCode('EUR')
+            self.assertEqual(result.value, another)
+            self.assertIsNot(result.value, another)
+            self.assertIs(self.module.CurrenciesCode('CNY'), self.module.CurrenciesCode.CNY)
+            self.assertTrue(reader.validate().value.valid)
+
+    def test_dictionary_integrity_and_invalid_code_are_reported(self):
+        self.put('A.currency', 'UNKNOWN')
+        self.writer.execute(
+            "UPDATE tb_decodes_entries SET decode = 'changed' WHERE decodes_id = 'Currencies' AND code = 'USD'"
+        )
+        self.writer.execute(
+            "INSERT INTO tb_decodes_entries (decodes_id, code, decode, ordering) VALUES (?, ?, ?, ?)",
+            ('Other::subtypes', 'Fake', 'Fake', '100'),
+        )
+        self.writer.commit()
+        path = self.files()
+        for reader in (self.open(), self.module.SampleReader.open_files(path).value):
+            self.addCleanup(reader.close)
+            report = reader.validate().value
+            self.assertFalse(report.valid)
+            messages = [issue.message for issue in report.issues]
+            self.assertTrue(any('model dictionary entry changed: USD' in m for m in messages))
+            self.assertTrue(any('read-only dictionary entries changed' in m for m in messages))
+            self.assertTrue(any('unknown code for Currencies' in m for m in messages))
+            selected = reader.validate_dictionary_references({'Currencies'})
+            self.assertTrue(
+                any('unknown code for Currencies' in i.message for i in selected.issues)
+            )
 
     def test_properties_cache_all_coordinates_and_survive_close(self):
         self.put("A.text", "hello")

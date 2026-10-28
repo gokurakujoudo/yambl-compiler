@@ -1,0 +1,27 @@
+plan initial {
+    version 1
+    group entities {
+        insert demo.records.Instrument (key, name) {
+            'i1', 'Example'
+        }
+        insert demo.records.Entry (key, amount) {
+            'e1', 10
+        }
+        insert demo.records.Entry (key) {
+            'e2'
+        }
+        insert demo.records.Basket (key, entries) {
+            'b1', ['e1', 'e2']
+        }
+    }
+    group observations {
+        replace demo.records.Instrument.price scope (key='i1') columns (venue, day, value) {
+            'primary', '2026-01-05', 10.5
+            'primary', '2026-01-20', 11.5
+            'secondary', '2026-01-05', 9.5
+        }
+        replace demo.records.Instrument.rating scope (key='i1') columns (valid_from, valid_to, value) {
+            '2026-01-01', '2026-02-01', 'A'
+        }
+    }
+}

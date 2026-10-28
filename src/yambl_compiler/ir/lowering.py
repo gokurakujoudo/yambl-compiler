@@ -564,14 +564,15 @@ class Lowering:
                     resolver.bindings[name] = Term(resolver.resolve(syntax), 'value', '$' + name)
         fields: list[Field] = []
         local = self.analysis.entities.fields.get(key, {})
-        sites = [(name, site.unit, site.declaration) for name, site in local.items()]
+        sites = [(name, site.unit, site.declaration, site.builtin) for name, site in local.items()]
         if node.data == 'value' or (
             node.data == 'entity' and key not in self.analysis.entities.fields
         ):
             sites = [
-                (field_name(children(f, 'field_body')[0]), unit, f) for f in children(node, 'field')
+                (field_name(children(f, 'field_body')[0]), unit, f, False)
+                for f in children(node, 'field')
             ]
-        for name, scope, field in sorted(sites):
+        for name, scope, field, builtin in sorted(sites):
             body = children(field, 'field_body')[0]
             syntax = children(body, 'type_expr')[0]
             field_resolver = Resolver(scope, [], context, True)
@@ -595,6 +596,7 @@ class Lowering:
                     id(field) in self.extensions,
                     self.source(scope, body),
                     self.calculation(key, name, scope),
+                    builtin,
                 )
             )
         effective: list[Effective] = []
@@ -663,7 +665,7 @@ class Lowering:
                 tuple(
                     Text(n, qualified(s.key))
                     for n, s in sorted(unit.scope.items())
-                    if s.kind in ('constant', 'decodes')
+                    if s.kind in ('constant', 'decodes', 'entity')
                 )
                 if node.data == 'constant'
                 else ()
@@ -680,6 +682,38 @@ class Lowering:
             for key, (unit, node) in self.world.declarations.items()
         }
         definitions = tuple(self.definition(*declarations[name]) for name in sorted(declarations))
+        by_identity = {definition.identity: definition for definition in definitions}
+        derived: list[Definition] = []
+        for key, entries in self.world.subtypes.items():
+            owner_key = (key[0], key[1].removesuffix('::subtypes'))
+            owner = by_identity[qualified(owner_key)]
+            derived.append(
+                Definition(
+                    kind='decodes',
+                    name=owner.name + '::subtypes',
+                    identity=owner.identity + '::subtypes',
+                    final=False,
+                    parent='',
+                    parameters=(),
+                    expression=None,
+                    decorators=(),
+                    fields=(),
+                    effective=(),
+                    entries=tuple(
+                        Entry(
+                            entry.code,
+                            str(entry.ordering),
+                            entry.decode,
+                            True,
+                            by_identity[qualified(entry.target)].source,
+                        )
+                        for entry in entries
+                    ),
+                    source=owner.source,
+                    derived=True,
+                )
+            )
+        definitions = tuple(sorted((*definitions, *derived), key=lambda d: d.identity))
         aliases = {d.identity: d for d in definitions if d.kind == 'type_alias'}
         definitions = tuple(
             replace(
@@ -733,7 +767,7 @@ class Lowering:
         )
         return seal(
             Model(
-                6,
+                7,
                 self.version,
                 self.prefix,
                 primitives,

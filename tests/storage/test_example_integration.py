@@ -1,4 +1,4 @@
-"""Exercise the actual FMC example without consulting model sources at read time."""
+"""Exercise the self-contained example without consulting model sources at read time."""
 
 import asyncio
 import re
@@ -19,14 +19,14 @@ from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
 
 
-class FmcTests(FilesystemCase):
-    def test_fmc_seed_and_independent_reader(self):
-        repository = Path(__file__).parents[3] / "fmc-data-model"
+class ExampleIntegrationTests(FilesystemCase):
+    def test_example_seed_and_independent_reader(self):
+        repository = Path(__file__).parents[1] / "fixtures/example"
         model = compile_repository(repository / "model")
         output = self.root / "generated"
-        generate(model, output, "fmc_model")
-        module = load_generated(output / "fmc_model", "fmc_model")
-        plan = repository / "sample_data/demo.yaplan"
+        generate(model, output, "sample_model")
+        module = load_generated(output / "sample_model", "sample_model")
+        plan = repository / "example.yaplan"
         self.assertEqual(
             format_document(plan.read_text(encoding="utf-8")),
             plan.read_text(encoding="utf-8"),
@@ -40,11 +40,12 @@ class FmcTests(FilesystemCase):
                 f"backend: '{backend}'\npath: '{destination.name}'\n",
             )
             configs.append(config)
-            with asyncio.run(module.FmcData.create(config)) as data:
+            with asyncio.run(module.SampleData.create(config)) as data:
                 report = data.apply(plan)
                 self.assertEqual(report.status, "committed")
                 for dictionary, codes in {
-                    'PortfolioGroupTypes': {'Example'},
+                    'core.PortfolioGroupTypes': {'ProductSeries', 'FeatureGroup'},
+                    'decodes.Currencies': {'CNY', 'USD', 'EUR'},
                     'TradingMarkets': {'ExampleMarket'},
                     'PriceSources': {'Primary', 'Secondary', 'Unlisted'},
                     'ExternalRatingSources': {'AgencyA', 'AgencyB'},
@@ -68,16 +69,16 @@ class FmcTests(FilesystemCase):
                 reader.close()
                 self.assertEqual(data.rollback(undone.path).status, 'committed')
         with self.assertRaises(FileExistsError):
-            asyncio.run(module.FmcData.create(configs[1]))
+            asyncio.run(module.SampleData.create(configs[1]))
         isolated = """import sys, asyncio
 from pathlib import Path
 from datetime import date
 from decimal import Decimal
 sys.path.insert(0, sys.argv[1])
-import fmc_model as m
+import sample_model as m
 assert not any(n.startswith(('yambl_compiler', 'jsonschema')) for n in sys.modules)
 for config in sys.argv[2:]:
-    data = asyncio.run(m.FmcData.open(Path(config)))
+    data = asyncio.run(m.SampleData.open(Path(config)))
     reader = data.read()
     assert reader.validate().value.valid
     bond = reader.get_security('BOND00000001').value
@@ -86,9 +87,9 @@ for config in sys.argv[2:]:
     assert bond.price_fallback_days == m.Success(30,'model_default')
     req = m.FundIndustryMarketValueRequest
     results = reader.read_fund_industry_market_value_many([
-        req(id_value='FUND00000001', as_of_date=date(2026,1,6)),
-        req(id_value='FUND00000001', as_of_date=date(2026,1,6), industry_date=date(2026,1,5)),
-        req(id_value='FUND00000001', as_of_date=date(2026,1,2), best_effort=True),
+        req(id_value='FUND00000001', as_of_date=date(2026,1,6), price_hierarchy='LocalHierarchy'),
+        req(id_value='FUND00000001', as_of_date=date(2026,1,6), industry_date=date(2026,1,5), price_hierarchy='LocalHierarchy'),
+        req(id_value='FUND00000001', as_of_date=date(2026,1,2), best_effort=True, price_hierarchy='LocalHierarchy'),
     ])
     assert isinstance(results, m.Success), results
     assert dict(results.value[0].value) == {'Financials': Decimal('10451.5'), 'Other': Decimal('38'), 'Technology': Decimal('100')}, results
@@ -98,19 +99,17 @@ for config in sys.argv[2:]:
     reader.close()
     data.close()
     assert bond.read_price(date(2026,1,2),price_source=m.PriceSourcesCode('Primary')) == m.Success(Decimal('101.25'))
-print('independent FMC reads and validation passed')
+print('independent example reads and validation passed')
 """
         examples = re.findall(
             r"```python\n(.*?)```",
-            (repository / "README.md").read_text(encoding="utf-8"),
+            (repository / "examples.md").read_text(encoding="utf-8"),
             re.S,
         )
         self.assertEqual(len(examples), 2)
         for example in examples:
             for backend, config in zip(("sqlite", "files"), configs, strict=True):
-                example = example.replace(
-                    f"../fmc-data-model/examples/{backend}.lclcfg", config.as_posix()
-                )
+                example = example.replace(f"@{backend}@", config.as_posix())
             isolated += "\nexec(" + repr(example) + ")\n"
         completed = subprocess.run(
             [
@@ -123,17 +122,18 @@ print('independent FMC reads and validation passed')
             ],
             capture_output=True,
             text=True,
+            encoding='utf-8',
         )
         self.assertEqual(completed.returncode, 0, completed.stderr + completed.stdout)
-        self.assertIn("independent FMC reads and validation passed", completed.stdout)
+        self.assertIn("independent example reads and validation passed", completed.stdout)
         self.assertIn("101.25", completed.stdout)
         self.assertIn("Financials", completed.stdout)
         before = database.read_bytes()
         with self.assertRaises(FileExistsError):
-            asyncio.run(module.FmcData.create(configs[0]))
+            asyncio.run(module.SampleData.create(configs[0]))
         self.assertEqual(database.read_bytes(), before)
 
-        module = load_generated(output / "fmc_model", "fmc_model")
+        module = load_generated(output / "sample_model", "sample_model")
         original = Path.read_text
 
         def independent(path, *args, **kwargs):
@@ -142,7 +142,7 @@ print('independent FMC reads and validation passed')
             return original(path, *args, **kwargs)
 
         with patch.object(Path, "read_text", independent):
-            data = asyncio.run(module.FmcData.open(configs[0]))
+            data = asyncio.run(module.SampleData.open(configs[0]))
             self.addCleanup(data.close)
             reader = data.read()
             self.addCleanup(reader.close)
@@ -166,7 +166,7 @@ print('independent FMC reads and validation passed')
             fund = reader.get_fund("FUND00000001").value
             self.assertEqual(
                 fund.read_net_asset(date(2026, 1, 2)),
-                Success(Decimal("12345678901234567890.125")),
+                Success(Decimal("1234567890123.125")),
             )
             self.assertEqual(fund.read_holdings(date(2026, 1, 3)), Success(frozenset()))
             self.assertEqual(fund.read_full_name().status, Status.EMPTY)
@@ -179,13 +179,13 @@ print('independent FMC reads and validation passed')
         self.assertEqual(database.read_bytes(), before)
 
     def test_corrupt_physical_data_is_not_recovered_to_other(self):
-        repository = Path(__file__).parents[3] / "fmc-data-model"
+        repository = Path(__file__).parents[1] / "fixtures/example"
         output = self.root / "generated"
-        generate(compile_repository(repository / "model"), output, "fmc_model")
-        module = load_generated(output / "fmc_model", "fmc_model")
+        generate(compile_repository(repository / "model"), output, "sample_model")
+        module = load_generated(output / "sample_model", "sample_model")
         config = self.write("data.lclcfg", "backend: 'sqlite'\npath: 'data.db'\n")
-        with asyncio.run(module.FmcData.create(config)) as data:
-            data.apply(repository / "sample_data/demo.yaplan")
+        with asyncio.run(module.SampleData.create(config)) as data:
+            data.apply(repository / "example.yaplan")
             for sql in (
                 "UPDATE tb_core_security_price SET price='broken' WHERE id='BOND00000002' AND dim_price_source='Primary'",
                 "UPDATE tb_core_security_price SET price='50' WHERE id='BOND00000002' AND dim_price_source='Primary'; UPDATE tb_core_issuer_industry SET valid_to='2026-01-07' WHERE id='ISSR00000001' AND valid_to='2026-01-06'",
@@ -195,7 +195,9 @@ print('independent FMC reads and validation passed')
                 reader = data.read()
                 try:
                     result = reader.get_fund("FUND00000001").value.read_industry_market_value(
-                        as_of_date=date(2026, 1, 6), best_effort=True
+                        as_of_date=date(2026, 1, 6),
+                        best_effort=True,
+                        price_hierarchy='LocalHierarchy',
                     )
                     self.assertEqual(result.status, Status.ERROR)
                 finally:

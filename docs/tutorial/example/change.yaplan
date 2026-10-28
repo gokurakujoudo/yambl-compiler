@@ -1,0 +1,8 @@
+plan change_quantity {
+    version 1
+    group quantities {
+        update demo.catalog.Item (item_id, quantity) {
+            'item-1', 4
+        }
+    }
+}

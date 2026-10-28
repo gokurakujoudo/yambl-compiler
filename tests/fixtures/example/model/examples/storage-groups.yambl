@@ -1,0 +1,22 @@
+namespace examples
+
+from core import Bond
+
+---
+# Bond storage groups
+
+These optional fields demonstrate physical storage without changing reads.
+Bond inherits Security, so both groups use the Security root table prefix.
+issue_date uses the date lane in tb_core_security_bond_info; issuer_name uses
+a payload and state column in tb_core_security_bond_details.
+---
+
+extend Bond {
+    @title('Issue date')
+    @sparse('bond_info')
+    static attr issue_date: date
+
+    @title('Issuer name')
+    @dense(cat='bond_details')
+    static attr issuer_name: string
+}

@@ -342,6 +342,26 @@ class Resolver:
         operator, member = map(str, tokens(node))
         path = term.path + operator + member
         if operator == '::':
+            if (
+                member == 'subtypes'
+                and term.sort == 'type'
+                and term.type.kind == 'reference'
+                and term.type.key in self.unit.world.declarations
+                and self.unit.world.declarations[term.type.key][1].data == 'entity'
+            ):
+                entity_key = term.type.key
+                subtype_key = (entity_key[0], entity_key[1] + '::subtypes')
+                return Term(
+                    Resolved(
+                        'Decodes',
+                        'reference',
+                        key=self.unit.scope['Decodes'].key,
+                        exact=repr(subtype_key),
+                        exact_key=subtype_key,
+                    ),
+                    'value',
+                    (term.path or term.type.name) + operator + member,
+                )
             if term.sort == 'field' and member == 'entity':
                 owner = field_owner(*term.source) if term.source else None
                 if owner is None or owner.kind != 'entity':
@@ -379,11 +399,16 @@ class Resolver:
             ).resolve(syntax)
             return Term(resolved, 'type' if member == 'type' else 'value', path)
         if term.type.name == 'Decodes' and term.type.exact is not None:
-            key = next(key for key in self.unit.world.declarations if repr(key) == term.type.exact)
-            _, declaration = self.unit.world.declarations[key]
-            codes = {str(tokens(entry)[2]) for entry in children(declaration, 'entry')}
+            dictionary_key = term.type.exact_key
+            assert dictionary_key is not None
+            declaration = self.unit.world.declarations.get(dictionary_key)
+            codes = (
+                {entry.code for entry in self.unit.world.subtypes[dictionary_key]}
+                if declaration is None
+                else {str(tokens(entry)[2]) for entry in children(declaration[1], 'entry')}
+            )
             exact = member
-            if is_flags(declaration):
+            if declaration is not None and is_flags(declaration[1]):
                 if member == 'All':
                     exact = '+'.join(sorted(codes))
                 elif member == 'None':
@@ -394,7 +419,7 @@ class Resolver:
             return Term(
                 Resolved(
                     'code',
-                    args=(Resolved(key[1], key=key),),
+                    args=(Resolved(dictionary_key[1], key=dictionary_key),),
                     exact=exact,
                 ),
                 'value',
@@ -568,7 +593,8 @@ class Resolver:
         if value.sort != 'value' or value.type.name != 'Decodes':
             self.issue(node, 'code requires a Decodes instance value')
         if value.type.name == 'Decodes' and value.type.exact is not None:
-            key = next(key for key in self.unit.world.declarations if repr(key) == value.type.exact)
+            key = value.type.exact_key
+            assert key is not None
             return Resolved('code', args=(Resolved(key[1], key=key),))
         return Resolved('code', args=(value.type,), dependency=value.path)
 

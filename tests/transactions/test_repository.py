@@ -161,6 +161,225 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
         )
         return await self.store_type.create(config), config
 
+    async def test_derived_dictionary_rejections_do_not_publish_either_backend(self):
+        identity = 'A::subtypes'
+        scope = (Condition('decodes_id', identity),)
+        operations = (
+            Operation('insert', 'builtins.Decodes', ('decodes_id',), ((identity,),)),
+            Operation('update', 'builtins.Decodes', ('decodes_id', 'entries'), ((identity, ()),)),
+            Operation(
+                'delete', 'builtins.Decodes', ('decodes_id',), ((identity,),), owned_data=True
+            ),
+            Operation('replace', 'builtins.Decodes.entries', ('value',), (((),),), scope),
+            Operation('delete', 'builtins.Decodes.entries', (), (), scope),
+        )
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, _ = await self.configured(backend)
+                self.addCleanup(store.close)
+                before = store.snapshot().tables
+                exports = set(store.transaction_directory().glob('*.yatran'))
+                for operation in operations:
+                    plan = Plan(
+                        'reject',
+                        self.plan.model,
+                        (
+                            Group(
+                                'edit',
+                                (
+                                    Operation('insert', 'A', ('key',), (('new',),)),
+                                    operation,
+                                ),
+                            ),
+                        ),
+                    )
+                    path = self.write('derived.yaplan', dumps(plan))
+                    with self.assertRaisesRegex(ValueError, 'derived dictionary is read-only'):
+                        store.apply(path)
+                    self.assertEqual(store.snapshot().tables, before)
+                    self.assertEqual(set(store.transaction_directory().glob('*.yatran')), exports)
+
+                ordinary = Plan(
+                    'ordinary',
+                    self.plan.model,
+                    (
+                        Group(
+                            'add',
+                            (
+                                Operation(
+                                    'insert', 'builtins.Decodes', ('decodes_id',), (('Extra',),)
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+                transaction = parse(
+                    store.apply(self.write('ordinary.yaplan', dumps(ordinary))).path.read_text(
+                        encoding='utf-8'
+                    )
+                )
+                group = transaction.groups[0]
+                change = replace(group.changes[0], scope=scope)
+                forged = seal(
+                    replace(
+                        transaction, id=str(uuid4()), groups=(replace(group, changes=(change,)),)
+                    )
+                )
+                path = self.write('derived-rollback.yatran', dumps(forged))
+                before = store.snapshot().tables
+                exports = set(store.transaction_directory().glob('*.yatran'))
+                with self.assertRaisesRegex(ValueError, 'derived dictionary is read-only'):
+                    store.rollback(path)
+                self.assertEqual(store.snapshot().tables, before)
+                self.assertEqual(set(store.transaction_directory().glob('*.yatran')), exports)
+
+    async def test_dictionary_extension_order_protection_and_rollback(self):
+        def entry(code, decode, ordering):
+            return ObjectValue(
+                ((Symbol('code'), code), (Symbol('decode'), decode), (Symbol('ordering'), ordering))
+            )
+
+        originals = (entry('USD', 'US dollar', 1), entry('CNY', '人民币', 2))
+        expanded = (*originals, entry('EUR', 'Euro', 3))
+        scope = (Condition('decodes_id', 'Currencies'),)
+
+        def replacement(entries):
+            return Operation(
+                'replace', 'builtins.Decodes.entries', ('value',), ((entries,),), scope
+            )
+
+        insert = Operation('insert', 'A', ('key', 'currency'), (('new', 'EUR'),))
+        extend = replacement(expanded)
+        plan = Plan(
+            'extend', self.plan.model, (Group('dictionary', (extend,)), Group('entity', (insert,)))
+        )
+        reversed_plan = replace(plan, groups=tuple(reversed(plan.groups)))
+
+        def plan_path(value):
+            return self.write('dictionary-test.yaplan', dumps(value))
+
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                store, _ = await self.configured(backend)
+                self.addCleanup(store.close)
+                self.store_type.validate_plan_syntax(plan_path(reversed_plan))
+                before = store.snapshot().tables
+                with self.assertRaisesRegex(ValueError, 'unknown code for Currencies: EUR'):
+                    store.validate_plan_expectations(plan_path(reversed_plan))
+                with self.assertRaisesRegex(ValueError, 'unknown code for Currencies: EUR'):
+                    store.apply(plan_path(reversed_plan))
+                self.assertEqual(store.snapshot().tables, before)
+                known_missing = replace(
+                    plan,
+                    groups=(
+                        Group('dictionary', (replacement(originals),)),
+                        Group('entity', (insert,)),
+                    ),
+                )
+                with self.assertRaisesRegex(ValueError, 'unknown code for Currencies: EUR'):
+                    self.store_type.validate_plan_syntax(plan_path(known_missing))
+                store.validate_plan_expectations(plan_path(plan))
+                applied = store.apply(plan_path(plan))
+                self.assertEqual(applied.status, 'committed')
+                with closing(store.read()) as reader:
+                    self.assertEqual(str(reader.get_a('new').value.read_currency().value), 'EUR')
+
+                changed = (*originals, entry('EUR', 'Euro revised', 5))
+                change = replace(plan, groups=(Group('dictionary', (replacement(changed),)),))
+                modified = store.apply(plan_path(change))
+                row = next(
+                    row
+                    for row in store.snapshot().tables['tb_decodes_entries']
+                    if row['decodes_id'] == 'Currencies' and row['code'] == 'EUR'
+                )
+                self.assertEqual((row['decode'], row['ordering']), ('Euro revised', '5'))
+                undone = store.rollback(modified.path)
+                row = next(
+                    row
+                    for row in store.snapshot().tables['tb_decodes_entries']
+                    if row['decodes_id'] == 'Currencies' and row['code'] == 'EUR'
+                )
+                self.assertEqual((row['decode'], row['ordering']), ('Euro', '3'))
+                store.rollback(undone.path)
+                row = next(
+                    row
+                    for row in store.snapshot().tables['tb_decodes_entries']
+                    if row['decodes_id'] == 'Currencies' and row['code'] == 'EUR'
+                )
+                self.assertEqual((row['decode'], row['ordering']), ('Euro revised', '5'))
+
+                bad = replace(plan, groups=(Group('dictionary', (replacement(originals),)),))
+                before = store.snapshot().tables
+                with self.assertRaisesRegex(ValueError, 'candidate dictionary validation failed'):
+                    store.apply(plan_path(bad))
+                self.assertEqual(store.snapshot().tables, before)
+                for invalid in ((), (entry('USD', 'changed', 1), originals[1])):
+                    damaged = replace(bad, groups=(Group('dictionary', (replacement(invalid),)),))
+                    with self.assertRaisesRegex(
+                        ValueError, 'model dictionary entries are immutable'
+                    ):
+                        self.store_type.validate_plan_syntax(plan_path(damaged))
+                delete = replace(
+                    bad,
+                    groups=(
+                        Group(
+                            'dictionary',
+                            (
+                                Operation(
+                                    'delete',
+                                    'builtins.Decodes',
+                                    ('decodes_id',),
+                                    (('Currencies',),),
+                                    owned_data=True,
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+                with self.assertRaisesRegex(ValueError, 'model dictionary cannot be deleted'):
+                    self.store_type.validate_plan_syntax(plan_path(delete))
+                flags = replace(
+                    bad,
+                    groups=(
+                        Group(
+                            'dictionary',
+                            (
+                                Operation(
+                                    'delete',
+                                    'builtins.Decodes',
+                                    ('decodes_id',),
+                                    (('builtins.AttrCats',),),
+                                    owned_data=True,
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+                with self.assertRaisesRegex(ValueError, 'flags dictionary is read-only'):
+                    store.apply(plan_path(flags))
+
+                remove = replace(
+                    plan,
+                    groups=(
+                        Group('dictionary', (replacement(originals),)),
+                        Group(
+                            'entity',
+                            (Operation('update', 'A', ('key', 'currency'), (('new', 'USD'),)),),
+                        ),
+                    ),
+                )
+                removed = store.apply(plan_path(remove))
+                with closing(store.read()) as reader:
+                    self.assertEqual(str(reader.get_a('new').value.read_currency().value), 'USD')
+                restored = store.rollback(removed.path)
+                self.assertEqual(restored.status, 'committed')
+                with closing(store.read()) as reader:
+                    self.assertEqual(str(reader.get_a('new').value.read_currency().value), 'EUR')
+                replay = store.rollback(restored.path)
+                self.assertEqual(replay.status, 'committed')
+                with closing(store.read()) as reader:
+                    self.assertEqual(str(reader.get_a('new').value.read_currency().value), 'USD')
+
     async def test_snowflake_ids_and_no_repository_lock_files(self):
         for backend in ('sqlite', 'files'):
             with self.subTest(backend=backend):
@@ -239,6 +458,25 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
                 self.store_type.validate_plan_syntax(initial.path)
             before = store.snapshot().tables
             files = {p.name: p.read_bytes() for p in store.transaction_directory().iterdir()}
+            for op in (
+                Operation('insert', 'A', ('key', 'entity_type'), (('new', Symbol('B')),)),
+                Operation('update', 'A', ('key', 'root_entity_type'), (('a', Symbol('A')),)),
+                Operation(
+                    'replace',
+                    'A.entity_type',
+                    ('value',),
+                    ((Symbol('B'),),),
+                    (Condition('key', 'a'),),
+                ),
+                Operation('delete', 'A.root_entity_type', (), (), (Condition('key', 'a'),)),
+            ):
+                plan = replace(self.plan, groups=(Group('g', (op,)),))
+                path = self.write('validate-hidden.yaplan', dumps(plan))
+                with self.subTest(backend=backend, operation=op.kind, target=op.target):
+                    with self.assertRaisesRegex(ValueError, 'not writable'):
+                        store.validate_plan_syntax(path)
+                    with self.assertRaisesRegex(ValueError, 'not writable'):
+                        store.apply(path)
             for op, passes in (
                 (
                     Operation('delete', 'A.text', (), (), (Condition('key', 'a'),), expect='one'),
@@ -724,7 +962,7 @@ with asyncio.run(module.SampleData.open(config)) as store:
                     Operation(
                         'insert',
                         'builtins.ConfigGroup',
-                        ('config_group_id', 'entity_type', 'priority'),
+                        ('config_group_id', 'target_entity_type', 'priority'),
                         (('invalid', Symbol(target), 1),),
                     ),
                     Operation(
