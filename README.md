@@ -9,9 +9,9 @@ From this repository in PowerShell, use the existing virtual environment:
 
 ```powershell
 .\venv\Scripts\python.exe -m pip install -e '.[dev]'
-.\venv\Scripts\yambl.exe check -o path ..\fmc-data-model
-.\venv\Scripts\yambl.exe format -o path ..\fmc-data-model -o check
-.\venv\Scripts\yambl.exe format -o path ..\fmc-data-model
+.\venv\Scripts\yambl.exe check -o path ..\fmc-data-model\model
+.\venv\Scripts\yambl.exe format -o path ..\fmc-data-model\model -o check
+.\venv\Scripts\yambl.exe format -o path ..\fmc-data-model\model
 ```
 
 For a fresh clone, create the environment with `python -m venv venv` first.
@@ -34,7 +34,7 @@ formatting drift returns 1. Warnings alone return 0.
 Compile a rooted repository to a standalone artifact, then validate it independently:
 
 ```powershell
-.\venv\Scripts\yambl.exe compile -o path ..\fmc-data-model -o output .\build\model.yambl-ir.json
+.\venv\Scripts\yambl.exe compile -o path ..\fmc-data-model\model -o output .\build\model.yambl-ir.json
 .\venv\Scripts\yambl.exe check-ir -o path .\build\model.yambl-ir.json
 ```
 
@@ -56,7 +56,7 @@ do not prevent compilation. No external dictionary data is fetched.
 from pathlib import Path
 from yambl_compiler.ir import compile_repository, load_ir, validate_ir, write_ir
 
-model = compile_repository(Path('../fmc-data-model'))
+model = compile_repository(Path('../fmc-data-model/model'))
 assert validate_ir(model) == ()
 write_ir(model, Path('build/model.yambl-ir.json'))
 loaded = load_ir(Path('build/model.yambl-ir.json'))
@@ -372,7 +372,7 @@ and pair names/types are retained. Relationship markers remain outside signature
 Compile a rooted model, then generate into a new or empty directory:
 
 ```console
-yambl compile -o path ../fmc-data-model -o output ./build/model.yambl-ir.json
+yambl compile -o path ../fmc-data-model/model -o output ./build/model.yambl-ir.json
 yambl generate -o path ./build/model.yambl-ir.json -o output ./build/generated -o package fmc_model
 python -m pip install ./build/generated
 ```
@@ -405,7 +405,7 @@ directory. The backend and path remain fixed for the lifetime of the data interf
 
 ```console
 python -m fmc_model create -o config repository.lclcfg
-python -m fmc_model apply -o config repository.lclcfg -o source ../fmc-data-model/examples/demo.yaplan
+python -m fmc_model apply -o config repository.lclcfg -o source ../fmc-data-model/sample_data/demo.yaplan
 ```
 
 Creation rejects an existing target. Model-defined dictionaries are initialized

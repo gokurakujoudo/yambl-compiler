@@ -22,11 +22,11 @@ from yambl_compiler.storage.results import Status, Success
 class FmcTests(FilesystemCase):
     def test_fmc_seed_and_independent_reader(self):
         repository = Path(__file__).parents[3] / "fmc-data-model"
-        model = compile_repository(repository)
+        model = compile_repository(repository / "model")
         output = self.root / "generated"
         generate(model, output, "fmc_model")
         module = load_generated(output / "fmc_model", "fmc_model")
-        plan = repository / "examples/demo.yaplan"
+        plan = repository / "sample_data/demo.yaplan"
         self.assertEqual(
             format_document(plan.read_text(encoding="utf-8")),
             plan.read_text(encoding="utf-8"),
@@ -181,11 +181,11 @@ print('independent FMC reads and validation passed')
     def test_corrupt_physical_data_is_not_recovered_to_other(self):
         repository = Path(__file__).parents[3] / "fmc-data-model"
         output = self.root / "generated"
-        generate(compile_repository(repository), output, "fmc_model")
+        generate(compile_repository(repository / "model"), output, "fmc_model")
         module = load_generated(output / "fmc_model", "fmc_model")
         config = self.write("data.lclcfg", "backend: 'sqlite'\npath: 'data.db'\n")
         with asyncio.run(module.FmcData.create(config)) as data:
-            data.apply(repository / "examples/demo.yaplan")
+            data.apply(repository / "sample_data/demo.yaplan")
             for sql in (
                 "UPDATE tb_core_security_price SET price='broken' WHERE id='BOND00000002' AND dim_price_source='Primary'",
                 "UPDATE tb_core_security_price SET price='50' WHERE id='BOND00000002' AND dim_price_source='Primary'; UPDATE tb_core_issuer_industry SET valid_to='2026-01-07' WHERE id='ISSR00000001' AND valid_to='2026-01-06'",
