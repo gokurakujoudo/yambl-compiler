@@ -463,16 +463,19 @@ changed data and its affected relationships before committing.
 groups=None)` reverses all or selected groups while preserving conflicting later
 changes. Each operation returns a transaction ID, file path, change count and
 conflict summary; `data.export(id)` exports a committed transaction by ID.
+New transaction IDs use decimal Snowflake strings; existing UUID transaction IDs
+remain readable. The generator uses worker ID 0, does not persist state across
+processes and does not coordinate separate repositories. Before restarting with
+the same worker ID, ensure the wall clock has advanced past the time of the last
+generated ID.
 
 ```console
 python -m fmc_model rollback -o config repository.lclcfg -o source transaction.yatran
 ```
 
-Writes and recovery serialize across cooperating generated interfaces using a
-persistent sibling `.<name>.yambl-lock` file. Lock acquisition times out after
-60 seconds and requires local filesystem SQLite locking; direct external writes
-are not coordinated. SQLite data files with multiple hard links are rejected to
-avoid bypassing the lock. Do not delete the lock file while processes are active.
+Only one process may write to or recover a repository at a time. Generated
+interfaces do not coordinate writes across processes; callers must ensure this
+condition holds.
 SQLite updates affected rows and commits the execution record in the same native
 transaction. The file backend streams changed tables into a new generation and
 reuses unchanged files with hard links. The local filesystem and process must
@@ -492,7 +495,7 @@ the reported conflicts. These statuses replace `publication_pending` and
 Apply and rollback validate changed rows, ownership, temporal intervals,
 configuration and affected reference cycles against the pinned candidate. They
 assume unchanged data was already valid. Writes that bypass the generated
-interface are outside its locking and validation contract.
+interface are outside its validation contract.
 
 `reader.validate()` scans the complete repository and returns an immutable report
 with `valid` and `issues`. It checks physical records, collection ownership, SCD

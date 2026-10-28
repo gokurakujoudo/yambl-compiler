@@ -15,7 +15,6 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from lclang.error import LclError, render_error
-from lclang.utils import SnowflakeGenerator
 
 from tests.support import load_generated
 from tests.transactions.test_binding import CatalogCase
@@ -162,48 +161,25 @@ class RepositoryTests(CatalogCase, unittest.IsolatedAsyncioTestCase):
         )
         return await self.store_type.create(config), config
 
-    async def test_snowflake_ids_advance_after_generator_restart(self):
-        runtime = sys.modules[self.store_type.__mro__[1].__module__]
-        clock_ns = (1_704_067_200_000 + 86_400_000) * 1_000_000
-        with patch('lclang.utils.snowflake_id.time_ns', return_value=clock_ns):
-            for backend in ('sqlite', 'files'):
-                with self.subTest(backend=backend):
-                    with patch.object(runtime, 'ID_GENERATOR', SnowflakeGenerator(worker_id=0)):
-                        store, config = await self.configured(backend)
-                        self.addCleanup(store.close)
-                        if backend == 'files':
-                            initial = json.loads((store.path / 'repository.json').read_text())
-                            self.assertTrue(initial['generation'].isdecimal())
-                        first = store.apply(self.plan_path)
-                    with patch.object(runtime, 'ID_GENERATOR', SnowflakeGenerator(worker_id=0)):
-                        second = store.rollback(first.path)
-                    self.assertTrue(first.id.isdecimal())
-                    self.assertTrue(second.id.isdecimal())
-                    self.assertGreater(int(second.id), int(first.id))
-                    self.assertEqual(parse(second.path.read_text()).source, first.id)
-                    reopened = await self.store_type.open(config)
-                    reopened.close()
-
-    async def test_snowflake_id_rejects_clock_behind_repository_watermark(self):
-        runtime = sys.modules[self.store_type.__mro__[1].__module__]
-        now_ns = (1_704_067_200_000 + 86_400_000) * 1_000_000
+    async def test_snowflake_ids_and_no_repository_lock_files(self):
         for backend in ('sqlite', 'files'):
             with self.subTest(backend=backend):
-                with (
-                    patch('lclang.utils.snowflake_id.time_ns', return_value=now_ns),
-                    patch.object(runtime, 'ID_GENERATOR', SnowflakeGenerator(worker_id=0)),
-                ):
-                    store, _ = await self.configured(backend)
-                    self.addCleanup(store.close)
-                    first = store.apply(self.plan_path)
-                with (
-                    patch('lclang.utils.snowflake_id.time_ns', return_value=now_ns - 1_000_000),
-                    patch.object(runtime, 'ID_GENERATOR', SnowflakeGenerator(worker_id=0)),
-                    self.assertRaisesRegex(ValueError, 'cannot advance beyond repository IDs'),
-                ):
-                    store.rollback(first.path)
-                with closing(store.read()) as reader:
-                    self.assertEqual(reader.get_a('a').value.text, Success('original'))
+                store, config = await self.configured(backend)
+                self.addCleanup(store.close)
+                if backend == 'files':
+                    initial = json.loads((store.path / 'repository.json').read_text())
+                    self.assertTrue(initial['generation'].isdecimal())
+                first = store.apply(self.plan_path)
+                second = store.rollback(first.path)
+                self.assertTrue(first.id.isdecimal())
+                self.assertTrue(second.id.isdecimal())
+                self.assertGreater(int(second.id), int(first.id))
+                self.assertEqual(parse(second.path.read_text()).source, first.id)
+                reopened = await self.store_type.open(config)
+                reopened.close()
+                self.assertFalse(
+                    store.path.with_name('.' + store.path.name + '.yambl-lock').exists()
+                )
 
     async def test_expect_failure_is_atomic_and_inline_insert_round_trips(self):
         for backend in ('sqlite', 'files'):
@@ -864,123 +840,6 @@ with asyncio.run(module.SampleData.open(config)) as store:
                     self.addCleanup(reopened.close)
                     with self.assertRaisesRegex(ValueError, 'already exists'):
                         reopened.apply(self.plan_path)
-
-    async def test_committed_report_survives_failed_writer_lock_release(self):
-        original_connect = sqlite3.connect
-        for backend in ('sqlite', 'files'):
-            for operation in ('apply', 'rollback'):
-                with self.subTest(backend=backend, operation=operation):
-                    store, config = await self.configured(backend, operation)
-                    self.addCleanup(store.close)
-                    source = store.apply(self.plan_path) if operation == 'rollback' else None
-                    held = []
-
-                    class FailedClose(sqlite3.Connection):
-                        def close(self):
-                            raise sqlite3.OperationalError('lock release failed')
-
-                    def connect(database, *args, **kwargs):
-                        if Path(database) == store.writer_lock.path:
-                            kwargs['factory'] = FailedClose
-                        connection = original_connect(database, *args, **kwargs)
-                        if isinstance(connection, FailedClose):
-                            held.append(connection)
-                        return connection
-
-                    def probe():
-                        return subprocess.run(
-                            [
-                                sys.executable,
-                                '-c',
-                                'import sqlite3,sys; '
-                                'c=sqlite3.connect(sys.argv[1],timeout=0); '
-                                'c.execute("BEGIN IMMEDIATE"); c.close()',
-                                str(store.writer_lock.path),
-                            ],
-                            capture_output=True,
-                            text=True,
-                            timeout=15,
-                            check=False,
-                        )
-
-                    try:
-                        with patch.object(sqlite3, 'connect', side_effect=connect):
-                            with self.assertLogs(
-                                self.store_type.apply.__module__, level='WARNING'
-                            ) as logs:
-                                report = (
-                                    store.apply(self.plan_path)
-                                    if source is None
-                                    else store.rollback(source.path)
-                                )
-                        self.assertIs(report.status, self.module.TransactionStatus.COMMITTED)
-                        self.assertTrue(report.path.exists())
-                        self.assertEqual(
-                            parse(report.path.read_text(encoding='utf-8')).id, report.id
-                        )
-                        self.assertTrue(any('lock release failed' in line for line in logs.output))
-                        self.assertTrue(any('lock may remain held' in line for line in logs.output))
-                        rows = store.snapshot().tables['tb_a']
-                        self.assertEqual(
-                            [row['id'] for row in rows], ['a'] if source is None else []
-                        )
-                        self.assertNotEqual(probe().returncode, 0)
-                    finally:
-                        for connection in held:
-                            sqlite3.Connection.close(connection)
-                    self.assertEqual(probe().returncode, 0)
-                    reopened = subprocess.run(
-                        [
-                            sys.executable,
-                            '-c',
-                            'import asyncio,sys; from pathlib import Path; '
-                            'from tests.support import load_generated; '
-                            'm=load_generated(Path(sys.argv[1]),"sample_model"); '
-                            's=asyncio.run(m.SampleData.open(Path(sys.argv[2]))); '
-                            'print(",".join(row["id"] for row in s.snapshot().tables["tb_a"])); '
-                            's.close()',
-                            str(self.root / 'generated' / 'sample_model'),
-                            str(config),
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=20,
-                        check=False,
-                    )
-                    self.assertEqual(reopened.returncode, 0, reopened.stderr)
-                    self.assertEqual(reopened.stdout.strip(), 'a' if source is None else '')
-
-                    before = store.snapshot().tables
-                    exports = sorted(store.transaction_directory().glob('*.yatran'))
-                    for failure in (sqlite3.OperationalError, ValueError):
-                        held.clear()
-                        try:
-                            with (
-                                patch.object(sqlite3, 'connect', side_effect=connect),
-                                patch.object(
-                                    store,
-                                    'open_backend',
-                                    side_effect=failure('candidate read failed'),
-                                ),
-                                self.assertRaisesRegex(failure, 'candidate read failed') as raised,
-                            ):
-                                if source is None:
-                                    store.apply(self.plan_path)
-                                else:
-                                    store.rollback(source.path)
-                            self.assertTrue(
-                                any(
-                                    'lock release failed' in note
-                                    for note in raised.exception.__notes__
-                                )
-                            )
-                        finally:
-                            for connection in held:
-                                sqlite3.Connection.close(connection)
-                        self.assertEqual(store.snapshot().tables, before)
-                        self.assertEqual(
-                            sorted(store.transaction_directory().glob('*.yatran')), exports
-                        )
 
     async def test_config_types_paths_and_closed_facade(self):
         for text in ("backend: 'unknown'\npath: 'data'", "backend: 'sqlite'\npath: 1"):

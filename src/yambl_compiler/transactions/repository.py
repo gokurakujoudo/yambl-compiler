@@ -31,13 +31,11 @@ from yambl_compiler.transactions.editing import Data
 from yambl_compiler.transactions.execution import Execution, prepare_rollback
 from yambl_compiler.transactions.incremental import IncrementalData
 from yambl_compiler.transactions.incremental_publication import prepare_files, publish_sqlite
-from yambl_compiler.transactions.locking import RepositoryLock
 from yambl_compiler.transactions.snapshot import SnapshotBackend
 from yambl_compiler.transactions.validation import PlanValidator
 from yambl_compiler.transactions.writing import dumps
 
 LOCKS: dict[str, threading.RLock] = {}
-WRITER_LOCKS: dict[str, RepositoryLock] = {}
 LOCK_GUARD = threading.Lock()
 LOGGER = logging.getLogger(__name__)
 ID_GENERATOR = SnowflakeGenerator(worker_id=0)
@@ -155,7 +153,6 @@ class DataStore:
         with LOCK_GUARD:
             key = os.path.normcase(str(self.path))
             self.lock = LOCKS.setdefault(key, threading.RLock())
-            self.writer_lock = WRITER_LOCKS.setdefault(key, RepositoryLock(self.path))
 
     @classmethod
     async def configured(cls, config_path: Path) -> Self:
@@ -186,7 +183,7 @@ class DataStore:
         :returns: Open store.
         """
         store = await cls.configured(config_path)
-        with measure(store.backend, 'open', 'validate_and_recover'), store.lock, store.writer_lock:
+        with measure(store.backend, 'open', 'validate_and_recover'), store.lock:
             backend = store.open_backend()
             backend.close()
             store.recover()
@@ -201,7 +198,7 @@ class DataStore:
         :raises FileExistsError: If the configured target already exists.
         """
         store = await cls.configured(config_path)
-        with store.lock, store.writer_lock:
+        with store.lock:
             if store.path.exists() or store.path.is_symlink():
                 raise FileExistsError(store.path)
             with TemporaryDirectory(
@@ -240,12 +237,10 @@ class DataStore:
         """Reject operations on a closed facade.
 
         :returns: None.
-        :raises ValueError: If the facade is closed or a SQLite file has hard-link aliases.
+        :raises ValueError: If the facade is closed.
         """
         if self.closed:
             raise ValueError('data store is closed')
-        if self.backend == 'sqlite' and self.path.exists() and self.path.stat().st_nlink > 1:
-            raise ValueError('SQLite repository must not have hard-link aliases')
 
     def file_version(self) -> Path:
         """Resolve the authoritative immutable file generation.
@@ -328,7 +323,7 @@ class DataStore:
         self.ready()
         if not valid_id(id_):
             raise ValueError('invalid transaction ID')
-        with self.lock, self.writer_lock:
+        with self.lock:
             if self.backend == 'sqlite':
                 with closing(sqlite3.connect(self.path)) as connection:
                     row = connection.execute(
@@ -364,7 +359,7 @@ class DataStore:
         :returns: None.
         """
         self.ready()
-        with self.lock, self.writer_lock:
+        with self.lock:
             if self.backend == 'sqlite':
                 with closing(sqlite3.connect(self.path)) as connection:
                     ids = tuple(
@@ -399,11 +394,11 @@ class DataStore:
         """
         if self.backend != 'files':
             return
-        with self.lock, self.writer_lock:
+        with self.lock:
             self._cleanup_files()
 
     def _cleanup_files(self) -> None:
-        """Remove uncommitted files while holding the repository writer lock.
+        """Remove uncommitted files while holding the in-process repository lock.
 
         :returns: None.
         :raises OSError: If managed files cannot be removed safely.
@@ -448,38 +443,6 @@ class DataStore:
                 version.rmdir()
         (self.path / 'repository.pending').unlink(missing_ok=True)
 
-    def new_id(self) -> str:
-        """Allocate an ID above this repository's committed Snowflake watermark.
-
-        The caller holds the repository writer lock, so other processes cannot
-        publish between checking the watermark and committing the new ID.
-
-        :returns: Canonical decimal Snowflake ID.
-        :raises ValueError: If the generator cannot advance beyond the watermark.
-        """
-        if self.backend == 'sqlite':
-            with closing(sqlite3.connect(self.path)) as connection:
-                sqlite_ids = (
-                    str(row[0])
-                    for row in connection.execute('SELECT id FROM tb_yambl_transactions')
-                )
-                watermark = max(
-                    (int(id_) for id_ in sqlite_ids if id_.isascii() and id_.isdigit()), default=0
-                )
-        elif (self.path / 'repository.json').exists():
-            metadata = self.file_pointer()
-            ids = (metadata.generation, *metadata.transactions)
-            watermark = max((int(id_) for id_ in ids if id_.isascii() and id_.isdigit()), default=0)
-        else:
-            watermark = 0
-        for _ in range(4096):
-            candidate = ID_GENERATOR.next_id()
-            if candidate > watermark and (
-                self.backend != 'files' or not (self.path / 'versions' / str(candidate)).exists()
-            ):
-                return str(candidate)
-        raise ValueError('Snowflake generator cannot advance beyond repository IDs')
-
     def publish_files(self, data: Data, transaction: Transaction | None) -> None:
         """Prepare immutable files, then atomically switch the root manifest.
 
@@ -487,7 +450,7 @@ class DataStore:
         :param transaction: Commit record, or None for initial creation.
         :returns: None after the manifest commit point.
         """
-        id_ = transaction.id if transaction is not None else self.new_id()
+        id_ = transaction.id if transaction is not None else str(ID_GENERATOR.next_id())
         version = self.path / 'versions' / id_
         version.mkdir(parents=True)
         contents = repository_contents(self.layout, data.tables)
@@ -670,22 +633,15 @@ class DataStore:
         :returns: Commit report.
         """
         self.ready()
-        report: TransactionReport | None = None
-        try:
-            with self.lock, self.writer_lock:
-                self.recover()
-                with measure(self.backend, 'apply', 'parse_and_bind'):
-                    plan = read_plan(plan_path, 'apply')
-                    PlanValidator(self.layout).validate(plan)
-                with self.mutable_candidate('apply') as data:
-                    with measure(self.backend, 'apply', 'execute'):
-                        groups = Execution(data).prepare(plan)
-                    report = self.finish(data, plan, groups)
-        except sqlite3.Error as error:
-            if report is None:
-                raise
-            LOGGER.warning('%s: lock release failed; lock may remain held: %s', report.id, error)
-        return report
+        with self.lock:
+            self.recover()
+            with measure(self.backend, 'apply', 'parse_and_bind'):
+                plan = read_plan(plan_path, 'apply')
+                PlanValidator(self.layout).validate(plan)
+            with self.mutable_candidate('apply') as data:
+                with measure(self.backend, 'apply', 'execute'):
+                    groups = Execution(data).prepare(plan)
+                return self.finish(data, plan, groups)
 
     def finish(
         self, data: Data, plan: Plan, groups: tuple[TransactionGroup, ...], source: str = ''
@@ -702,7 +658,7 @@ class DataStore:
             plan = replace(plan, model=data.layout.model.model_digest)
         transaction = seal(
             Transaction(
-                self.new_id(),
+                str(ID_GENERATOR.next_id()),
                 datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                 plan,
                 groups,
@@ -721,22 +677,15 @@ class DataStore:
         :returns: Commit report including skipped conflicts.
         """
         self.ready()
-        report: TransactionReport | None = None
-        try:
-            with self.lock, self.writer_lock:
-                self.recover()
-                transaction = parse(Path(transaction_path).read_text(encoding='utf-8'))
-                if not isinstance(transaction, Transaction):
-                    raise ValueError('rollback requires a Transaction')
-                with self.mutable_candidate('rollback') as data:
-                    with measure(self.backend, 'rollback', 'execute'):
-                        result = prepare_rollback(data, transaction, groups)
-                    report = self.finish(data, transaction.plan, result, transaction.id)
-        except sqlite3.Error as error:
-            if report is None:
-                raise
-            LOGGER.warning('%s: lock release failed; lock may remain held: %s', report.id, error)
-        return report
+        with self.lock:
+            self.recover()
+            transaction = parse(Path(transaction_path).read_text(encoding='utf-8'))
+            if not isinstance(transaction, Transaction):
+                raise ValueError('rollback requires a Transaction')
+            with self.mutable_candidate('rollback') as data:
+                with measure(self.backend, 'rollback', 'execute'):
+                    result = prepare_rollback(data, transaction, groups)
+                return self.finish(data, transaction.plan, result, transaction.id)
 
     def close(self) -> None:
         """Close the facade without invalidating detached read sessions.
