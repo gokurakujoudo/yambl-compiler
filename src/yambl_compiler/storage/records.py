@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 from yambl_compiler.ir.model import Bound, Definition, Field, Model
 
-LAYOUT_REVISION = 8
+LAYOUT_REVISION = 9
 FILE_REVISION = 3
 STATE_CODES = {'VALUE': 0, 'NO_ENTRY': 1, 'EMPTY': 2, 'NOT_APPLICABLE': 3}
 STATE_NAMES = {value: name for name, value in STATE_CODES.items()}
@@ -100,7 +100,7 @@ class StoredField:
 
     :param field: Representative declaration.
     :param root: Root entity identity, including storage-only built-ins.
-    :param table: Header or scalar table.
+    :param table: Header or scalar table, empty for a derived reverse relationship.
     :param state: Per-field state column.
     :param value: Scalar payload column, empty for collections.
     :param members: Collection member table, empty for scalars.

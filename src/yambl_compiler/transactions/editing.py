@@ -541,7 +541,7 @@ class Data:
         conditions = (Condition(actual.id.name, id_),)
         result = [Image(actual.definition.identity, (actual.id.name,), ((id_,),))]
         for field in self.catalog.fields(actual).values():
-            if field.identity in self.layout.fields:
+            if field.identity in self.layout.fields and self.layout.fields[field.identity].table:
                 result.append(self.image(actual.definition.identity + '.' + field.name, conditions))
         return tuple(result)
 
@@ -567,6 +567,14 @@ class Data:
         for image in images[1:]:
             self.clear(image.target, (Condition(entity.id.name, id_),))
         encoded = self.catalog.scalar(entity.id.type, id_)
+        shared: dict[str, set[str]] = {}
+        for stored in self.layout.fields.values():
+            if stored.root == entity.root and stored.table and stored.table != entity.table:
+                shared.setdefault(stored.table, set()).add(stored.state)
+        for table, states in shared.items():
+            for row in self.select(table, {'id': encoded}):
+                if all(row[state] == STATE_CODES['NO_ENTRY'] for state in states):
+                    self.remove(table, row)
         for row in self.select(entity.table, {entity.column: encoded}):
             self.remove(entity.table, row)
 

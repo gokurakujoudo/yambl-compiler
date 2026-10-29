@@ -484,6 +484,8 @@ class Reader:
             stored = self._layout.fields[identity]
             if field.category in ("static", "config") and not stored.dimensions:
                 return self.read(handle, identity, {})
+            if not stored.table:
+                return self._reverse_all(handle, identity, field, stored)
             key = (identity, "all")
             if key in self._cache.setdefault(handle, {}):
                 return self._cache.setdefault(handle, {})[key]
@@ -620,7 +622,8 @@ class Reader:
         owner_rows: dict[str, dict[str, str]] = {}
         for identity, stored in self._layout.fields.items():
             if (
-                stored.root not in self._layout.entities
+                not stored.table
+                or stored.root not in self._layout.entities
                 or self._layout.entities[stored.root].source.origin != 'model'
             ):
                 continue
@@ -1056,6 +1059,41 @@ class Reader:
             if field.category in ("snapshot", "scd") and type(when) is not date:
                 raise ValueError("time field requires a date")
             stored = self._layout.fields[identity]
+            if not stored.table:
+                complete = self._cache.get(handle, {}).get((identity, 'all'))
+                if isinstance(complete, Success):
+                    for record in cast(tuple[object, ...], complete.value):
+                        if any(getattr(record, key) != value for key, value in dimensions.items()):
+                            continue
+                        if field.category == 'snapshot':
+                            time_key = next(
+                                (
+                                    b.key
+                                    for c in field.decorators
+                                    if c.target == 'builtins.temporal'
+                                    for b in c.bound
+                                ),
+                                'as_of_date',
+                            )
+                            if getattr(record, time_key) != when:
+                                continue
+                        elif field.category == 'scd' and not getattr(record, 'valid_from') <= cast(
+                            date, when
+                        ) < getattr(record, 'valid_to'):
+                            continue
+                        return cast(ReadResult[object], getattr(record, 'value'))
+                    return (
+                        Success(frozenset[object]())
+                        if field.type.name == 'collection'
+                        else NonNormalResult(Status.NO_ENTRY)
+                    )
+                request = FieldRequest(
+                    EntityRef(handle.entity_type, handle.id),
+                    identity,
+                    tuple(dimensions.items()),
+                    when,
+                )
+                return self._batch.read((request,))[0]
             if field.category == "config":
                 request = FieldRequest(EntityRef(handle.entity_type, handle.id), identity)
                 return self._configuration.read((request,))[0]
@@ -1095,6 +1133,8 @@ class Reader:
             if field.category not in ("snapshot", "scd"):
                 raise ValueError("range requires a time field")
             stored = self._layout.fields[identity]
+            if not stored.table:
+                return self._reverse_range(handle, identity, field, stored, dimensions, start, end)
             rows = self._rows(handle, stored, dimensions)
             if start == end:
                 return Success([])
@@ -1124,3 +1164,121 @@ class Reader:
             InvalidOperation,
         ) as error:
             return NonNormalResult(Status.ERROR, str(error))
+
+    def _reverse_all(
+        self, handle: EntityHandle, identity: str, field: Field, stored: StoredField
+    ) -> Success[object]:
+        """Build complete derived coordinates from the forward relationship records.
+
+        :param handle: Reverse target entity.
+        :param identity: Reverse logical field identity.
+        :param field: Effective reverse declaration.
+        :param stored: Reverse coordinate contract.
+        :returns: Immutable generated coordinate records.
+        """
+        key = (identity, 'all')
+        cached = self._cache.get(handle, {}).get(key)
+        if isinstance(cached, Success):
+            return cached
+        call = next(c for c in field.decorators if c.target == 'builtins.reverse_relationship')
+        forward_id = next(
+            b.type.exact.text for b in call.bound if b.name == 'target' and b.type.exact
+        )
+        forward = self._layout.fields[forward_id]
+        self._ready()
+        rows = self._backend.rows(forward.table, dict(forward.key_values))
+        groups: dict[tuple[object, ...], set[date]] = {}
+        for row in rows:
+            dimensions = tuple(self._decode(d.type, row['dim_' + d.key]) for d in stored.dimensions)
+            points = groups.setdefault(dimensions, set())
+            if field.category == 'snapshot':
+                points.add(date.fromisoformat(str(row['date'])))
+            elif field.category == 'scd':
+                points.update(
+                    date.fromisoformat(str(row[key])) for key in ('valid_from', 'valid_to')
+                )
+        requests: list[FieldRequest] = []
+        coordinates: list[tuple[tuple[object, ...], date | None, date | None]] = []
+        for dimensions, points in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
+            ordered = sorted(points)
+            ranges: list[tuple[date | None, date | None]]
+            if field.category == 'scd':
+                ranges = [(left, right) for left, right in zip(ordered, ordered[1:])]
+            elif field.category == 'snapshot':
+                ranges = [(point, None) for point in ordered]
+            else:
+                ranges = [(None, None)]
+            for start, end in ranges:
+                requests.append(
+                    FieldRequest(
+                        EntityRef(handle.entity_type, handle.id),
+                        identity,
+                        tuple(
+                            (d.key, value)
+                            for d, value in zip(stored.dimensions, dimensions, strict=True)
+                        ),
+                        start,
+                    )
+                )
+                coordinates.append((dimensions, start, end))
+        records: list[object] = []
+        time_key = next(
+            (b.key for c in field.decorators if c.target == 'builtins.temporal' for b in c.bound),
+            'as_of_date',
+        )
+        for (dimensions, start, end), value in zip(
+            coordinates, self._batch.read(requests), strict=True
+        ):
+            if isinstance(value, NonNormalResult) and value.status == Status.NO_ENTRY:
+                continue
+            if isinstance(value, Success) and value.value == frozenset():
+                continue
+            args = {d.key: item for d, item in zip(stored.dimensions, dimensions, strict=True)}
+            if field.category == 'snapshot':
+                args[time_key] = start
+            elif field.category == 'scd':
+                args['valid_from'], args['valid_to'] = start, end
+            records.append(self.record_types[identity](**args, value=value))
+        result: Success[object] = Success(tuple(records))
+        if not has_error(result):
+            self._cache.setdefault(handle, {})[key] = result
+        return result
+
+    def _reverse_range(
+        self,
+        handle: EntityHandle,
+        identity: str,
+        field: Field,
+        stored: StoredField,
+        dimensions: dict[str, object],
+        start: date,
+        end: date,
+    ) -> ReadResult[list[tuple[date, ReadResult[object]]]]:
+        """Select derived snapshot dates or SCD changes in an interval.
+
+        :param handle: Reverse target entity.
+        :param identity: Reverse logical field identity.
+        :param field: Effective reverse declaration.
+        :param stored: Reverse coordinate contract.
+        :param dimensions: Exact dimension coordinates.
+        :param start: Inclusive interval start.
+        :param end: Exclusive interval end.
+        :returns: Ordered derived states at relevant dates.
+        """
+        if start == end:
+            return Success([])
+        full = self._reverse_all(handle, identity, field, stored)
+        time_key = next(
+            (b.key for c in field.decorators if c.target == 'builtins.temporal' for b in c.bound),
+            'as_of_date',
+        )
+        points: set[date] = {start} if field.category == 'scd' else set()
+        for record in cast(tuple[object, ...], full.value):
+            if any(getattr(record, d.key) != dimensions[d.key] for d in stored.dimensions):
+                continue
+            names = (time_key,) if field.category == 'snapshot' else ('valid_from', 'valid_to')
+            points.update(cast(date, getattr(record, name)) for name in names)
+        ordered = sorted(point for point in points if start <= point < end)
+        return Success(
+            [(point, self.read(handle, identity, dimensions, point)) for point in ordered]
+        )

@@ -95,7 +95,7 @@ final entity Child inherits Root {}
         sqlite = self.root / 'old.sqlite'
         with closing(sqlite3.connect(sqlite)) as db:
             db.executescript((self.output / 'schema.sql').read_text(encoding='utf-8'))
-            db.execute("UPDATE tb_yambl_metadata SET value = '7' WHERE key = 'layout_revision'")
+            db.execute("UPDATE tb_yambl_metadata SET value = '8' WHERE key = 'layout_revision'")
             db.commit()
         result = self.module.SampleReader.open_sqlite(sqlite)
         self.assertEqual(result.status, Status.ERROR)
@@ -104,7 +104,7 @@ final entity Child inherits Root {}
         repository = self.output / 'repository'
         metadata_path = repository / 'repository.json'
         metadata = json.loads(metadata_path.read_text(encoding='utf-8'))
-        for key, old in (('layout_revision', 7), ('format_revision', 2)):
+        for key, old in (('layout_revision', 8), ('format_revision', 2)):
             outdated = {**metadata, key: old}
             metadata_path.write_text(json.dumps(outdated), encoding='utf-8')
             result = self.module.SampleReader.open_files(repository)

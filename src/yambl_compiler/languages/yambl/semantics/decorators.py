@@ -134,6 +134,38 @@ def argument_type(resolver: Resolver, syntax: Tree[Token], expected: Resolved) -
     return actual
 
 
+def relationship_argument(resolver: Resolver, syntax: Tree[Token], formal: str) -> Resolved:
+    """Resolve the dedicated cardinality words and reverse field references.
+
+    :param resolver: Invocation scope and diagnostic destination.
+    :param syntax: Argument expression.
+    :param formal: Relationship parameter name.
+    :returns: Bound representation or an unknown type after an error.
+    """
+    items = tokens(syntax)
+    if formal in ('x', 'y'):
+        allowed = ('one', 'many') if formal == 'x' else ('maybe', 'one', 'many')
+        if len(items) == 1 and items[0].type == 'NAME' and str(items[0]) in allowed:
+            return Resolved('string', 'string', exact=str(items[0]))
+        resolver.issue(syntax, f'invalid relationship cardinality: {formal}')
+        return UNKNOWN
+    if (
+        len(items) == 3
+        and items[0].type == 'NAME'
+        and str(items[1]) == '.'
+        and items[2].type == 'NAME'
+        and (symbol := resolver.unit.scope.get(str(items[0]))) is not None
+        and symbol.kind == 'entity'
+    ):
+        root = resolver.unit.world.parents.get(symbol.key, [])
+        identity = root[-1] if root else symbol.key
+        namespace = identity[0].split('\0')[-1]
+        target = '.'.join(filter(None, (namespace, identity[1], str(items[2]))))
+        return Resolved('string', 'string', exact=target)
+    resolver.issue(syntax, 'reverse relationship requires an entity field reference')
+    return UNKNOWN
+
+
 def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Diagnostic]) -> None:
     """Validate even unused decorator signatures and independent defaults.
 
@@ -378,7 +410,13 @@ def bind_call(
                 )
                 bound.append(('parameter_default', str(tokens(provided)[0]), default))
         else:
-            bound.append((formal.name, '', argument_type(actual_resolver, syntax, expected)))
+            actual = (
+                relationship_argument(actual_resolver, syntax, formal.name)
+                if symbol.key[0].split('\0')[-1] == 'builtins'
+                and name in ('relationship', 'reverse_relationship')
+                else argument_type(actual_resolver, syntax, expected)
+            )
+            bound.append((formal.name, '', actual))
     if values is not None:
         values.update((name, actual) for name, _, actual in bound)
     if bound_arguments is not None:

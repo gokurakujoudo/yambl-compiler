@@ -12,6 +12,7 @@ from yambl_compiler.storage.records import (
     mapped_field,
     table_name,
 )
+from yambl_compiler.storage.relationship_validation import validate_relationships
 from yambl_compiler.storage.results import NonNormalResult, ReadResult, Status
 from yambl_compiler.transactions.editing import Data
 from yambl_compiler.transactions.incremental_validation import validate_affected_cycles
@@ -108,6 +109,7 @@ class IncrementalData(Data):
                         stored.root in self.layout.entities
                         and self.layout.entities[stored.root].source.origin == 'model'
                         and table_name(stored.root) == name
+                        and stored.table
                         and stored.table != name
                     ):
                         filters = {'id': change.before['id'], **dict(stored.key_values)}
@@ -186,3 +188,6 @@ class IncrementalData(Data):
         report = validate_affected_cycles(self.layout, self.select, field, read, changed)
         if not report.valid:
             raise ValueError(f'candidate data validation failed: {report}')
+        relations = validate_relationships(self.layout, self.select, field, read)
+        if relations:
+            raise ValueError(f'candidate relationship validation failed: {relations}')

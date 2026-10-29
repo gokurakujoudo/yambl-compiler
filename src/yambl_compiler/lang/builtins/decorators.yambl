@@ -29,6 +29,12 @@ decorator @temporal(*time: date)
 @allow_multiple
 decorator @dimension(definition: dimension_ref)
 
+@targets(DecoratorTargets.EntityAttr, categories=AttrCats.Static + AttrCats.Snapshot + AttrCats.Scd)
+decorator @relationship(x: string, y: string)
+
+@targets(DecoratorTargets.EntityAttr, categories=AttrCats.Static + AttrCats.Snapshot + AttrCats.Scd)
+decorator @reverse_relationship(target: attrs<AttrCats.All, Entity>)
+
 @targets(DecoratorTargets.EntityAttr + DecoratorTargets.Lookup, categories=AttrCats.Computed)
 @allow_multiple
 decorator @extra_input_param(*parameter: input_type)

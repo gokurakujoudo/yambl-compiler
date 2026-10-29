@@ -29,6 +29,8 @@ def load_generated(path, name):
         "arithmetic",
         'conversions',
         "selection",
+        "lookup",
+        "lookup_prepare",
         "computing",
         "session",
         "results",

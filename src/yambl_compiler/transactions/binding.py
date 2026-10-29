@@ -111,7 +111,7 @@ class Catalog:
         if field is None or field.builtin or field.category in ('id', 'computed'):
             raise ValueError(f'field is not writable: {entity.definition.identity}.{name}')
         stored = self.layout.fields.get(field.identity)
-        if stored is None:
+        if stored is None or not stored.table:
             raise ValueError(f'field has no storage: {field.identity}')
         return field, stored
 

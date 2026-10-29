@@ -38,6 +38,8 @@ def relations(layout: Layout) -> str:
             for key in keys:
                 links.add((table.name, key, parent, key, "-->", "FK (" + ", ".join(keys) + ")"))
     for stored in layout.fields.values():
+        if not stored.table:
+            continue
         owner = table_name(stored.root)
         if stored.table != owner:
             links.add((stored.table, "id", owner, "id", "..>", "owner"))

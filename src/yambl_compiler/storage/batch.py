@@ -3,6 +3,7 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
+from typing import cast
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.storage.backends import Row, Selection
@@ -169,6 +170,7 @@ class Batch:
                 tuple[FieldRequest, StoredField, Field, Selection, list[int]],
             ],
         ] = {}
+        reverse: list[tuple[int, FieldRequest, Field]] = []
         for i, request in enumerate(requests):
             field = self.implementation(request.owner.target, request.identity)
             if field is None:
@@ -184,6 +186,9 @@ class Batch:
                 )
                 continue
             stored = reader.layout.fields[request.identity]
+            if not stored.table:
+                reverse.append((i, request, field))
+                continue
             selection = self.selection(request, stored, field)
             key: tuple[object, ...] = (
                 request.owner.target,
@@ -237,7 +242,115 @@ class Batch:
                     self.points[key] = result
                 for position in positions:
                     results[position] = result
+        if reverse:
+            for (index, _, _), result in zip(reverse, self.reverse(reverse), strict=True):
+                results[index] = result
         return tuple(results)
+
+    def reverse(
+        self, requests: Sequence[tuple[int, FieldRequest, Field]]
+    ) -> tuple[ReadResult[object], ...]:
+        """Resolve reverse relationships from the pinned forward records.
+
+        :param requests: Reverse point requests and effective declarations.
+        :returns: One source reference or set of references per request.
+        """
+        reader = self.reader
+        groups: dict[str, list[tuple[FieldRequest, Field, StoredField, Selection]]] = {}
+        for _, request, field in requests:
+            call = next(c for c in field.decorators if c.target == 'builtins.reverse_relationship')
+            target = next(
+                b.type.exact.text for b in call.bound if b.name == 'target' and b.type.exact
+            )
+            stored = reader.layout.fields[target]
+            dimensions = dict(request.dimensions)
+            keys = (
+                tuple(
+                    ("dim_" + d.key, reader.encode(d.type, dimensions[d.key]))
+                    for d in stored.dimensions
+                )
+                + stored.key_values
+            )
+            if field.category in ('snapshot', 'scd'):
+                when = cast(date, request.when).isoformat()
+                selection = Selection(keys, field.category, when, when)
+            else:
+                selection = Selection(keys)
+            groups.setdefault(stored.table, []).append((request, field, stored, selection))
+        resolved: dict[FieldRequest, ReadResult[object]] = {}
+        reader.ready()
+        for table, entries in groups.items():
+            matches = reader.backend.rows_many(table, [entry[3] for entry in entries])
+            references: list[EntityRef[object]] = []
+            for (_, field, stored, _), rows in zip(entries, matches, strict=True):
+                source_type = (
+                    field.type.arguments[0].target
+                    if field.type.name == 'collection'
+                    else field.type.target
+                )
+                references.extend(
+                    EntityRef(
+                        source_type,
+                        cast(
+                            str | int, reader.decode(reader.layout.ids[stored.root].type, row['id'])
+                        ),
+                    )
+                    for row in rows
+                )
+            owners = iter(self.entities(references))
+            applicable: list[list[tuple[EntityRef[object], Field, Row]]] = []
+            for (_, _, stored, _), rows in zip(entries, matches, strict=True):
+                selected: list[tuple[EntityRef[object], Field, Row]] = []
+                for row in rows:
+                    owner_result = next(owners)
+                    if isinstance(owner_result, NonNormalResult):
+                        continue
+                    implementation = cast(
+                        Field, self.implementation(owner_result.value.target, stored.field.identity)
+                    )
+                    selected.append((owner_result.value, implementation, row))
+                applicable.append(selected)
+            self.collections(
+                [
+                    (stored, forward_field, physical)
+                    for (_, _, stored, _), source_rows in zip(entries, applicable, strict=True)
+                    for _, forward_field, physical in source_rows
+                ]
+            )
+            for (request, field, stored, _), source_rows in zip(entries, applicable, strict=True):
+                found: set[EntityRef[object]] = set()
+                failure: NonNormalResult | None = None
+                for source_owner, forward_field, physical in source_rows:
+                    value = reader.value(stored, forward_field, physical)
+                    if isinstance(value, NonNormalResult):
+                        if value.status == Status.ERROR:
+                            failure = value
+                            break
+                        continue
+                    payload: object = value.value
+                    values: frozenset[object] | tuple[object, ...] = (
+                        cast(frozenset[object], payload)
+                        if isinstance(payload, frozenset)
+                        else (payload,)
+                    )
+                    if any(
+                        isinstance(item, EntityRef) and item.id == request.owner.id
+                        for item in values
+                    ):
+                        found.add(source_owner)
+                if failure is not None:
+                    resolved[request] = failure
+                elif field.type.name == 'collection':
+                    resolved[request] = Success(frozenset(found))
+                elif len(found) > 1:
+                    resolved[request] = NonNormalResult(
+                        Status.ERROR, 'multiple reverse relationship sources'
+                    )
+                elif found:
+                    resolved[request] = Success(next(iter(found)))
+                else:
+                    resolved[request] = NonNormalResult(Status.NO_ENTRY)
+        return tuple(resolved[request] for _, request, _ in requests)
 
     def collections(self, records: Sequence[tuple[StoredField, Field, Row]]) -> None:
         """Prefetch collection members once per table rather than once per row.

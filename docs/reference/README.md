@@ -53,7 +53,7 @@ write_ir(model, Path('build/tutorial-demo/api-model.json'))
 assert load_ir(Path('build/tutorial-demo/api-model.json')) == model
 ```
 
-生成目录包含 Python 包、`pyproject.toml`、`schema.sql`、`schema.md`、`storage-manifest.json`、`schema-relations.puml`、`python-schema.md` 和 JSONL 模板。生成包携带 IR 和受摘要保护的运行时契约，当前 `runtime_revision` 为 10，物理存储 `layout_revision` 为 8。状态列以整数保存，单一实际类型的身份表省略类型判别列。依赖及 Python 版本写入生成项目配置；运行时不依赖编译器或模型源文件。生成前会拒绝后端不支持的字段类型，例如当前生成后端不支持 float 存储。生成包随模型重新生成，不提供数据库迁移。
+生成目录包含 Python 包、`pyproject.toml`、`schema.sql`、`schema.md`、`storage-manifest.json`、`schema-relations.puml`、`python-schema.md` 和 JSONL 模板。生成包携带 IR 和受摘要保护的运行时契约，当前 `runtime_revision` 为 11，物理存储 `layout_revision` 为 9。状态列以整数保存，单一实际类型的身份表省略类型判别列。依赖及 Python 版本写入生成项目配置；运行时不依赖编译器或模型源文件。生成前会拒绝后端不支持的字段类型，例如当前生成后端不支持 float 存储。生成包随模型重新生成，不提供数据库迁移。
 
 ### 存储生成支持范围
 
@@ -68,6 +68,8 @@ assert load_ir(Path('build/tutorial-demo/api-model.json')) == model
 生成的实体 handle 是冻结 dataclass，保留身份判等。`reader.get_item(id)` 返回结果，`get_item_many(ids)` 保持顺序及重复项。`read_字段()` 按参数读取；字段 property 首次访问加载完整字段。无时间、无维度的属性直接返回单值，有坐标的 property 返回包含字段专属记录的不可变元组；空坐标集是成功的空元组。时态点查询和范围查询接受对应日期，snapshot 范围采用 `[start, end)`，SCD 按有效区间查值，缺口为 `NO_ENTRY`。实体引用为 `EntityRef`，通过 `reader.resolve(ref)` 显式解析，悬空引用可返回 `ENTITY_NOT_FOUND`。handle 的 `entity_type`、`root_entity_type` 提供实际类型和继承根，也有相应 `read_` 方法。
 
 `ReadResult[T]` 是 `Success[T]`、`NonNormalResult` 或 `Partial[T]`。`Success.value` 是值，`origin` 可标识存储、模型默认值、配置组或计算，`groups` 记录适用配置组；`NonNormalResult.status` 区分 `NOT_DEFINED`、`EMPTY`、`NO_ENTRY`、`NO_DATA`、`ENTITY_NOT_FOUND`、`ERROR` 和 `NOT_APPLICABLE`。`Partial` 仅用于带可用值及非错误遗漏明细的计算结果。先检查结果再取值；不要把异常状态当字符串或普通存储值。
+
+`@relationship` 声明正向引用的基数，`@reverse_relationship` 声明不占物理存储的只读反向属性。显式数据校验和事务最终候选校验检查必填及同一坐标上的唯一性；snapshot 按日期和维度检查，SCD 按重叠区间检查。反向属性由正向数据读取，不能在 Plan 中写入；详细规则见语言参考。
 
 读取器缓存规范化查询和已加载字段；`ERROR` 不缓存。关闭后已缓存数据仍可用，但需要新后端读取时返回 `ERROR`。范围列表每次返回独立副本。字典成员按读取器快照校验；扩充后新读取器可读取新 code，旧读取器保留原视图。运行时新增 code 使用字典专属类型，但不会为其生成新的具名枚举成员。
 

@@ -10,7 +10,7 @@ from yambl_compiler.ir.model import Lookup, LookupBinding
 from yambl_compiler.languages.yambl.computation.evaluation import evaluate
 from yambl_compiler.languages.yambl.computation.records import Expression
 from yambl_compiler.storage.backends import Row, RowValidationError, Selection
-from yambl_compiler.storage.batch import Batch
+from yambl_compiler.storage.batch import Batch, FieldRequest
 from yambl_compiler.storage.computing import UNSET, Computing
 from yambl_compiler.storage.configuration import Configuration
 from yambl_compiler.storage.lookup import KeyField
@@ -213,7 +213,7 @@ def _prepare[KeyT, IdT: str | int, MatchT](
                     (key.name, step.access.identity)
                 )
             stored = layout.fields.get(step.access.identity)
-            if stored is None:
+            if stored is None or not stored.table:
                 continue
             table_roots.setdefault(stored.table, set()).add(stored.root)
             sites.setdefault(stored.table, set()).add((key.name, step.access.identity))
@@ -310,43 +310,54 @@ def _prepare[KeyT, IdT: str | int, MatchT](
                 else:
                     stored = layout.fields[step.access.identity]
                     dimensions, when = coordinates[(key_index, position)]
-                    keys = (
-                        ("id", encoded_ids[stored.root][current.id]),
-                        *dimensions,
-                        *stored.key_values,
-                    )
-                    if field.category == 'scd':
-                        assert when is not None
-                        selection = Selection(keys, 'scd', when.isoformat(), when.isoformat())
-                    else:
-                        selection = Selection(keys)
-                    cache_key = (current, step.access.identity, selection)
-                    if cache_key not in cached:
-                        names = tuple(name for name, _ in selection.keys)
-                        index_key = (stored.table, names)
-                        if index_key not in indexes:
-                            table_index: dict[tuple[object, ...], list[Row]] = {}
-                            for row in tables[stored.table]:
-                                table_index.setdefault(
-                                    tuple(row[name] for name in names), []
-                                ).append(row)
-                            indexes[index_key] = table_index
-                        matches = indexes[index_key].get(
-                            tuple(value for _, value in selection.keys), []
+                    if not stored.table:
+                        decoded = tuple(
+                            (dimension.key, session.decode(dimension.type, value))
+                            for dimension, (_, value) in zip(
+                                stored.dimensions, dimensions, strict=True
+                            )
                         )
-                        try:
-                            cached[cache_key] = session.point(stored, field, matches, when)
-                        except (
-                            ValueError,
-                            TypeError,
-                            KeyError,
-                            IndexError,
-                            InvalidOperation,
-                        ) as error:
-                            raise ValueError(
-                                f'key {key.name}, entity {entity.id}, field {step.access.identity}: {error}'
-                            ) from error
-                    value = cached[cache_key]
+                        value = batch.read(
+                            (FieldRequest(current, step.access.identity, decoded, when),)
+                        )[0]
+                    else:
+                        keys = (
+                            ("id", encoded_ids[stored.root][current.id]),
+                            *dimensions,
+                            *stored.key_values,
+                        )
+                        if field.category == 'scd':
+                            assert when is not None
+                            selection = Selection(keys, 'scd', when.isoformat(), when.isoformat())
+                        else:
+                            selection = Selection(keys)
+                        cache_key = (current, step.access.identity, selection)
+                        if cache_key not in cached:
+                            names = tuple(name for name, _ in selection.keys)
+                            index_key = (stored.table, names)
+                            if index_key not in indexes:
+                                table_index: dict[tuple[object, ...], list[Row]] = {}
+                                for row in tables[stored.table]:
+                                    table_index.setdefault(
+                                        tuple(row[name] for name in names), []
+                                    ).append(row)
+                                indexes[index_key] = table_index
+                            matches = indexes[index_key].get(
+                                tuple(value for _, value in selection.keys), []
+                            )
+                            try:
+                                cached[cache_key] = session.point(stored, field, matches, when)
+                            except (
+                                ValueError,
+                                TypeError,
+                                KeyError,
+                                IndexError,
+                                InvalidOperation,
+                            ) as error:
+                                raise ValueError(
+                                    f'key {key.name}, entity {entity.id}, field {step.access.identity}: {error}'
+                                ) from error
+                        value = cached[cache_key]
                 if isinstance(value, NonNormalResult):
                     if value.status == Status.ERROR:
                         raise ValueError(

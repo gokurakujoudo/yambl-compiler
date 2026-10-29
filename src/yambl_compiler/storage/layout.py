@@ -234,6 +234,9 @@ def build_layout(model: Model) -> Layout:
         ):
             raise ValueError(f"{f.identity}: generated Python parameter or field collision")
         root = roots[owner]
+        if any(c.target == 'builtins.reverse_relationship' for c in f.decorators):
+            stored[f.identity] = StoredField(f, root, '', '', '', '', dimensions)
+            continue
         placements = {
             (c.target.rsplit(".", 1)[-1], c.bound[0].type.exact.text)
             for implementation in impls

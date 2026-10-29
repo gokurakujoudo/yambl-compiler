@@ -858,6 +858,7 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         "lookup_prepare",
         "runtime",
         "validation",
+        "relationship_validation",
     ]
     for name in [*modules, "ir_model"]:
         path = (

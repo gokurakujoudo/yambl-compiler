@@ -290,7 +290,8 @@ def validate_data(
     groups: dict[tuple[str, tuple[tuple[str, str], ...], str], list[tuple[str, str, str, str]]] = {}
     for identity, stored in layout.fields.items():
         if (
-            stored.root not in layout.entities
+            not stored.table
+            or stored.root not in layout.entities
             or layout.entities[stored.root].source.origin == "builtin"
         ):
             continue
@@ -358,4 +359,16 @@ def validate_data(
                         end,
                     )
                 )
+    from yambl_compiler.storage.relationship_validation import validate_relationships
+
+    issues.extend(
+        validate_relationships(
+            layout,
+            lambda name, keys: [
+                row for row in data[name] if all(row[key] == value for key, value in keys.items())
+            ],
+            select,
+            read,
+        )
+    )
     return Success(ValidationReport(tuple(issues)))

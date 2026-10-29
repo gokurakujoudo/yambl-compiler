@@ -13,6 +13,7 @@ from yambl_compiler.languages.yambl.semantics.expressions import check_aliases
 from yambl_compiler.languages.yambl.semantics.fields import check_field
 from yambl_compiler.languages.yambl.semantics.hierarchies import hierarchy_entries
 from yambl_compiler.languages.yambl.semantics.lookups import Lookup, check_lookups
+from yambl_compiler.languages.yambl.semantics.relationships import check_relationships
 from yambl_compiler.languages.yambl.semantics.symbols import (
     EntityKey,
     Unit,
@@ -79,6 +80,7 @@ def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
             check_decodes(decodes, unit, diagnostics)
         for hierarchy in children(unit.document.tree, 'hierarchy'):
             hierarchy_entries(unit, hierarchy, diagnostics)
+    check_relationships(sources, entities, diagnostics)
     calculations = check_computations(entities, diagnostics, units)
     lookups = check_lookups(sources, entities, diagnostics)
     return Analysis(
