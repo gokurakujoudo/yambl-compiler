@@ -92,6 +92,19 @@ def build_layout(model: Model) -> Layout:
     :returns: Shared physical model.
     :raises ValueError: On unsupported types, IDs or generated-name collisions.
     """
+    for definition in model.definitions:
+        if (
+            definition.kind == "entity"
+            and definition.source.origin == "builtin"
+            and definition.identity
+            not in ("builtins.Decodes", "builtins.Hierarchy", "builtins.ConfigGroup")
+            and definition.lookups
+        ):
+            location = definition.lookups[0].source
+            raise ValueError(
+                f"{location.path}:{location.line}:{location.column}: {definition.identity}: "
+                "builtin entity storage is not supported"
+            )
     entities = {
         d.identity: d
         for d in model.definitions
@@ -430,6 +443,11 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
     """
     definitions = {d.identity: d for d in model.definitions}
     tables: list[Table] = []
+    supported_fields = {
+        "builtins.Decodes": {"entries"},
+        "builtins.Hierarchy": {"hierarchy_entries"},
+        "builtins.ConfigGroup": {"priority", "target_entity_type", "when", "then_set"},
+    }
     for identity in ("builtins.Decodes", "builtins.Hierarchy", "builtins.ConfigGroup"):
         definition = definitions[identity]
         id_ = next(f for f in definition.fields if f.category == "id")
@@ -444,6 +462,26 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
         for f in definition.fields:
             if f.category == "id" or f.builtin:
                 continue
+            if f.category != "static" or any(
+                call.target == "builtins.dimension" for call in f.decorators
+            ):
+                location = f.source
+                raise ValueError(
+                    f"{location.path}:{location.line}:{location.column}: {f.implementation}: "
+                    "builtin storage does not support temporal, config, computed or dimensioned fields"
+                )
+            if f.name not in supported_fields[identity]:
+                location = f.source
+                raise ValueError(
+                    f"{location.path}:{location.line}:{location.column}: {f.implementation}: "
+                    "builtin storage does not support additional fields"
+                )
+            if f.type.name not in ("type", "integer", "values", "mapping"):
+                location = f.source
+                raise ValueError(
+                    f"{location.path}:{location.line}:{location.column}: {f.implementation}: "
+                    f"builtin storage does not support field type {f.type.name}"
+                )
             state = f.name + "__state"
             table.columns.append(
                 Column(state, default="'NO_ENTRY'", meaning=f"{f.identity}: field state")

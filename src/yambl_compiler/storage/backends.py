@@ -17,6 +17,20 @@ from yambl_compiler.storage.records import LAYOUT_REVISION, Layout, Table, quote
 type Row = dict[str, object]
 
 
+class RowValidationError(ValueError):
+    """Retain an untrusted row identifier alongside the original diagnostic."""
+
+    def __init__(self, message: str, identifier: object | None) -> None:
+        """Attach the raw identifier without treating it as validated.
+
+        :param message: Original diagnostic.
+        :param identifier: Untrusted ID payload or None.
+        :returns: None.
+        """
+        super().__init__(message)
+        self.identifier = identifier
+
+
 @dataclass(frozen=True)
 class Selection:
     """Describe one equality and optional temporal selection in a batch.
@@ -591,11 +605,13 @@ class FileBackend:
             rows: list[Row] = []
             seen: set[tuple[object, ...]] = set()
             for line, raw in enumerate(content.splitlines(), 1):
+                identifier: object | None = None
                 try:
                     data = loads(raw.decode("utf-8"))
                     if not isinstance(data, dict):
                         raise ValueError("expected row object")
                     row = cast(Row, data)
+                    identifier = row.get(self.tables[table].primary[0])
                     validate_row(self.layout, self.tables[table], row)
                     key = tuple(row[k] for k in self.tables[table].primary)
                     if key in seen:
@@ -603,7 +619,9 @@ class FileBackend:
                     seen.add(key)
                     rows.append(row)
                 except ValueError as error:
-                    raise ValueError(f"{path}:{line}: {table}: {error}") from error
+                    raise RowValidationError(
+                        f"{path}:{line}: {table}: {error}", identifier
+                    ) from error
             self.cache[table] = rows
 
     def _select(self, table: str, keys: tuple[tuple[str, object], ...]) -> list[Row]:

@@ -75,11 +75,20 @@ class DocumentationTests(unittest.TestCase):
                         expected = [
                             item.target.id
                             for item in node.body
+                            if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
+                        ]
+                        class_fields = [
+                            item.target.id
+                            for item in node.body
                             if isinstance(item, ast.AnnAssign)
                             and isinstance(item.target, ast.Name)
-                            and not (
-                                isinstance(item.annotation, ast.Subscript)
-                                and ast.unparse(item.annotation.value) == "ClassVar"
-                            )
+                            and isinstance(item.annotation, ast.Subscript)
+                            and ast.unparse(item.annotation.value) == 'ClassVar'
                         ]
+                        for name in class_fields:
+                            description = next(
+                                (body for field, body in fields if field == f'param {name}'), ''
+                            ).lower()
+                            self.assertIn('class constant', description)
+                            self.assertIn('not a constructor parameter', description)
                     self.assertCountEqual(actual, expected)

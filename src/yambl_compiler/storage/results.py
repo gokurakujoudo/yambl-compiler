@@ -83,7 +83,7 @@ class Partial[T]:
 
     :param value: Immutable usable payload.
     :param issues: Nonempty omission details; ERROR is not best-effort recoverable.
-    :cvar status: Always PARTIAL; this is not a constructor parameter.
+    :param status: Class constant; always PARTIAL and not a constructor parameter.
     """
 
     value: T

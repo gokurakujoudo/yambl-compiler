@@ -5,7 +5,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, is_dataclass
 from dataclasses import field as data_field
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import InvalidOperation
 from pathlib import Path
 from types import TracebackType
 from typing import ClassVar, Protocol, Self, cast
@@ -33,6 +33,12 @@ from yambl_compiler.storage.results import (
     ReadResult,
     Status,
     Success,
+)
+from yambl_compiler.storage.scalars import (
+    ScalarRule,
+    decode_scalar,
+    encode_input,
+    reference_matches,
 )
 from yambl_compiler.storage.session import Session
 from yambl_compiler.storage.validation import (
@@ -143,6 +149,7 @@ class Reader:
         self._cache: dict[EntityHandle, dict[tuple[object, ...], ReadResult[object]]] = {}
         self._full: dict[EntityHandle, dict[str, tuple[Row, ...]]] = {}
         self._dictionary_cache: dict[str, frozenset[str]] = {}
+        self._model_identities = frozenset(d.identity for d in layout.model.definitions)
         self._handles: dict[tuple[str, str | int], EntityHandle] = {}
         self._implementations = {
             f.implementation: f for d in layout.model.definitions for f in d.fields
@@ -157,6 +164,7 @@ class Reader:
             self._decode,
             self._point,
             self._value,
+            self._scalar_rule,
         )
         self._batch = Batch(self._session)
         self._configuration = Configuration(self._batch)
@@ -721,71 +729,52 @@ class Reader:
         """
         if type_.kind == "reference":
             id_type = self._id_type(type_.target)
-            if type_.exact is not None and str(value) != type_.exact.text:
+            if not reference_matches(type_, value):
                 raise ValueError("reference violates exact constraint")
             return EntityRef[EntityHandle](
                 type_.target, cast(str | int, self._decode(id_type, value))
             )
-        result: object
-        if type_.name == "bool":
-            if type(value) is not int or value not in (0, 1):
-                raise ValueError("invalid boolean payload")
-            result = bool(value)
-        else:
-            if not isinstance(value, str):
-                raise ValueError("expected TEXT payload")
-            if type_.name in ("integer", "snowflake_id"):
-                result = int(value)
-                if str(result) != value:
-                    raise ValueError("noncanonical integer")
-            elif type_.name == "decimal":
-                result = Decimal(value)
-                if not result.is_finite():
-                    raise ValueError("nonfinite decimal")
-                params = {p.name: int(p.value) for p in type_.parameters}
-                if params:
-                    _, digits, exponent = result.as_tuple()
-                    scale = max(0, -cast(int, exponent))
-                    whole = max(0, len(digits) + cast(int, exponent))
-                    if scale > params["scale"] or whole > params["precision"] - params["scale"]:
-                        raise ValueError("decimal exceeds declared precision or scale")
-            elif type_.name == "date":
-                result = date.fromisoformat(value)
-                if result.isoformat() != value:
-                    raise ValueError("noncanonical date")
-            elif type_.name == "code":
-                target = type_.arguments[0].target
-                definition = next(
-                    (d for d in self._layout.model.definitions if d.identity == target),
-                    None,
-                )
-                if definition is not None:
-                    if target not in self._dictionary_cache:
-                        self._ready()
-                        selection = [Selection((("decodes_id", target),))]
-                        headers = self._backend.rows_many(
-                            "tb_decodes", selection, ("entries__state",)
-                        )[0]
-                        if len(headers) != 1 or headers[0]["entries__state"] != "VALUE":
-                            raise ValueError(f"invalid dictionary state for {target}")
-                        self._dictionary_cache[target] = frozenset(
-                            str(row["code"])
-                            for row in self._backend.rows_many(
-                                "tb_decodes_entries", selection, ("code",)
-                            )[0]
-                        )
-                    if value not in self._dictionary_cache[target]:
-                        raise ValueError(f"unknown code for {target}")
-                result = self.code_types[target](value)
-            else:
-                result = value
-        if (
-            type_.exact is not None
-            and (str(result).lower() if isinstance(result, bool) else str(result))
-            != type_.exact.text
-        ):
-            raise ValueError("value violates exact constraint")
-        return result
+        if type_.name == 'code' and isinstance(value, str):
+            target = type_.arguments[0].target
+            return decode_scalar(
+                type_, value, self.code_types[target], self._dictionary_codes(target)
+            )
+        return decode_scalar(type_, value)
+
+    def _scalar_rule(self, type_: Type) -> ScalarRule:
+        """Freeze a field's validation dependencies for later detached use.
+
+        :param type_: Validated scalar or reference contract.
+        :returns: Rule containing no reader or backend references.
+        :raises ValueError: If a required dictionary is invalid.
+        """
+        if type_.kind == 'reference':
+            return ScalarRule(type_, reference_id=self._id_type(type_.target))
+        if type_.name != 'code':
+            return ScalarRule(type_)
+        target = type_.arguments[0].target
+        return ScalarRule(type_, self.code_types[target], self._dictionary_codes(target))
+
+    def _dictionary_codes(self, target: str) -> frozenset[str] | None:
+        """Load declared dictionary members once for this reader snapshot.
+
+        :param target: Dictionary identity.
+        :returns: Known members, or None for an external dictionary.
+        :raises ValueError: If a declared dictionary has invalid state.
+        """
+        if target not in self._model_identities:
+            return None
+        if target not in self._dictionary_cache:
+            self._ready()
+            selection = [Selection((("decodes_id", target),))]
+            headers = self._backend.rows_many("tb_decodes", selection, ("entries__state",))[0]
+            if len(headers) != 1 or headers[0]["entries__state"] != "VALUE":
+                raise ValueError(f"invalid dictionary state for {target}")
+            self._dictionary_cache[target] = frozenset(
+                str(row["code"])
+                for row in self._backend.rows_many("tb_decodes_entries", selection, ("code",))[0]
+            )
+        return self._dictionary_cache[target]
 
     def _encode(self, type_: Type, value: object) -> str | int:
         """Validate a caller's key and encode its SQLite representation.
@@ -799,26 +788,8 @@ class Reader:
             if not isinstance(value, EntityRef) or value.target != type_.target:
                 raise ValueError("dimension requires a reference of the declared type")
             return self._encode(self._id_type(type_.target), value.id)
-        if type_.name == "bool":
-            valid = type(value) is bool
-            encoded: str | int = int(cast(bool, value)) if valid else 0
-        elif type_.name in ("integer", "snowflake_id"):
-            valid = type(value) is int
-            encoded = str(value)
-        elif type_.name == "decimal":
-            valid = isinstance(value, Decimal)
-            encoded = str(value)
-        elif type_.name == "date":
-            valid = type(value) is date
-            encoded = cast(date, value).isoformat() if valid else ""
-        elif type_.name == "code":
-            valid = isinstance(value, self.code_types[type_.arguments[0].target])
-            encoded = str(value)
-        else:
-            valid = type(value) is str
-            encoded = str(value)
-        if not valid:
-            raise ValueError(f"invalid input for {type_.name}")
+        code_type = self.code_types[type_.arguments[0].target] if type_.name == 'code' else None
+        encoded = encode_input(type_, value, code_type)
         self._decode(type_, encoded)
         return encoded
 

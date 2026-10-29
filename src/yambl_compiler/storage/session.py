@@ -8,6 +8,7 @@ from yambl_compiler.ir.model import Field, Type
 from yambl_compiler.storage.backends import Backend, Row
 from yambl_compiler.storage.records import Layout, StoredField
 from yambl_compiler.storage.results import ReadResult
+from yambl_compiler.storage.scalars import ScalarRule
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class Session:
     :param decode: Decode one stored scalar payload.
     :param point: Interpret point records with the common result rules.
     :param value: Interpret one stored field row.
+    :param scalar_rule: Freeze a scalar's input validation without retaining the session.
     """
 
     layout: Layout
@@ -34,3 +36,4 @@ class Session:
     decode: Callable[[Type, object], object]
     point: Callable[[StoredField, Field, list[Row], date | None], ReadResult[object]]
     value: Callable[[StoredField, Field, Row], ReadResult[object]]
+    scalar_rule: Callable[[Type], ScalarRule]

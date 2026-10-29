@@ -4,10 +4,49 @@ import unittest
 from pathlib import Path
 
 from tests.support import document
-from yambl_compiler.languages.yambl.syntax.parser import Diagnostic, parse, string_value, tokens
+from yambl_compiler.languages.yambl.syntax.parser import (
+    Diagnostic,
+    children,
+    parse,
+    string_value,
+    tokens,
+)
 
 
 class SyntaxTests(unittest.TestCase):
+    def test_lookup_structure_and_context(self):
+        source = '''entity Security {
+    lookup by_name {
+        name = self.name::value()
+        issuer_name = self.issuer::value(
+            as_of_date=input.relation_date
+        ).name::value()
+    }
+    lookup by_id { client_id = self.client_id::value() }
+}
+extend Security { lookup by_market { market = self.market::value() } }
+'''
+        doc = document(source)
+        entity = children(doc.tree, 'entity')[0]
+        extension = children(doc.tree, 'extension')[0]
+        lookups = children(entity, 'lookup') + children(extension, 'lookup')
+        self.assertEqual(
+            [str(tokens(node)[1]) for node in lookups], ['by_name', 'by_id', 'by_market']
+        )
+        keys = children(lookups[0], 'lookup_key')
+        self.assertEqual([str(tokens(node)[0]) for node in keys], ['name', 'issuer_name'])
+        self.assertEqual((tokens(keys[1])[0].line, tokens(keys[1])[0].column), (4, 9))
+        self.assertEqual([str(t) for t in tokens(keys[1])][-4:], ['::', 'value', '(', ')'])
+        for invalid in [
+            'lookup by_name { x = self.x::value() }',
+            'value thing { lookup by_name { x = self.x::value() } }',
+            'entity E { lookup { x = self.x::value() } }',
+            'entity E { lookup by_name { x self.x::value() } }',
+            'entity E { lookup by_name { x = self.x::value() }',
+        ]:
+            with self.subTest(source=invalid):
+                self.assertIsInstance(parse(invalid), Diagnostic)
+
     def test_markdown_spans_and_unclosed_block(self):
         text = '---\r\n# Markdown { @fake\r\n\r\n---\r\nvalue a { attr x: string }'
         doc = document(text)

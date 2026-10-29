@@ -7,6 +7,41 @@ from yambl_compiler.languages.yambl.formatting.formatter import format_document
 
 
 class FormattingTests(unittest.TestCase):
+    def test_lookup_preserves_order_comments_and_multiline_paths(self):
+        source = '''entity Security {attr name:string
+lookup by_name { #rule
+name=self.name::value() #name
+issuer=self.issuer::value(
+as_of_date=input.relation_date, #date
+source=Sources.A
+).name::value()
+}
+---
+lookup is ordinary Markdown
+---
+lookup by_id {id=self.id::value()}
+}'''
+        expected = '''entity Security {
+    attr name: string
+    lookup by_name {  # rule
+        name = self.name::value()  # name
+        issuer = self.issuer::value(
+            as_of_date=input.relation_date,  # date
+            source=Sources.A
+        ).name::value()
+    }
+---
+lookup is ordinary Markdown
+---
+    lookup by_id {
+        id = self.id::value()
+    }
+}
+'''
+        formatted = format_document(document(source))
+        self.assertEqual(formatted, expected)
+        self.assertEqual(format_document(document(formatted)), formatted)
+
     def test_calculation_dimension_and_internal_comments(self):
         source = """entity E { dimension prices { value source:string hierarchy hierarchy:Hierarchy='Local' fallback_days = self.days::value()+1 } config attr days:integer=2 @dimension(prices) snapshot attr price:decimal computed attr value:decimal { let p=self.price::value(as_of_date=input.day) return if p>0 then p*2 # chosen branch
 else 0 } }"""

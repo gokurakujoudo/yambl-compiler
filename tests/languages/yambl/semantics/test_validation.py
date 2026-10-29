@@ -11,6 +11,14 @@ class ValidationTests(unittest.TestCase):
     def messages(self, *sources):
         return check([document(source, f'{i}.yambl') for i, source in enumerate(sources)])
 
+    def test_lookup_checks_field_names(self):
+        diagnostics = self.messages(
+            'entity E { static attr name: string\n    lookup by_name { name = self.name::value() }\n}'
+        )
+        self.assertEqual(diagnostics, [])
+        invalid = self.messages('entity E { lookup by_name { name = self.missing::value() } }')
+        self.assertIn('unknown entity field: missing', [item.message for item in invalid])
+
     def test_current_types_and_namespaces(self):
         sources = [
             'namespace core entity Fund { id fund_id: string attr holding: collection<HoldingEntry> }',

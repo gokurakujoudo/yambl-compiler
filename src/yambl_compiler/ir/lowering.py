@@ -3,6 +3,7 @@
 import json
 from collections import defaultdict
 from dataclasses import replace
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal, cast
@@ -28,6 +29,10 @@ from yambl_compiler.ir.model import (
     Field,
     Formal,
     LogicalField,
+    Lookup,
+    LookupBinding,
+    LookupKey,
+    LookupStep,
     Model,
     Operation,
     Source,
@@ -490,6 +495,120 @@ class Lowering:
             tuple(Text(n, t) for n, t in sorted(references.items())),
         )
 
+    def lookups(self, key: EntityKey) -> tuple[Lookup, ...]:
+        """Lower rules declared by an entity, retaining resolved paths and scopes.
+
+        :param key: Declaring entity identity.
+        :returns: Portable rules in deterministic name order.
+        """
+        result: list[Lookup] = []
+        for name, rule in sorted(self.analysis.lookups.get(key, {}).items()):
+            if rule.owner != key:
+                continue
+            references: dict[str, str] = {}
+
+            def visit(expression: CalculationExpression) -> None:
+                """Record lexical declarations referenced by an expression.
+
+                :param expression: Path or binding expression.
+                :returns: None.
+                """
+                if expression.kind == 'name':
+                    symbol = rule.unit.scope.get(expression.value)
+                    if symbol is not None:
+                        references[expression.value] = qualified(symbol.key)
+                for operand in expression.operands:
+                    visit(operand)
+                for argument in expression.arguments:
+                    visit(argument.expression)
+
+            keys: list[LookupKey] = []
+            for checked, syntax in zip(rule.keys, children(rule.node, 'lookup_key'), strict=True):
+                visit(checked.expression)
+                steps: list[LookupStep] = []
+                for step in checked.steps:
+                    bindings: list[LookupBinding] = []
+                    for parameter in sorted(
+                        step.parameters, key=lambda item: item.requirement.name
+                    ):
+                        value = parameter.value
+                        kind: LookupFixedKind = ''
+                        text = target = ''
+                        if not parameter.input_name:
+                            if parameter.requirement.type.name == 'code':
+                                kind = 'code'
+                                dictionary = parameter.requirement.type.args[0].key
+                                assert dictionary is not None
+                                target = qualified(dictionary)
+                                text = str(value)
+                            elif type(value) is date:
+                                kind, text = 'date', value.isoformat()
+                            else:
+                                assert isinstance(value, str)
+                                kind, text = 'string', value
+                        bindings.append(
+                            LookupBinding(
+                                parameter.requirement.name,
+                                self.type(parameter.requirement.type),
+                                parameter.input_name,
+                                kind,
+                                text,
+                                target,
+                                parameter.binding,
+                            )
+                        )
+                    access = step.access
+                    steps.append(
+                        LookupStep(
+                            CalculationAccess(
+                                access.span,
+                                self.identity(access.owner, access.name),
+                                qualified(access.owner) + '.' + access.name,
+                                'value',
+                            ),
+                            tuple(bindings),
+                        )
+                    )
+                keys.append(
+                    LookupKey(
+                        name=checked.name,
+                        type=self.type(checked.type),
+                        expression=checked.expression,
+                        steps=tuple(steps),
+                        source=self.source(rule.unit, syntax),
+                    )
+                )
+            inputs = tuple(
+                CalculationInput(
+                    p.name,
+                    self.type(p.type),
+                    p.required,
+                    p.default,
+                    tuple(
+                        replace(
+                            self.source(scope, scope.document.tree),
+                            line=span.line,
+                            column=span.column,
+                            end_line=span.end_line,
+                            end_column=span.end_column,
+                        )
+                        for scope, span in p.sites
+                    ),
+                )
+                for p in rule.inputs
+            )
+            result.append(
+                Lookup(
+                    name,
+                    tuple(keys),
+                    inputs,
+                    tuple(Text(n, t) for n, t in sorted(references.items())),
+                    rule.declaration.data == 'extension',
+                    self.source(rule.unit, rule.node),
+                )
+            )
+        return tuple(result)
+
     def dimensions(self, key: EntityKey, unit: Unit) -> tuple[Dimension, ...]:
         """Lower entity-local dimension definitions, including extensions.
 
@@ -670,6 +789,11 @@ class Lowering:
                 if node.data == 'constant'
                 else ()
             ),
+            lookups=self.lookups(key),
+            effective_lookups=tuple(
+                Text(name, qualified(rule.owner))
+                for name, rule in sorted(self.analysis.lookups.get(key, {}).items())
+            ),
         )
 
     def model(self) -> Model:
@@ -767,7 +891,7 @@ class Lowering:
         )
         return seal(
             Model(
-                7,
+                8,
                 self.version,
                 self.prefix,
                 primitives,
@@ -793,6 +917,7 @@ class Lowering:
 
 
 # Static aliases keep constructors precise without duplicating runtime dispatch tables.
+type LookupFixedKind = Literal['', 'string', 'date', 'code']
 type LiteralValueKind = Literal[
     'string',
     'integer',

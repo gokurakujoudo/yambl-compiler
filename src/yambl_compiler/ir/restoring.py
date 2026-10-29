@@ -10,6 +10,7 @@ from yambl_compiler.ir.model import (
     Dimension,
     Expression,
     Field,
+    Lookup,
     Model,
     Source,
     Value,
@@ -238,17 +239,23 @@ class Restoring:
         definition: Definition,
         extension: tuple[Field, ...] | None = None,
         dimensions: tuple[Dimension, ...] = (),
+        lookups: tuple[Lookup, ...] = (),
     ) -> Document:
         """Restore a definition or one extension in its original lexical context.
 
         :param definition: Owning declaration.
         :param extension: Extension fields, or None for the declaration itself.
         :param dimensions: Dimensions declared in this lexical context.
+        :param lookups: Rules declared in this lexical context.
         :returns: In-memory document; no source text is reconstructed or parsed.
         """
         source = definition.source
         if extension is not None:
-            source = extension[0].source if extension else dimensions[0].source
+            source = (
+                extension[0].source
+                if extension
+                else (dimensions[0].source if dimensions else lookups[0].source)
+            )
         kind = 'extension' if extension is not None else definition.kind
         keyword = {'type_alias': 'type', 'extension': 'extend', 'constant': 'const'}.get(kind, kind)
         header_parts: list[Token | Tree[Token]] = []
@@ -357,6 +364,32 @@ class Restoring:
                 else tuple(f for f in definition.fields if not f.extension and not f.builtin)
             )
         )
+        for lookup in lookups:
+            for reference in lookup.references:
+                self.reference(reference.value, lookup.source)
+            keys: list[Tree[Token]] = [
+                Tree(
+                    'lookup_key',
+                    [
+                        token(key.name, 'NAME', key.source),
+                        token('=', 'EQUAL', key.source),
+                        restore_expression(key.expression),
+                    ],
+                )
+                for key in lookup.keys
+            ]
+            body.append(
+                Tree(
+                    'lookup',
+                    [
+                        token('lookup', 'LOOKUP', lookup.source),
+                        token(lookup.name, 'NAME', lookup.source),
+                        token('{', 'LBRACE', lookup.source),
+                        *keys,
+                        token('}', 'RBRACE', lookup.source),
+                    ],
+                )
+            )
         for entry in (() if extension is not None else definition.entries):
             if not entry.generated:
                 body.append(
@@ -399,7 +432,7 @@ def restore(model: Model) -> Analysis:
     for definition in model.definitions:
         if definition.derived:
             continue
-        groups: dict[tuple[str, str], tuple[list[Field], list[Dimension]]] = {}
+        groups: dict[tuple[str, str], tuple[list[Field], list[Dimension], list[Lookup]]] = {}
         own_dimensions: list[Dimension] = []
         for dimension in definition.dimensions:
             source, owner = dimension.source, definition.source
@@ -411,18 +444,30 @@ def restore(model: Model) -> Analysis:
             ):
                 own_dimensions.append(dimension)
             else:
-                groups.setdefault((source.path, source.namespace), ([], []))[1].append(dimension)
+                groups.setdefault((source.path, source.namespace), ([], [], []))[1].append(
+                    dimension
+                )
         for field in definition.fields:
             if field.extension:
-                groups.setdefault((field.source.path, field.source.namespace), ([], []))[0].append(
-                    field
-                )
+                groups.setdefault((field.source.path, field.source.namespace), ([], [], []))[
+                    0
+                ].append(field)
+        own_lookups = tuple(rule for rule in definition.lookups if not rule.extension)
+        for rule in definition.lookups:
+            if rule.extension:
+                groups.setdefault((rule.source.path, rule.source.namespace), ([], [], []))[
+                    2
+                ].append(rule)
         adapter = Restoring()
-        documents.append(adapter.declaration(definition, dimensions=tuple(own_dimensions)))
+        documents.append(
+            adapter.declaration(definition, dimensions=tuple(own_dimensions), lookups=own_lookups)
+        )
         bindings.append(adapter.bindings)
-        for fields, dimensions in groups.values():
+        for fields, dimensions, lookups in groups.values():
             adapter = Restoring()
-            documents.append(adapter.declaration(definition, tuple(fields), tuple(dimensions)))
+            documents.append(
+                adapter.declaration(definition, tuple(fields), tuple(dimensions), tuple(lookups))
+            )
             bindings.append(adapter.bindings)
     diagnostics: list[Diagnostic] = []
     units = resolve_scopes(

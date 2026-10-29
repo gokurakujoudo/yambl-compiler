@@ -13,16 +13,18 @@ type_alias: annotation* type_alias_header "=" type_expr
 type_alias_header: TYPE NAME type_parameters?
 type_parameters: "<" type_parameter ("," type_parameter)* ">"
 type_parameter: NAME ":" type_expr
-entity: annotation* entity_header "{" (field | dimension)* "}"
+entity: annotation* entity_header "{" (field | dimension | lookup)* "}"
 entity_header: FINAL? ENTITY NAME inheritance?
 value: annotation* value_header "{" field* "}"
 value_header: VALUE NAME
 inheritance: INHERITS NAME
-extension: extension_header "{" (field | dimension)* "}"
+extension: extension_header "{" (field | dimension | lookup)* "}"
 extension_header: EXTEND NAME
 field: annotation* field_body
 field_body: (ID | ATTR | STATIC ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) NAME ":" type_expr default_value?
           | COMPUTED ATTR NAME ":" type_expr computation
+lookup: LOOKUP NAME "{" lookup_key* "}"
+lookup_key: NAME "=" calculation
 dimension: DIMENSION NAME "{" dimension_value dimension_hierarchy? dimension_fallback? "}"
 dimension_value: VALUE NAME ":" type_expr
 dimension_hierarchy: HIERARCHY NAME ":" type_expr ("=" calculation)?
@@ -80,41 +82,42 @@ parameters: "[" parameter ("," parameter)* "]"
 ?parameter: named_parameter | literal
 named_parameter: NAME ":" literal
 ?literal: INT | STRING
-CONST: /const\b/
-COMPUTED: /computed\b/
-DIMENSION: /dimension\b/
-HIERARCHY: /hierarchy\b/
-FALLBACK_DAYS: /fallback_days\b/
-LET: /let\b/
-RETURN: /return\b/
+CONST.2: /const\b/
+COMPUTED.2: /computed\b/
+LOOKUP.2: /lookup\b/
+DIMENSION.2: /dimension\b/
+HIERARCHY.2: /hierarchy\b/
+FALLBACK_DAYS.2: /fallback_days\b/
+LET.2: /let\b/
+RETURN.2: /return\b/
 IF.2: /if\b/
-THEN: /then\b/
-ELSE: /else\b/
+THEN.2: /then\b/
+ELSE.2: /else\b/
 CASE.2: /case\b/
-AND: /and\b/
-OR: /or\b/
+AND.2: /and\b/
+OR.2: /or\b/
 NOT.2: /not\b/
 COMPARISON: "==" | "!=" | "<=" | ">=" | "<" | ">"
 CALC_NUMBER: /[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/
-NAMESPACE: /namespace\b/
-FROM: /from\b/
-IMPORT: /import\b/
-ENTITY: /entity\b/
-FINAL: /final\b/
-STATIC: /static\b/
+NAMESPACE.2: /namespace\b/
+FROM.2: /from\b/
+IMPORT.2: /import\b/
+ENTITY.2: /entity\b/
+FINAL.2: /final\b/
+STATIC.2: /static\b/
 SELF.2: /self\b/
-TYPE: /type\b/
-AS: /as\b/
-DECORATOR: /decorator\b/
-ID: /id\b/
-ATTR: /attr\b/
-SNAPSHOT: /snapshot\b/
-SCD: /scd\b/
-CONFIG: /config\b/
-EXTEND: /extend\b/
-INHERITS: /inherits\b/
-VALUE: /value\b/
-DECODES: /decodes\b/
+TYPE.2: /type\b/
+AS.2: /as\b/
+DECORATOR.2: /decorator\b/
+ID.2: /id\b/
+ATTR.2: /attr\b/
+SNAPSHOT.2: /snapshot\b/
+SCD.2: /scd\b/
+CONFIG.2: /config\b/
+EXTEND.2: /extend\b/
+INHERITS.2: /inherits\b/
+VALUE.2: /value\b/
+DECODES.2: /decodes\b/
 %import common.WS
 %ignore WS
 %ignore COMMENT

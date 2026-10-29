@@ -26,6 +26,73 @@ class ArtifactTests(FilesystemCase):
             self.write(f'{name}/file{i}.yambl', text)
         return root
 
+    def test_compile_preserves_lookup_in_standalone_ir(self):
+        root = self.repository(
+            'entity E { id key: string lookup by_key { key = self.key::value() } }'
+        )
+        model = compile_repository(root)
+        output = self.root / 'lookup.json'
+        write_ir(model, output)
+        (root / 'file0.yambl').write_text('source unavailable', encoding='utf-8')
+        restored = load_ir(output)
+        self.assertEqual(restored, model)
+        entity = next(item for item in restored.definitions if item.identity == 'E')
+        self.assertEqual([rule.name for rule in entity.lookups], ['by_key'])
+        self.assertEqual(entity.lookups[0].keys[0].steps[0].access.identity, 'E.key')
+
+    def test_lookup_multiple_dimensions_survive_annotation_reordering(self):
+        source = '''entity E {
+    id key: string
+    dimension provider { value provider: string }
+    dimension agency { value agency: string }
+    @dimension(provider) @dimension(agency) @temporal(day: date) scd attr x: string
+    lookup by_x { x = self.x::value() }
+}
+'''
+        root = self.repository(source)
+        first = compile_repository(root)
+        entity = next(item for item in first.definitions if item.identity == 'E')
+        step = entity.lookups[0].keys[0].steps[0]
+        self.assertEqual([item.name for item in step.bindings], ['agency', 'day', 'provider'])
+        (root / 'file0.yambl').write_text(
+            source.replace(
+                '@dimension(provider) @dimension(agency)', '@dimension(agency) @dimension(provider)'
+            ),
+            encoding='utf-8',
+        )
+        second = compile_repository(root)
+        self.assertEqual(first.model_digest, second.model_digest)
+        self.assertEqual(validate_ir(loads(dumps(second))), ())
+
+    def test_lookup_string_dimension_alias_and_reference_rejection(self):
+        source = '''type text_alias = string
+const SOURCE: string = 'feed'
+entity E {
+    id key: string
+    dimension d { value source: text_alias }
+    @dimension(d) attr x: string
+    lookup by_literal { x = self.x::value(source='feed') }
+    lookup by_constant { x = self.x::value(source=SOURCE) }
+}
+'''
+        model = compile_repository(self.repository(source, 'valid'))
+        entity = next(item for item in model.definitions if item.identity == 'E')
+        for rule in entity.lookups:
+            binding = rule.keys[0].steps[0].bindings[0]
+            self.assertEqual((binding.fixed_kind, binding.fixed_text), ('string', 'feed'))
+        self.assertEqual(validate_ir(loads(dumps(model))), ())
+
+        for dimension_type in ('Issuer', 'issuer_alias', 'integer_alias'):
+            with self.subTest(dimension_type=dimension_type):
+                bad = '''entity Issuer { id id: integer }
+type issuer_alias = Issuer
+type integer_alias = integer
+entity E { id key: string dimension d { value source: TYPE } }
+'''.replace('TYPE', dimension_type)
+                root = self.repository(bad, 'invalid_' + dimension_type)
+                with self.assertRaisesRegex(ValueError, 'dimension value must be string or code'):
+                    compile_repository(root)
+
     def test_full_expression_and_metadata_roundtrips(self):
         for i, sources in enumerate([EXPRESSIONS, *DECORATORS]):
             with self.subTest(case=i):

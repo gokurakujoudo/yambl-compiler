@@ -2,13 +2,16 @@
 
 import hashlib
 import json
+from pathlib import Path
 from typing import Literal
 
-from tests.support import FilesystemCase
+from tests.support import FilesystemCase, document
 from yambl_compiler.ir import compile_repository
+from yambl_compiler.ir.lowering import Lowering
+from yambl_compiler.languages.yambl.semantics.validation import analyze
 from yambl_compiler.storage.contract import decode, dumps, load_contract, loads
 from yambl_compiler.storage.layout import build_layout
-from yambl_compiler.storage.records import Column
+from yambl_compiler.storage.records import LAYOUT_REVISION, Column
 
 
 class ContractTests(FilesystemCase):
@@ -19,6 +22,13 @@ class ContractTests(FilesystemCase):
         path = self.write("runtime.json", dumps(layout))
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         self.assertEqual(load_contract(path, digest), layout)
+        wire = json.loads(dumps(layout))
+        self.assertEqual(wire['runtime_revision'], 8)
+        self.assertEqual(LAYOUT_REVISION, 7)
+        wire['runtime_revision'] = 7
+        path.write_text(json.dumps(wire), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'unsupported runtime contract revision'):
+            load_contract(path, hashlib.sha256(path.read_bytes()).hexdigest())
         with self.assertRaisesRegex(ValueError, "digest"):
             load_contract(path, "wrong")
         for value in (
@@ -50,3 +60,19 @@ class ContractTests(FilesystemCase):
         self.assertEqual(decode([True], list[bool]), [True])
         self.assertEqual(decode(None, str | None), None)
         self.assertEqual(decode("x", str | None), "x")
+
+    def test_lookup_contract_roundtrip_without_sources(self):
+        source = "entity E { id id: string attr name: string lookup by_name { name = self.name::value() } }"
+        analysis = analyze([document(source)])
+        self.assertEqual([d.message for d in analysis.diagnostics], [])
+        model = Lowering(analysis, Path('.'), '', 'test').model()
+        layout = build_layout(model)
+        path = self.write('lookup-runtime.json', dumps(layout))
+        restored = load_contract(path, hashlib.sha256(path.read_bytes()).hexdigest())
+        rule = restored.entities['E'].lookups[0]
+        self.assertEqual(rule.name, 'by_name')
+        self.assertEqual(
+            (rule.keys[0].name, rule.keys[0].type.name, rule.keys[0].steps[0].access.identity),
+            ('name', 'string', 'E.name'),
+        )
+        self.assertEqual(restored.model.model_digest, model.model_digest)

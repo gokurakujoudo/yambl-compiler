@@ -368,6 +368,78 @@ class Effective(Record):
 
 
 @dataclass(frozen=True)
+class LookupBinding(Record):
+    """Represent one field parameter and its preparation source.
+
+    :param name: Field parameter name.
+    :param type: Checked parameter constraint.
+    :param input_name: Public preparation parameter, empty for a fixed value.
+    :param fixed_kind: Fixed scalar category, empty for a preparation parameter.
+    :param fixed_text: Canonical fixed value text.
+    :param fixed_target: Qualified dictionary identity when the fixed value is a code.
+    :param expression: Explicit source binding, absent for inferred parameters.
+    """
+
+    name: str
+    type: Type
+    input_name: str
+    fixed_kind: Literal['', 'string', 'date', 'code']
+    fixed_text: str
+    fixed_target: str
+    expression: CalculationExpression | None
+
+
+@dataclass(frozen=True)
+class LookupStep(Record):
+    """Represent one resolved field operation in a lookup path.
+
+    :param access: Checked logical and implementing field identities.
+    :param bindings: All field parameter bindings.
+    """
+
+    access: CalculationAccess
+    bindings: tuple[LookupBinding, ...]
+
+
+@dataclass(frozen=True)
+class LookupKey(Record):
+    """Represent one external lookup key and its path.
+
+    :param name: External input field name.
+    :param type: Checked scalar value type.
+    :param expression: Original path for independent semantic reconstruction.
+    :param steps: Resolved field operations in path order.
+    :param source: Original key location.
+    """
+
+    name: str
+    type: Type
+    expression: CalculationExpression
+    steps: tuple[LookupStep, ...]
+    source: Source
+
+
+@dataclass(frozen=True)
+class Lookup(Record):
+    """Represent an entity-owned named rule and its lexical context.
+
+    :param name: Declared rule name.
+    :param keys: External keys in declaration order.
+    :param inputs: Required preparation parameters in name order.
+    :param references: Lexical names and their resolved identities.
+    :param extension: Whether this rule was declared in an extension.
+    :param source: Original rule location.
+    """
+
+    name: str
+    keys: tuple[LookupKey, ...]
+    inputs: tuple[CalculationInput, ...]
+    references: tuple[Text, ...]
+    extension: bool
+    source: Source
+
+
+@dataclass(frozen=True)
 class Definition(Record):
     """Preserve a declaration and its checked effective view.
 
@@ -387,6 +459,8 @@ class Definition(Record):
     :param initializer: Checked pure constant expression, absent on other definitions.
     :param references: Lexical identities available to the constant initializer.
     :param derived: Whether the declaration is derived from the language model.
+    :param lookups: Rules declared directly on this entity, including extensions.
+    :param effective_lookups: Visible rule names and declaring entity identities.
     """
 
     kind: Literal['entity', 'value', 'type_alias', 'decorator', 'decodes', 'constant']
@@ -405,6 +479,8 @@ class Definition(Record):
     initializer: CalculationExpression | None = None
     references: tuple[Text, ...] = ()
     derived: bool = False
+    lookups: tuple[Lookup, ...] = ()
+    effective_lookups: tuple[Text, ...] = ()
 
 
 @dataclass(frozen=True)

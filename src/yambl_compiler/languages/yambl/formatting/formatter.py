@@ -41,6 +41,7 @@ def line_piece(items: list[Token], indent: int, calculation: bool = False) -> Pi
     declaration_equals = (
         next((t.start_pos for t in items if str(t) == '='), None)
         if str(items[0]) in ('let', 'const')
+        or (calculation and indent == 2 and len(items) > 1 and str(items[1]) == '=')
         else None
     )
     keyword_equals = {
@@ -187,6 +188,21 @@ def format_document(document: Document) -> str:
                             calculation=role.data == "dimension_fallback",
                         )
                     )
+            for lookup in children(declaration, "lookup"):
+                lookup_items = tokens(lookup)
+                opening = line_piece(lookup_items[:3], 1)
+                ending = line_piece(lookup_items[-1:], 1)
+                pieces.extend((opening, ending))
+                blocks.append((opening.end, ending.start))
+                for key in children(lookup, "lookup_key"):
+                    key_tokens = tokens(key)
+                    pieces.extend(calculation_pieces(key_tokens, 2))
+                    lookup_parentheses: list[int] = []
+                    for item in key_tokens:
+                        if str(item) == '(':
+                            lookup_parentheses.append(cast(int, item.end_pos))
+                        elif str(item) == ')':
+                            blocks.append((lookup_parentheses.pop(), cast(int, item.start_pos)))
             for entry in children(declaration, 'entry'):
                 pieces.append(line_piece(tokens(entry), 1))
         else:

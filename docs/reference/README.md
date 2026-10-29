@@ -37,7 +37,9 @@ prefix: 'demo'
 
 ## JSON IR 与生成
 
-IR 包含内置定义、已解析声明、字段身份及实现、类型、计算和源位置。当前 `format_revision` 为 7；格式尚未固化，不支持的版本需重新编译。语义 SHA-256 摘要排除源位置和编译器版本。整数和 decimal 的载荷以字符串保精度；输出是 UTF-8 JSON。IR 校验不读取源模型，会检查内嵌内容、引用及派生视图的一致性。源注释和 Markdown 块不作为 IR 内容保存。
+IR 包含内置定义、已解析声明、字段身份及实现、类型、计算和源位置。当前 `format_revision` 为 8；格式尚未固化，旧版本需从模型重新编译，不提供迁移。语义 SHA-256 摘要排除源位置和编译器版本。整数和 decimal 的载荷以字符串保精度；输出是 UTF-8 JSON。IR 校验不读取源模型，会检查内嵌内容、引用及派生视图的一致性。源注释和 Markdown 块不作为 IR 内容保存。
+
+revision 8 的 IR 保存 lookup 的键、解析后的字段路径、参数绑定及继承视图，并在独立校验时重建规则。`check` 检查 lookup 的字段路径和参数，`compile` 将规则写入 IR，`generate` 为支持的规则生成具名 Key、Matcher 和准备方法。首版支持 ID、static 和 SCD 字段及单值引用路径；计算、config、snapshot、集合展开和 `best_available` 不用于 lookup。
 
 Python API 使用 `yambl_compiler.ir.compile_repository(path)`、`validate_ir(model)`、`write_ir(model, path)` 和 `load_ir(path)`；`validate_ir` 返回诊断字符串元组，空元组表示成功，其他操作的无效输入引发 `ValueError`，文件错误引发 `OSError`。使用教程模型时可执行：
 
@@ -51,7 +53,7 @@ write_ir(model, Path('build/tutorial-demo/api-model.json'))
 assert load_ir(Path('build/tutorial-demo/api-model.json')) == model
 ```
 
-生成目录包含 Python 包、`pyproject.toml`、`schema.sql`、`schema.md`、`storage-manifest.json`、`schema-relations.puml`、`python-schema.md` 和 JSONL 模板。生成包携带 IR 和受摘要保护的 runtime contract，依赖及 Python 版本写入生成项目配置；运行时不依赖编译器或模型源文件。生成前会拒绝后端不支持的字段类型，例如当前生成后端不支持 float 存储。生成包随模型重新生成，不提供数据库迁移。
+生成目录包含 Python 包、`pyproject.toml`、`schema.sql`、`schema.md`、`storage-manifest.json`、`schema-relations.puml`、`python-schema.md` 和 JSONL 模板。生成包携带 IR 和受摘要保护的运行时契约，当前 `runtime_revision` 为 8，物理存储 `layout_revision` 为 7。依赖及 Python 版本写入生成项目配置；运行时不依赖编译器或模型源文件。生成前会拒绝后端不支持的字段类型，例如当前生成后端不支持 float 存储。生成包随模型重新生成，不提供数据库迁移。
 
 ### 存储生成支持范围
 

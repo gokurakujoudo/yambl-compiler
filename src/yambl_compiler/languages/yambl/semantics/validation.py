@@ -11,10 +11,12 @@ from yambl_compiler.languages.yambl.semantics.dimensions import check_dimensions
 from yambl_compiler.languages.yambl.semantics.entities import EntityIndex, check_entities
 from yambl_compiler.languages.yambl.semantics.expressions import check_aliases
 from yambl_compiler.languages.yambl.semantics.fields import check_field
+from yambl_compiler.languages.yambl.semantics.lookups import Lookup, check_lookups
 from yambl_compiler.languages.yambl.semantics.symbols import (
     EntityKey,
     Unit,
     declaration_name,
+    model_units,
     resolve_scopes,
 )
 from yambl_compiler.languages.yambl.semantics.values import check_values
@@ -29,6 +31,7 @@ class Analysis:
     :param entities: Effective fields and logical identities.
     :param diagnostics: Ordered errors and warnings.
     :param calculations: Typed computation bodies and inferred parameter contracts.
+    :param lookups: Effective named rules and their inferred contracts.
     """
 
     units: tuple[Unit, ...]
@@ -36,6 +39,9 @@ class Analysis:
     diagnostics: tuple[Diagnostic, ...]
     calculations: dict[tuple[EntityKey, str], Calculation] = data_field(
         default_factory=dict[tuple[EntityKey, str], Calculation]
+    )
+    lookups: dict[EntityKey, dict[str, Lookup]] = data_field(
+        default_factory=dict[EntityKey, dict[str, Lookup]]
     )
 
 
@@ -46,9 +52,10 @@ def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
     :param diagnostics: Existing scope diagnostics.
     :returns: Checked semantic model and source-ordered diagnostics.
     """
-    collect_dimensions(units, diagnostics)
-    entities = check_entities(units, diagnostics)
-    check_dimensions(units, diagnostics)
+    sources = model_units(units)
+    collect_dimensions(sources, diagnostics)
+    entities = check_entities(sources, diagnostics)
+    check_dimensions(sources, diagnostics)
     check_decorators(units, diagnostics)
     check_aliases(units, diagnostics)
     check_values(units, diagnostics)
@@ -70,6 +77,7 @@ def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
         for decodes in children(unit.document.tree, 'decodes'):
             check_decodes(decodes, unit, diagnostics)
     calculations = check_computations(entities, diagnostics, units)
+    lookups = check_lookups(sources, entities, diagnostics)
     return Analysis(
         tuple(units),
         entities,
@@ -80,6 +88,7 @@ def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
             )
         ),
         calculations,
+        lookups,
     )
 
 

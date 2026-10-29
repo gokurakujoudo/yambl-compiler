@@ -33,7 +33,7 @@ def python_package(layout: Layout, package: str) -> str:
     :param layout: Checked storage mappings.
     :param package: Python package name.
     :returns: Importable Python source.
-    :raises ValueError: On generated public-name collisions.
+    :raises ValueError: On unsupported types or generated public-name collisions.
     """
     names = {key: entity.name.rsplit(".", 1)[-1] for key, entity in layout.entities.items()}
     codes: dict[str, str] = {}
@@ -100,6 +100,32 @@ def python_package(layout: Layout, package: str) -> str:
                 python_type(field.type)
                 for parameter in field.calculation.inputs:
                     python_type(parameter.type)
+    lookups = {
+        (key, rule.name): rule for key, entity in layout.entities.items() for rule in entity.lookups
+    }
+    lookup_names = {
+        identity: names[identity[0]] + ''.join(part.capitalize() for part in identity[1].split('_'))
+        for identity in lookups
+    }
+    for rule in lookups.values():
+        for key_item in rule.keys:
+            python_type(key_item.type)
+        for input_item in rule.inputs:
+            python_type(input_item.type)
+        for key_item in rule.keys:
+            if not key_item.name.isidentifier() or keyword.iskeyword(key_item.name):
+                raise ValueError(
+                    f'{key_item.source.path}:{key_item.source.line}:{key_item.source.column}: invalid Python lookup key name: {key_item.name}'
+                )
+        for input_item in rule.inputs:
+            if (
+                not input_item.name.isidentifier()
+                or keyword.iskeyword(input_item.name)
+                or input_item.name == 'self'
+            ):
+                raise ValueError(
+                    f'{rule.source.path}:{rule.source.line}:{rule.source.column}: invalid Python lookup parameter name: {input_item.name}'
+                )
     requests = {
         key: names[f.implementation.rsplit(".", 1)[0]]
         + "".join(p.capitalize() for p in f.name.split("_"))
@@ -206,6 +232,7 @@ def python_package(layout: Layout, package: str) -> str:
         *records.values(),
         *requests.values(),
         *value_names.values(),
+        *(name + suffix for name in lookup_names.values() for suffix in ('Key', 'Matcher')),
         reader_name,
         data_name,
     ]
@@ -242,11 +269,28 @@ def python_package(layout: Layout, package: str) -> str:
         "Sequence",
         "MODEL_DIGEST",
     }
+    if lookups:
+        reserved.update(
+            {'AmbiguousMatch', 'LookupResult', 'LookupStats', 'Matcher', 'prepare_lookup'}
+        )
     collisions = sorted(
         name for name in set(public_names) if public_names.count(name) > 1 or name in reserved
     )
     if collisions:
-        raise ValueError("generated Python public-name collision: " + ", ".join(collisions))
+        location = next(
+            (
+                rule.source
+                for identity, rule in lookups.items()
+                if any(
+                    lookup_names[identity] + suffix in collisions for suffix in ('Key', 'Matcher')
+                )
+            ),
+            None,
+        )
+        prefix = f'{location.path}:{location.line}:{location.column}: ' if location else ''
+        raise ValueError(
+            prefix + "generated Python public-name collision: " + ", ".join(collisions)
+        )
     lines = [
         '"""Generated typed data access and transaction API."""',
         "",
@@ -268,6 +312,14 @@ def python_package(layout: Layout, package: str) -> str:
         "from ._validation import ValidationReport, ValidationIssue",
         "",
     ]
+    if lookups:
+        lines.extend(
+            [
+                'from ._lookup import AmbiguousMatch, LookupResult, LookupStats, Matcher',
+                'from ._lookup_prepare import prepare as prepare_lookup',
+                '',
+            ]
+        )
     lines.append('from ._value_types import ' + ', '.join(sorted(value_names.values())))
     lines.extend(['', f'MODEL_DIGEST = {layout.model.model_digest!r}'])
     for target, name in sorted(codes.items()):
@@ -309,6 +361,47 @@ def python_package(layout: Layout, package: str) -> str:
                         "        return member",
                     ]
                 )
+    for lookup_identity, rule in lookups.items():
+        name = lookup_names[lookup_identity]
+        id_type = python_type(layout.ids[layout.roots[lookup_identity[0]]].type)
+        lines.extend(
+            ['', '', '@dataclass(frozen=True, slots=True, kw_only=True)', f'class {name}Key:']
+        )
+        lines.extend(
+            docstring(
+                [
+                    f'Input key for {lookup_identity[0]}.{rule.name}.',
+                    '',
+                    *(
+                        f':param {key.name}: Value matched against the {key.name} path.'
+                        for key in rule.keys
+                    ),
+                ],
+                4,
+            )
+        )
+        lines.extend(f'    {key.name}: {python_type(key.type)}' for key in rule.keys)
+        lines.extend(
+            [
+                '',
+                '',
+                f'class {name}Matcher(Matcher[{name}Key, {id_type}]):',
+                f'    """Match {name}Key records to {lookup_identity[0]} IDs."""',
+                '',
+                f'    def match_many(self, keys: Sequence[{name}Key]) -> Success[tuple[LookupResult[{id_type}], ...]] | NonNormalResult:',
+                *docstring(
+                    [
+                        'Match a batch against the prepared index.',
+                        '',
+                        ':param keys: Ordered key records; duplicates retain their positions.',
+                        ':returns: Ordered matches or ERROR for an invalid batch.',
+                        f':rtype: Success[tuple[LookupResult[{id_type}], ...]] | NonNormalResult',
+                    ],
+                    8,
+                ),
+                '        return super().match_many(keys)',
+            ]
+        )
     for identity, name in records.items():
         stored = layout.fields[identity]
         f = stored.field
@@ -506,6 +599,43 @@ def python_package(layout: Layout, package: str) -> str:
             "    calculation_programs = PROGRAMS",
         ]
     )
+    lookup_methods: set[str] = set()
+    for entity_id, entity in layout.entities.items():
+        for visible in entity.effective_lookups:
+            lookup_identity = (visible.value, visible.name)
+            rule = lookups[lookup_identity]
+            name = lookup_names[lookup_identity]
+            id_type = python_type(layout.ids[layout.roots[entity_id]].type)
+            method = 'prepare_' + snake(names[entity_id]) + '_' + rule.name
+            if method in lookup_methods:
+                raise ValueError(
+                    f'{rule.source.path}:{rule.source.line}:{rule.source.column}: generated reader method collision: {method}'
+                )
+            lookup_methods.add(method)
+            args = ', '.join(f'{item.name}: {python_type(item.type)}' for item in rule.inputs)
+            lookup_parameters = ', *, ' + args if args else ''
+            values = '{' + ', '.join(f'{item.name!r}: {item.name}' for item in rule.inputs) + '}'
+            lines.extend(
+                [
+                    '',
+                    f'    def {method}(self{lookup_parameters}) -> Success[{name}Matcher] | NonNormalResult:',
+                    *docstring(
+                        [
+                            f'Prepare {rule.name} for {entity_id} and its descendants.',
+                            '',
+                            *(
+                                f':param {item.name}: Required value for this preparation.'
+                                for item in rule.inputs
+                            ),
+                            ':returns: A detached matcher, or ERROR if preparation fails.',
+                            f':rtype: Success[{name}Matcher] | NonNormalResult',
+                        ],
+                        8,
+                    ),
+                    f'        _lookup_rule = next(rule for rule in self._layout.entities[{lookup_identity[0]!r}].lookups if rule.name == {rule.name!r})',
+                    f'        return prepare_lookup(self._session, {entity_id!r}, _lookup_rule, {name}Key, {id_type}, {values}, {name}Matcher)',
+                ]
+            )
     for identity, name in requests.items():
         field = computed[identity]
         assert field.calculation is not None
@@ -608,6 +738,7 @@ def python_package(layout: Layout, package: str) -> str:
                         "TransactionReport",
                         "TransactionStatus",
                         "MODEL_DIGEST",
+                        *(['AmbiguousMatch', 'LookupResult', 'LookupStats'] if lookups else []),
                     ]
                 )
             ),
@@ -699,6 +830,9 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         "computing",
         "session",
         "results",
+        "scalars",
+        "lookup",
+        "lookup_prepare",
         "runtime",
         "validation",
     ]

@@ -2,7 +2,7 @@
 
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal, cast
 
 from lark import Token, Tree
@@ -82,6 +82,7 @@ class World:
     :param constant_expressions: Checked user constant initializers.
     :param dimensions: Entity-scoped named dimension declarations.
     :param subtypes: Derived dictionary identities and depth-first entries.
+    :param builtin_units: Embedded source scopes, including extension-only files.
     """
 
     declarations: dict[EntityKey, tuple[Unit, Tree[Token]]] = field(
@@ -104,6 +105,7 @@ class World:
     subtypes: dict[EntityKey, tuple[SubtypeEntry, ...]] = field(
         default_factory=dict[EntityKey, tuple[SubtypeEntry, ...]]
     )
+    builtin_units: list[Unit] = field(default_factory=lambda: list[Unit]())
 
 
 @dataclass(frozen=True)
@@ -118,6 +120,42 @@ class Unit:
     document: Document
     scope: dict[str, Symbol]
     world: World = field(default_factory=World)
+
+
+def model_units(units: Sequence[Unit]) -> list[Unit]:
+    """Include embedded sources when analyzing an ordinary model repository.
+
+    :param units: Explicit compilation units sharing one world.
+    :returns: Explicit and embedded scopes without repeating built-in repository inputs.
+    """
+    if not units or any(unit.document.builtin for unit in units):
+        return list(units)
+    result = list(units)
+    world = units[0].world
+    declarations = {'entity', 'value', 'decodes', 'type_alias', 'decorator', 'constant'}
+    for builtin in world.builtin_units:
+        selected: list[Tree[Token] | Token] = []
+        present = False
+        for node in builtin.document.tree.children:
+            if not isinstance(node, Tree) or node.data not in declarations | {'extension'}:
+                selected.append(node)
+                continue
+            owner = world.declarations.get(('builtins', declaration_name(node)))
+            active = owner is not None and owner[0].document.builtin
+            if node.data == 'extension':
+                active = owner is None or active
+            else:
+                active = active and owner is not None and owner[1] is node
+            if active:
+                selected.append(node)
+                present = True
+        if present:
+            if len(selected) == len(builtin.document.tree.children):
+                result.append(builtin)
+            else:
+                tree = Tree(builtin.document.tree.data, selected, builtin.document.tree.meta)
+                result.append(Unit(replace(builtin.document, tree=tree), builtin.scope, world))
+    return result
 
 
 def namespace(document: Document) -> str:
@@ -285,8 +323,17 @@ def resolve_scopes(
         name: Symbol(('builtins', name), cast(DeclarationKind, node.data))
         for name, node in declarations.items()
     }
+    builtin_local_scope = {
+        **builtin_scope,
+        **{
+            declaration_name(node): Symbol(('builtins', declaration_name(node)), 'constant')
+            for document in builtin_documents
+            for node in children(document.tree, 'constant')
+        },
+    }
     for document in builtin_documents:
-        builtin = Unit(document, builtin_scope, world)
+        builtin = Unit(document, builtin_local_scope, world)
+        world.builtin_units.append(builtin)
         for node in document.tree.children:
             if isinstance(node, Tree) and node.data in (
                 'entity',
