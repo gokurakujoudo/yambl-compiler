@@ -26,6 +26,7 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     diagnostic,
     tokens,
 )
+from yambl_compiler.storage.conversions import SIGNATURES
 
 
 @dataclass(frozen=True)
@@ -222,24 +223,83 @@ class LookupChecker(Checker):
         :param environment: Lookup self binding.
         :returns: None; records an input or checks a fixed value.
         """
-        if expression.kind == 'member' and expression.operands[0].kind == 'name':
-            root = expression.operands[0].value
-            if root == 'input':
-                super().bind_input(requirement, expression, environment)
-                return
-            symbol = self.unit.scope.get(root)
-            fixed = symbol is not None and symbol.kind == 'decodes'
-        elif expression.kind == 'name':
-            symbol = self.unit.scope.get(expression.value)
-            fixed = symbol is not None and symbol.kind == 'constant'
-        else:
-            fixed = expression.kind in ('string', 'integer', 'decimal', 'bool')
-        if not fixed:
+
+        def pure(node: Expression) -> bool:
+            """Check whether a binding uses only supported pure operations.
+
+            :param node: Expression to inspect.
+            :returns: Whether every dependency is permitted in a lookup binding.
+            """
+            if node.kind in ('string', 'integer', 'decimal', 'bool'):
+                return True
+            if node.kind == 'name':
+                symbol = self.unit.scope.get(node.value)
+                return symbol is not None and symbol.kind == 'constant'
+            if node.kind == 'member' and node.operands[0].kind == 'name':
+                root = node.operands[0].value
+                symbol = self.unit.scope.get(root)
+                return root == 'input' or (symbol is not None and symbol.kind == 'decodes')
+            if node.kind in ('binary', 'unary', 'conditional'):
+                return all(pure(child) for child in node.operands)
+            if node.kind == 'call' and node.operands[0].kind == 'name':
+                return node.operands[0].value in SIGNATURES and all(
+                    pure(argument.expression) for argument in node.arguments
+                )
+            return False
+
+        if not pure(expression):
             self.issue(
                 expression,
-                'lookup binding requires a literal, constant, dictionary member or input',
+                'lookup binding requires a pure expression of inputs, literals, constants or dictionary members',
             )
             return
+        if expression.kind == 'member' and expression.operands[0].value == 'input':
+            super().bind_input(requirement, expression, environment)
+            return
+        if expression.kind == 'binary' and expression.value == '??':
+            super().bind_input(requirement, expression, environment)
+            return
+
+        def infer_inputs(node: Expression, expected: Resolved) -> None:
+            """Infer input types from their enclosing expression context.
+
+            :param node: Expression to inspect.
+            :param expected: Type expected at this position.
+            :returns: None; records inferred input contracts.
+            """
+            if (
+                node.kind == 'member'
+                and node.operands[0].kind == 'name'
+                and node.operands[0].value == 'input'
+            ):
+                if node.value not in self.inputs:
+                    self.add_input(replace(requirement, name=node.value, type=expected), node)
+                return
+            if node.kind == 'conditional':
+                infer_inputs(node.operands[0], Resolved('bool'))
+                for child in node.operands[1:]:
+                    infer_inputs(child, expected)
+                return
+            if node.kind in ('binary', 'unary') and node.value in ('and', 'or', 'not'):
+                for child in node.operands:
+                    infer_inputs(child, Resolved('bool'))
+                return
+            if node.kind == 'call' and node.operands[0].kind == 'name':
+                signature = SIGNATURES[node.operands[0].value]
+                for index, argument in enumerate(node.arguments):
+                    name = argument.name or (signature[index][0] if index < len(signature) else '')
+                    type_name = dict(signature).get(name, '')
+                    argument_type = (
+                        Resolved(type_name, 'string' if type_name == 'string' else 'value')
+                        if type_name in ('string', 'date', 'datetime', 'integer', 'bool')
+                        else expected
+                    )
+                    infer_inputs(argument.expression, argument_type)
+                return
+            for child in node.operands:
+                infer_inputs(child, expected)
+
+        infer_inputs(expression, requirement.type)
         actual = self.read(self.infer(expression, environment, requirement.type), expression).type
         if expression.kind == 'string' and requirement.type.name == 'string':
             actual = replace(requirement.type, exact=expression.value)
@@ -273,6 +333,9 @@ class LookupChecker(Checker):
         result: list[LookupParameter] = []
         for parameter in step.parameters:
             binding = parameter.binding
+            if binding is not None:
+                binding = self.elaborate(binding)
+                parameter = replace(parameter, binding=binding)
             if binding is None:
                 result.append(replace(parameter, input_name=parameter.requirement.name))
             elif (
@@ -281,19 +344,11 @@ class LookupChecker(Checker):
                 and binding.operands[0].value == 'input'
             ):
                 result.append(replace(parameter, input_name=binding.value))
-            elif (
-                binding.kind in ('string', 'integer', 'decimal', 'bool')
-                or (
-                    binding.kind == 'name'
-                    and (symbol := self.unit.scope.get(binding.value)) is not None
-                    and symbol.kind == 'constant'
-                )
-                or (
-                    binding.kind == 'member'
-                    and binding.operands[0].kind == 'name'
-                    and (symbol := self.unit.scope.get(binding.operands[0].value)) is not None
-                    and symbol.kind == 'decodes'
-                )
+            elif not any(
+                node.kind == 'member'
+                and node.operands[0].kind == 'name'
+                and node.operands[0].value == 'input'
+                for node in walk(binding)
             ):
                 try:
                     result.append(
@@ -305,6 +360,19 @@ class LookupChecker(Checker):
             else:
                 result.append(parameter)
         return replace(step, parameters=tuple(result))
+
+
+def walk(node: Expression) -> tuple[Expression, ...]:
+    """Collect an expression and its descendants.
+
+    :param node: Expression root.
+    :returns: Nodes in the expression.
+    """
+    return (
+        node,
+        *(child for operand in node.operands for child in walk(operand)),
+        *(child for argument in node.arguments for child in walk(argument.expression)),
+    )
 
 
 def path(node: Expression) -> bool:
@@ -364,7 +432,8 @@ def name_diagnostic(unit: Unit, node: Tree[Token], message: str) -> Diagnostic:
     :param message: Diagnostic text.
     :returns: Diagnostic at the rule name.
     """
-    name = tokens(node)[1]
+    items = tokens(node)
+    name = items[next(i for i, item in enumerate(items) if item.type == 'LOOKUP') + 1]
     return Diagnostic(unit.document.path, name.line or 1, name.column or 1, message)
 
 
@@ -390,7 +459,10 @@ def check_lookups(
                 continue
             rules = local.setdefault(owner.key, {})
             for node in children(declaration, 'lookup'):
-                name = str(tokens(node)[1])
+                items = tokens(node)
+                name = str(
+                    items[next(i for i, item in enumerate(items) if item.type == 'LOOKUP') + 1]
+                )
                 if not IDENTIFIER.fullmatch(name):
                     diagnostics.append(
                         name_diagnostic(unit, node, 'lookup names must use snake_case')
@@ -405,6 +477,7 @@ def check_lookups(
                         diagnostic(unit.document, node, 'lookup requires at least one key')
                     )
                 checker = LookupChecker(analyzer, owner.key, unit)
+                checker.declare_inputs(node)
                 environment = {'self': Value(Resolved(owner.key[1], 'reference', key=owner.key))}
                 keys: list[LookupKey] = []
                 seen: set[str] = set()
@@ -444,6 +517,7 @@ def check_lookups(
                             ),
                         )
                     )
+                checker.check_defaults()
                 rules[name] = Lookup(
                     owner.key,
                     name,

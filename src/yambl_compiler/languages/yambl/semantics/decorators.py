@@ -77,6 +77,8 @@ def capture(node: Tree[Token], unit: Unit) -> Term:
     if node.data == 'field':
         syntax = children(children(node, 'field_body')[0], 'type_expr')[0]
         return Term(Resolved('attrs'), 'field', 'self', (unit, syntax))
+    if node.data == 'lookup':
+        return Term(Resolved('lookup'), 'value')
     name = next(t for t in tokens(header(node)) if t.type == 'NAME')
     if node.data == 'decorator':
         return Term(Resolved('decorator', key=unit.scope[str(name)].key), 'value')
@@ -140,6 +142,14 @@ def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Dia
     :param diagnostics: Destination for errors.
     :returns: None.
     """
+    if declaration_name(declaration) == 'extra_input_params':
+        diagnostics.append(
+            diagnostic(
+                unit.document,
+                header(declaration),
+                'use @extra_input_param instead of @extra_input_params',
+            )
+        )
     if not annotations(declaration, 'targets'):
         diagnostics.append(
             diagnostic(
@@ -242,6 +252,9 @@ def bind_call(
     """
     name = str(tokens(call)[1])
     actual_resolver = Resolver(unit, diagnostics, {}, bindings={'self': capture(node, unit)})
+    if name == 'extra_input_params':
+        actual_resolver.issue(call, 'use @extra_input_param instead of @extra_input_params')
+        return ''
     symbol = unit.scope.get(name)
     if symbol is None or symbol.kind != 'decorator':
         actual_resolver.issue(call, f"unknown decorator: {name}")
@@ -356,9 +369,9 @@ def bind_call(
             bound.append((formal.name, str(tokens(provided)[0]), actual))
             defaults = children(provided, 'decorator_default')
             if defaults:
-                if name != 'extra_input_params':
+                if name != 'extra_input_param':
                     actual_resolver.issue(
-                        provided, 'pair defaults are only supported by extra_input_params'
+                        provided, 'pair defaults are only supported by extra_input_param'
                     )
                 default = argument_type(
                     actual_resolver, children(defaults[0], 'type_expr')[0], actual
@@ -407,6 +420,7 @@ def check_target(
         'decodes': 'Decodes',
         'type_alias': 'Type',
         'decorator': 'Decorator',
+        'lookup': 'Lookup',
     }.get(str(node.data), '')
     if body:
         kind = (
@@ -440,7 +454,11 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
         ]:
             if declaration.data == 'decorator':
                 check_parameters(declaration, unit, diagnostics)
-            for node in [declaration, *children(declaration, 'field')]:
+            for node in [
+                declaration,
+                *children(declaration, 'field'),
+                *children(declaration, 'lookup'),
+            ]:
                 seen: set[str] = set()
                 dimensions: set[str] = set()
                 for call in annotations(node):

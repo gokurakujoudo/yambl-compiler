@@ -25,11 +25,18 @@ class StructuredConstant:
     fields: tuple[tuple[str, object], ...]
 
 
-def evaluate(expression: Expression, resolve: Callable[[str], object]) -> object:
+def evaluate(
+    expression: Expression,
+    resolve: Callable[[str], object],
+    missing: object = None,
+    allow_missing: bool = False,
+) -> object:
     """Evaluate an already typed pure expression.
 
     :param expression: Portable expression tree.
     :param resolve: Resolver for constant names and dictionary codes.
+    :param missing: Sentinel denoting an omitted input for coalescing.
+    :param allow_missing: Whether this expression may return the omission sentinel.
     :returns: Immutable scalar result.
     :raises ValueError: For operations requiring runtime data or unsupported syntax.
     """
@@ -41,7 +48,7 @@ def evaluate(expression: Expression, resolve: Callable[[str], object]) -> object
         :param value: Child expression.
         :returns: Constant value.
         """
-        return evaluate(value, resolve)
+        return evaluate(value, resolve, missing)
 
     if node.kind == 'sequence':
         return frozenset(child(value) for value in node.operands)
@@ -84,9 +91,16 @@ def evaluate(expression: Expression, resolve: Callable[[str], object]) -> object
     if node.kind == 'bool':
         return node.value == 'true'
     if node.kind == 'name':
-        return resolve(node.value)
+        value = resolve(node.value)
+        if value is missing and not allow_missing:
+            raise ValueError(f'missing value: {node.value}')
+        return value
     if node.kind == 'member' and node.operands[0].kind == 'name':
-        return resolve(node.operands[0].value + '.' + node.value)
+        name = node.operands[0].value + '.' + node.value
+        value = resolve(name)
+        if value is missing and not allow_missing:
+            raise ValueError(f'missing value: {name}')
+        return value
     if (
         node.kind == 'member'
         and node.operands[0].kind == 'descriptor'
@@ -100,6 +114,9 @@ def evaluate(expression: Expression, resolve: Callable[[str], object]) -> object
         value = child(node.operands[0])
         return not value if node.value == 'not' else numeric('-', 0, cast(Number, value))
     if node.kind == 'binary':
+        if node.value == '??':
+            left = evaluate(node.operands[0], resolve, missing, True)
+            return child(node.operands[1]) if left is missing else left
         left = child(node.operands[0])
         if node.value == 'and':
             return left and child(node.operands[1])

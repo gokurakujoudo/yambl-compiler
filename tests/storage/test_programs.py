@@ -69,9 +69,9 @@ entity Fund {
     }
 }
 extend Security {
-    @extra_input_params(day: date = '2026-01-10', 'Requested date')
+    @extra_input_param(day: date = '2026-01-10', 'Requested date')
     computed attr declared_price: decimal { return self.price::best_available(as_of_date=input.day ?? input.unused_day) }
-    @extra_input_params(count: integer)
+    @extra_input_param(count: integer)
     computed attr input_value: integer { return input.count ?? 7 }
     computed attr identity_text: string { return self.key::value() }
     computed attr safe: integer { return if true and not false then -2 + 3 * 4 else self.days::value() }

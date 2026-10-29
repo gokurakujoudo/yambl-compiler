@@ -20,6 +20,7 @@ from yambl_compiler.storage.backends import repository_contents
 from yambl_compiler.storage.extras import python_reference
 from yambl_compiler.storage.generation import generate, python_package
 from yambl_compiler.storage.layout import build_layout, quote, table_name
+from yambl_compiler.storage.lookup_prepare import prepare
 from yambl_compiler.storage.rendering import ddl
 from yambl_compiler.storage.results import NonNormalResult, Status, Success
 
@@ -448,6 +449,176 @@ entity Asset {
             matched = result.value.match_many([module.SecurityByCodeKey(code='X')])
             self.assertIsInstance(matched, Success)
             self.assertEqual(matched.value[0].status, Status.NO_ENTRY)
+            reader.close()
+
+    def test_lookup_optional_default_and_coalescing_on_both_backends(self):
+        source = SOURCE.replace(
+            'lookup by_code { code = self.code::value(day=input.as_of_date) }',
+            "@extra_input_param(industry_date: date, 'Optional date') "
+            "@extra_input_param(as_of_date: date = '2026-10-28', 'Fallback date') "
+            'lookup by_code { code = self.code::value(day=input.industry_date ?? input.as_of_date) }',
+        ).replace(
+            'lookup by_name { name = self.name::value() }',
+            "@extra_input_param(day_text: string, 'Date text') "
+            'lookup by_text { code = self.code::value(day=parse_date(input.day_text)) } '
+            '@extra_input_param(day: date) '
+            'lookup by_optional { code = self.code::value(day=input.day) }',
+        )
+        analysis = analyze([document(source, 'optional.yambl')])
+        self.assertEqual(analysis.diagnostics, ())
+        model = Lowering(analysis, Path('.'), '', 'test').model()
+        from yambl_compiler.ir.codec import dumps, loads
+        from yambl_compiler.ir.validation import validate_ir
+
+        self.assertEqual(validate_ir(loads(dumps(model))), ())
+        layout = build_layout(model)
+        module = self.generated(model)
+        docs = inspect.getdoc(module.SampleReader.prepare_security_by_code)
+        self.assertIn('Optional date', docs)
+        self.assertIn('Fallback date', docs)
+        database = self.root / 'optional.sqlite'
+        stored = layout.fields['core.Security.code']
+        with closing(sqlite3.connect(database)) as connection:
+            connection.executescript(ddl(layout))
+            connection.execute(
+                "INSERT INTO tb_core_security (id, entity_type) VALUES ('one', 'core.Security')"
+            )
+            connection.executemany(
+                f'INSERT INTO {quote(stored.table)} (id, valid_from, valid_to, {quote(stored.state)}, {quote(stored.value)}) VALUES (?, ?, ?, ?, ?)',
+                [
+                    ('one', '2026-10-01', '2026-11-01', 'VALUE', 'October'),
+                    ('one', '2026-11-01', '2026-12-01', 'VALUE', 'November'),
+                ],
+            )
+            connection.commit()
+        files = self.file_copy(layout, database)
+        for opened in (module.SampleReader.open(database), module.SampleReader.open_files(files)):
+            self.assertIsInstance(opened, Success)
+            reader = opened.value
+            for arguments, expected in (
+                ({}, 'October'),
+                ({'as_of_date': date(2026, 11, 10)}, 'November'),
+                ({'industry_date': date(2026, 11, 10)}, 'November'),
+            ):
+                prepared = reader.prepare_security_by_code(**arguments)
+                self.assertIsInstance(prepared, Success)
+                result = prepared.value.match_many([module.SecurityByCodeKey(code=expected)])
+                self.assertEqual(result, Success((Success('one'),)))
+            invalid = reader.prepare_security_by_code(industry_date='2026-11-10')
+            self.assertEqual(invalid.status, Status.ERROR)
+            text = reader.prepare_security_by_text(day_text='2026-10-28')
+            self.assertIsInstance(text, Success)
+            self.assertEqual(
+                text.value.match_many([module.SecurityByTextKey(code='October')]),
+                Success((Success('one'),)),
+            )
+            self.assertEqual(reader.prepare_security_by_text().status, Status.ERROR)
+            self.assertEqual(reader.prepare_security_by_text(day_text='bad').status, Status.ERROR)
+            rules = {r.name: r for r in layout.entities['core.Security'].lookups}
+            for name, arguments in (
+                ('by_code', {}),
+                ('by_code', {'industry_date': date(2026, 11, 10)}),
+                ('by_text', {'day_text': '2026-10-28'}),
+                ('by_text', {}),
+                ('by_optional', {}),
+                ('by_code', {'unknown': 'unexpected'}),
+            ):
+                label = name.removeprefix('by_').capitalize()
+                key = getattr(module, 'SecurityBy' + label + 'Key')
+                matcher = getattr(module, 'SecurityBy' + label + 'Matcher')
+                actual = prepare(
+                    reader._session, 'core.Security', rules[name], key, str, arguments, matcher
+                )
+                if name in ('by_text', 'by_optional') and not arguments or 'unknown' in arguments:
+                    self.assertEqual(actual.status, Status.ERROR)
+                else:
+                    self.assertIsInstance(actual, Success)
+            reader.close()
+
+    def test_lookup_expression_inputs_and_code_conversion_on_both_backends(self):
+        source = """decodes Sources { - 1 Wind: 'Wind' - 2 Manual: 'Manual' }
+const FALLBACK: string = 'Wind'
+entity E {
+    id id: string
+    dimension codes { value source: code<Sources> }
+    dimension strings { value source: string }
+    @dimension(codes) attr code_value: string
+    @dimension(strings) attr string_value: string
+    @extra_input_param(flag: bool)
+    lookup by_cond { value = self.code_value::value(source=if input.flag then 'Wind' else 'Manual') }
+    @extra_input_param(choice: code<Sources>)
+    lookup by_choice { value = self.string_value::value(source=to_string(input.choice)) }
+    @extra_input_param(flag: bool)
+    lookup by_constant { value = self.string_value::value(source=if input.flag then FALLBACK else Sources.Wind) }
+    @extra_input_param(rate: float)
+    @extra_input_param(moment: datetime)
+    @extra_input_param(ref: E)
+    lookup by_id { value = self.id::value() }
+}
+"""
+        analysis = analyze([document(source, 'inputs.yambl')])
+        self.assertEqual(analysis.diagnostics, ())
+        model = Lowering(analysis, Path('.'), '', 'test').model()
+        layout = build_layout(model)
+        module = self.generated(model)
+        database = self.root / 'inputs.sqlite'
+        with closing(sqlite3.connect(database)) as connection:
+            connection.executescript(ddl(layout))
+            connection.execute("INSERT INTO tb_e (id, entity_type) VALUES ('one', 'E')")
+            for field_name in ('code_value', 'string_value'):
+                field = layout.fields['E.' + field_name]
+                connection.executemany(
+                    f'INSERT INTO {quote(field.table)} (id, dim_source, {quote(field.state)}, {quote(field.value)}) VALUES (?, ?, ?, ?)',
+                    [('one', 'Wind', 'VALUE', 'wind'), ('one', 'Manual', 'VALUE', 'manual')],
+                )
+            connection.commit()
+        files = self.file_copy(layout, database)
+        for opened in (module.SampleReader.open(database), module.SampleReader.open_files(files)):
+            self.assertIsInstance(opened, Success)
+            reader = opened.value
+            for flag, expected in ((True, 'wind'), (False, 'manual')):
+                prepared = reader.prepare_e_by_cond(flag=flag)
+                self.assertIsInstance(prepared, Success)
+                self.assertEqual(
+                    prepared.value.match_many([module.EByCondKey(value=expected)]),
+                    Success((Success('one'),)),
+                )
+            self.assertEqual(reader.prepare_e_by_cond().status, Status.ERROR)
+            choice = reader.prepare_e_by_choice(choice=module.SourcesCode.Wind)
+            self.assertIsInstance(choice, Success)
+            self.assertEqual(
+                choice.value.match_many([module.EByChoiceKey(value='wind')]),
+                Success((Success('one'),)),
+            )
+            self.assertEqual(reader.prepare_e_by_choice(choice='Wind').status, Status.ERROR)
+            valid = reader.prepare_e_by_id(
+                rate=1.25, moment=datetime.fromisoformat('2026-10-29T12:00:00+08:00')
+            )
+            self.assertIsInstance(valid, Success)
+            self.assertEqual(reader.prepare_e_by_id(rate=float('nan')).status, Status.ERROR)
+            self.assertEqual(
+                reader.prepare_e_by_id(moment=datetime(2026, 10, 29)).status, Status.ERROR
+            )
+            rules = {r.name: r for r in layout.entities['E'].lookups}
+            for name, arguments in (
+                ('by_cond', {'flag': True}),
+                ('by_cond', {}),
+                ('by_choice', {'choice': module.SourcesCode.Wind}),
+                ('by_constant', {'flag': True}),
+                ('by_constant', {'flag': False}),
+                (
+                    'by_id',
+                    {'rate': 1.25, 'moment': datetime.fromisoformat('2026-10-29T12:00:00+08:00')},
+                ),
+                ('by_id', {'ref': 'one'}),
+            ):
+                key = getattr(module, 'EBy' + name.removeprefix('by_').capitalize() + 'Key')
+                matcher = getattr(module, 'EBy' + name.removeprefix('by_').capitalize() + 'Matcher')
+                actual = prepare(reader._session, 'E', rules[name], key, str, arguments, matcher)
+                if name == 'by_cond' and not arguments:
+                    self.assertEqual(actual.status, Status.ERROR)
+                else:
+                    self.assertIsInstance(actual, Success)
             reader.close()
 
     def test_real_sqlite_prepare_match_and_closed_reader(self):

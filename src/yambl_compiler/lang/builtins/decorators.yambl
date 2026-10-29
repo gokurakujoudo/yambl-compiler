@@ -29,9 +29,9 @@ decorator @temporal(*time: date)
 @allow_multiple
 decorator @dimension(definition: dimension_ref)
 
-@targets(DecoratorTargets.EntityAttr, categories=AttrCats.Computed)
+@targets(DecoratorTargets.EntityAttr + DecoratorTargets.Lookup, categories=AttrCats.Computed)
 @allow_multiple
-decorator @extra_input_params(*parameter: input_type)
+decorator @extra_input_param(*parameter: input_type)
 
 @targets(DecoratorTargets.EntityAttr, categories=AttrCats.Static)
 decorator @sparse(cat: string)

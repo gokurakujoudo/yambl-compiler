@@ -7,8 +7,12 @@ from decimal import InvalidOperation
 from typing import cast
 
 from yambl_compiler.ir.model import Lookup, LookupBinding
+from yambl_compiler.languages.yambl.computation.evaluation import evaluate
+from yambl_compiler.languages.yambl.computation.records import Expression
 from yambl_compiler.storage.backends import Row, RowValidationError, Selection
 from yambl_compiler.storage.batch import Batch
+from yambl_compiler.storage.computing import UNSET, Computing
+from yambl_compiler.storage.configuration import Configuration
 from yambl_compiler.storage.lookup import KeyField
 from yambl_compiler.storage.records import table_name
 from yambl_compiler.storage.results import EntityRef, NonNormalResult, Status, Success
@@ -47,6 +51,7 @@ def prepare[KeyT, IdT: str | int, MatchT](
         KeyError,
         IndexError,
         InvalidOperation,
+        ArithmeticError,
     ) as error:
         return NonNormalResult(Status.ERROR, f'lookup {owner}.{rule.name}: {error}')
 
@@ -74,13 +79,73 @@ def _prepare[KeyT, IdT: str | int, MatchT](
     :returns: Complete matcher.
     :raises ValueError: If a candidate or preparation input is invalid.
     """
-    if set(inputs) != {item.name for item in rule.inputs}:
+    if set(inputs) - {item.name for item in rule.inputs}:
         raise ValueError('preparation parameters do not match lookup contract')
-    for parameter in rule.inputs:
+    parameters = {item.name: item for item in rule.inputs}
+    normalized_inputs = dict(inputs)
+    references = {item.name: item.value for item in rule.references}
+    definitions = {item.identity: item for item in session.layout.model.definitions}
+    batch = Batch(session)
+    computing = Computing(session, batch, Configuration(batch), {})
+
+    def resolve(name: str) -> object:
+        """Resolve a lexical constant, dictionary member, or preparation input.
+
+        :param name: Expression name or qualified member.
+        :returns: Resolved value.
+        """
+        if name.startswith('input.'):
+            return input_value(name.removeprefix('input.'))
+        root, separator, member = name.partition('.')
+        target = references[root]
+        definition = definitions[target]
+        if separator:
+            return session.code_types[target](member)
+        prior = references.copy()
+        references.clear()
+        references.update({item.name: item.value for item in definition.references})
         try:
-            session.scalar_rule(parameter.type).check(inputs[parameter.name])
+            return evaluate(cast(Expression, definition.initializer), resolve, UNSET)
+        finally:
+            references.clear()
+            references.update(prior)
+
+    def input_value(name: str) -> object:
+        """Bind and validate one input, evaluating a declared default once.
+
+        :param name: Declared input name.
+        :returns: Validated value or the omission sentinel.
+        """
+        parameter = parameters[name]
+        value = normalized_inputs.get(name, UNSET)
+        if value is UNSET and parameter.default is not None:
+            value = evaluate(parameter.default, resolve, UNSET)
+            if parameter.type.name == 'date' and isinstance(value, str):
+                value = date.fromisoformat(value)
+        if value is UNSET:
+            if parameter.required:
+                raise ValueError(
+                    f'preparation parameters do not match lookup contract: missing {name}'
+                )
+            normalized_inputs[name] = value
+            return value
+        try:
+            if parameter.type.name in ('float', 'datetime') or (
+                parameter.type.target in definitions
+                and definitions[parameter.type.target].kind == 'value'
+            ):
+                value = computing.boundary(parameter.type, value)
+            else:
+                if parameter.type.kind == 'reference' and isinstance(value, str):
+                    value = EntityRef[object](parameter.type.target, value)
+                value = session.scalar_rule(parameter.type).check(value)
         except (ValueError, TypeError, InvalidOperation) as error:
-            raise ValueError(f'parameter {parameter.name}: {error}') from error
+            raise ValueError(f'parameter {name}: {error}') from error
+        normalized_inputs[name] = value
+        return value
+
+    for parameter in rule.inputs:
+        input_value(parameter.name)
     fields: list[KeyField] = []
     for key in rule.keys:
         try:
@@ -95,7 +160,6 @@ def _prepare[KeyT, IdT: str | int, MatchT](
             InvalidOperation,
         ) as error:
             raise ValueError(f'key {key.name}: {error}') from error
-    batch = Batch(session)
     layout = session.layout
     coordinates: dict[tuple[int, int], tuple[tuple[tuple[str, str], ...], date | None]] = {}
     for key_index, key in enumerate(rule.keys):
@@ -106,9 +170,18 @@ def _prepare[KeyT, IdT: str | int, MatchT](
             bound: dict[str, object] = {}
             for binding in step.bindings:
                 try:
-                    argument = binding_value(session, binding, inputs)
-                    if not binding.input_name:
-                        argument = session.scalar_rule(binding.type).check(argument)
+                    argument = (
+                        evaluate(binding.expression, resolve, UNSET)
+                        if not binding.input_name and not binding.fixed_kind and binding.expression
+                        else binding_value(session, binding, normalized_inputs)
+                    )
+                    if argument is UNSET:
+                        raise ValueError('missing required value')
+                    if binding.type.name == 'code' and type(argument) is str:
+                        argument = session.code_types[binding.type.arguments[0].target](argument)
+                    if binding.type.name == 'string' and isinstance(argument, str):
+                        argument = str(argument)
+                    argument = session.scalar_rule(binding.type).check(argument)
                     bound[binding.name] = argument
                 except (ValueError, TypeError, InvalidOperation) as error:
                     raise ValueError(

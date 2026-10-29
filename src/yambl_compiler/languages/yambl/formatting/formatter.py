@@ -190,7 +190,12 @@ def format_document(document: Document) -> str:
                     )
             for lookup in children(declaration, "lookup"):
                 lookup_items = tokens(lookup)
-                opening = line_piece(lookup_items[:3], 1)
+                for metadata in annotations(lookup):
+                    pieces.append(line_piece(tokens(metadata), 1))
+                start = next(
+                    index for index, token in enumerate(lookup_items) if token.type == 'LOOKUP'
+                )
+                opening = line_piece(lookup_items[start : start + 3], 1)
                 ending = line_piece(lookup_items[-1:], 1)
                 pieces.extend((opening, ending))
                 blocks.append((opening.end, ending.start))

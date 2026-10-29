@@ -405,10 +405,10 @@ class Checker:
     def declare_inputs(self, declaration: Tree[Token]) -> None:
         """Read explicitly declared optional inputs before dependency inference.
 
-        :param declaration: Computed field with checked metadata.
+        :param declaration: Computed field or lookup with checked metadata.
         :returns: None; records input contracts and declaration defaults.
         """
-        for call in annotations(declaration, 'extra_input_params'):
+        for call in annotations(declaration, 'extra_input_param'):
             bound: list[tuple[str, str, Resolved]] = []
             bind_call(call, declaration, self.unit, [], bound_arguments=bound)
             pairs = children(call, 'pair_argument')

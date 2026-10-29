@@ -37,9 +37,9 @@ prefix: 'demo'
 
 ## JSON IR 与生成
 
-IR 包含内置定义、已解析声明、字段身份及实现、类型、计算和源位置。当前 `format_revision` 为 8；格式尚未固化，旧版本需从模型重新编译，不提供迁移。语义 SHA-256 摘要排除源位置和编译器版本。整数和 decimal 的载荷以字符串保精度；输出是 UTF-8 JSON。IR 校验不读取源模型，会检查内嵌内容、引用及派生视图的一致性。源注释和 Markdown 块不作为 IR 内容保存。
+IR 包含内置定义、已解析声明、字段身份及实现、类型、计算和源位置。当前 `format_revision` 为 9；格式尚未固化，旧版本需从模型重新编译，不提供迁移。语义 SHA-256 摘要排除源位置和编译器版本。整数和 decimal 的载荷以字符串保精度；输出是 UTF-8 JSON。IR 校验不读取源模型，会检查内嵌内容、引用及派生视图的一致性。源注释和 Markdown 块不作为 IR 内容保存。
 
-revision 8 的 IR 保存 lookup 的键、解析后的字段路径、参数绑定及继承视图，并在独立校验时重建规则。`check` 检查 lookup 的字段路径和参数，`compile` 将规则写入 IR，`generate` 为支持的规则生成具名 Key、Matcher 和准备方法。首版支持 ID、static 和 SCD 字段及单值引用路径；计算、config、snapshot、集合展开和 `best_available` 不用于 lookup。
+IR 保存 lookup 的键、解析后的字段路径、参数绑定及继承视图，并在独立校验时重建规则。`check` 检查 lookup 的字段路径和参数，`compile` 将规则写入 IR，`generate` 为支持的规则生成具名 Key、Matcher 和准备方法。当前支持 ID、static 和 SCD 字段及单值引用路径；计算、config、snapshot、集合展开和 `best_available` 不用于 lookup。
 
 Python API 使用 `yambl_compiler.ir.compile_repository(path)`、`validate_ir(model)`、`write_ir(model, path)` 和 `load_ir(path)`；`validate_ir` 返回诊断字符串元组，空元组表示成功，其他操作的无效输入引发 `ValueError`，文件错误引发 `OSError`。使用教程模型时可执行：
 
@@ -127,7 +127,7 @@ assert partial.issues[0].status == Status.NO_ENTRY
 
 ## 计算和配置
 
-计算字段不写物理列。表达式使用 `self.字段::value()` 读取依赖，时态和维度输入由依赖推导；额外可省略输入可通过 `@extra_input_params` 声明。点读取按精确坐标选择，`::best_available(...)` 使用 Hierarchy 排序和适用的回退规则。普通读取未要求时不会自动合并多个 Hierarchy。每个生成计算字段提供 `read_字段(...)` 和对应的批量 request 类与 `reader.read_实体_字段_many(...)`；批量结果保持请求顺序及重复项，整体和逐项结果均需检查。教程同时验证单次与批量计算。
+计算字段不写物理列。表达式使用 `self.字段::value()` 读取依赖，时态和维度输入由依赖推导；额外可省略输入可通过 `@extra_input_param` 声明。点读取按精确坐标选择，`::best_available(...)` 使用 Hierarchy 排序和适用的回退规则。普通读取未要求时不会自动合并多个 Hierarchy。每个生成计算字段提供 `read_字段(...)` 和对应的批量 request 类与 `reader.read_实体_字段_many(...)`；批量结果保持请求顺序及重复项，整体和逐项结果均需检查。教程同时验证单次与批量计算。
 
 计算默认严格传播非正常结果，`recover` 显式处理指定状态；`best_effort=True` 可保留部分成功贡献及 `Partial.issues`，但不把 `ERROR` 当作可忽略贡献。整数和 decimal 计算保持精度，`/` 返回近似 float，`//` 向下取整。并非所有静态可检查的模型类型都有存储实现。
 

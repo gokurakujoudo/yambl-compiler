@@ -534,7 +534,7 @@ class Lowering:
                         value = parameter.value
                         kind: LookupFixedKind = ''
                         text = target = ''
-                        if not parameter.input_name:
+                        if not parameter.input_name and value is not None:
                             if parameter.requirement.type.name == 'code':
                                 kind = 'code'
                                 dictionary = parameter.requirement.type.args[0].key
@@ -605,6 +605,11 @@ class Lowering:
                     tuple(Text(n, t) for n, t in sorted(references.items())),
                     rule.declaration.data == 'extension',
                     self.source(rule.unit, rule.node),
+                    self.calls(
+                        rule.node,
+                        rule.unit,
+                        Resolver(rule.unit, [], self.analysis.entities.field_types(key), True),
+                    ),
                 )
             )
         return tuple(result)
@@ -891,7 +896,7 @@ class Lowering:
         )
         return seal(
             Model(
-                8,
+                9,
                 self.version,
                 self.prefix,
                 primitives,

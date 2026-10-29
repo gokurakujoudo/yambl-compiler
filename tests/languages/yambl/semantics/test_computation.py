@@ -98,11 +98,11 @@ class ComputationTests(unittest.TestCase):
         )
         source = """entity E {
             snapshot attr value: integer
-            @extra_input_params(day: date = '2026-01-01', 'A date')
-            @extra_input_params(count: integer = 2, description='An integer')
-            @extra_input_params(rate: decimal = 1.2)
-            @extra_input_params(enabled: bool = true)
-            @extra_input_params(label: string = 'x')
+            @extra_input_param(day: date = '2026-01-01', 'A date')
+            @extra_input_param(count: integer = 2, description='An integer')
+            @extra_input_param(rate: decimal = 1.2)
+            @extra_input_param(enabled: bool = true)
+            @extra_input_param(label: string = 'x')
             computed attr result: integer {
                 return self.value::value(as_of_date=input.day ?? input.unused_date) + input.count
             }
@@ -116,16 +116,16 @@ class ComputationTests(unittest.TestCase):
         self.assertFalse(inputs['count'].required)
         for metadata, message in [
             (
-                '@extra_input_params(day: date) @extra_input_params(day: date)',
+                '@extra_input_param(day: date) @extra_input_param(day: date)',
                 'duplicate extra input',
             ),
-            ("@extra_input_params(day: date = '2026-02-30')", 'valid YYYY-MM-DD'),
-            ("@extra_input_params(day: date = '20260101')", 'valid YYYY-MM-DD'),
-            ('@extra_input_params(day: date = EMPTY)', 'incompatible decorator'),
-            ('@extra_input_params(day: collection<E>)', 'incompatible decorator pair'),
-            ('@extra_input_params(day: dimension_ref)', 'incompatible decorator pair'),
-            ('@extra_input_params()', 'missing decorator argument'),
-            ('@extra_input_params(best_effort: bool)', 'reserved calculation parameter'),
+            ("@extra_input_param(day: date = '2026-02-30')", 'valid YYYY-MM-DD'),
+            ("@extra_input_param(day: date = '20260101')", 'valid YYYY-MM-DD'),
+            ('@extra_input_param(day: date = EMPTY)', 'incompatible decorator'),
+            ('@extra_input_param(day: collection<E>)', 'incompatible decorator pair'),
+            ('@extra_input_param(day: dimension_ref)', 'incompatible decorator pair'),
+            ('@extra_input_param()', 'missing decorator argument'),
+            ('@extra_input_param(best_effort: bool)', 'reserved calculation parameter'),
         ]:
             with self.subTest(metadata=metadata):
                 self.assertTrue(

@@ -425,7 +425,8 @@ class Lookup(Record):
 
     :param name: Declared rule name.
     :param keys: External keys in declaration order.
-    :param inputs: Required preparation parameters in name order.
+    :param inputs: Preparation parameters in name order.
+    :param decorators: Declared metadata used to reconstruct input contracts.
     :param references: Lexical names and their resolved identities.
     :param extension: Whether this rule was declared in an extension.
     :param source: Original rule location.
@@ -437,6 +438,7 @@ class Lookup(Record):
     references: tuple[Text, ...]
     extension: bool
     source: Source
+    decorators: tuple[Call, ...] = ()
 
 
 @dataclass(frozen=True)

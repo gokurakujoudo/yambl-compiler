@@ -60,7 +60,7 @@ class ComputationIRTests(FilesystemCase):
     def test_pair_defaults_and_description_round_trip_without_sources(self):
         self.write(
             'a.yambl',
-            "entity E { id key: string snapshot attr price: decimal @extra_input_params(day: date = '2026-01-01', 'Valuation day') computed attr total: decimal { return self.price::value(as_of_date=input.day ?? input.other_day) } }",
+            "entity E { id key: string snapshot attr price: decimal @extra_input_param(day: date = '2026-01-01', 'Valuation day') computed attr total: decimal { return self.price::value(as_of_date=input.day ?? input.other_day) } }",
         )
         model = compile_repository(self.root)
         self.write('a.yambl', 'source intentionally unavailable')

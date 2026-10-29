@@ -23,7 +23,7 @@ extension_header: EXTEND NAME
 field: annotation* field_body
 field_body: (ID | ATTR | STATIC ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) NAME ":" type_expr default_value?
           | COMPUTED ATTR NAME ":" type_expr computation
-lookup: LOOKUP NAME "{" lookup_key* "}"
+lookup: annotation* LOOKUP NAME "{" lookup_key* "}"
 lookup_key: NAME "=" calculation
 dimension: DIMENSION NAME "{" dimension_value dimension_hierarchy? dimension_fallback? "}"
 dimension_value: VALUE NAME ":" type_expr

@@ -87,7 +87,14 @@ def convert(name: str, arguments: tuple[object, ...]) -> object:
     if name == 'to_string':
         if isinstance(value, EntityRef):
             return str(value.id)
-        if type(value) not in (str, bool, int, float, Decimal, date, datetime):
+        if not isinstance(value, str) and type(value) not in (
+            bool,
+            int,
+            float,
+            Decimal,
+            date,
+            datetime,
+        ):
             raise ValueError('to_string requires a scalar value')
         if isinstance(value, datetime):
             return convert('format_datetime', (value,))

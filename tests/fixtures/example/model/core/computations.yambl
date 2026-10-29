@@ -18,8 +18,8 @@ const OTHER_INDUSTRY: string = 'Other'
 
 extend Fund {
 
-    @extra_input_params(industry_date: date, 'Additional issuer\'s industry date if it is different from the as_of_date')
-    @extra_input_params(price_date: date, 'Additional price date if it is different from the as_of_date')
+    @extra_input_param(industry_date: date, 'Additional issuer\'s industry date if it is different from the as_of_date')
+    @extra_input_param(price_date: date, 'Additional price date if it is different from the as_of_date')
     computed attr industry_market_value: mapping<string, money> {
         let holdings = self.holdings::value()
         return holdings.group_by(h ->

@@ -7,6 +7,19 @@ from yambl_compiler.languages.yambl.formatting.formatter import format_document
 
 
 class FormattingTests(unittest.TestCase):
+    def test_lookup_decorator_formatting_is_idempotent(self):
+        source = "entity E { @extra_input_param(day:date='2026-01-01') lookup by_name { name=self.name::value() } attr name:string }"
+        expected = """entity E {
+    @extra_input_param(day: date = '2026-01-01')
+    lookup by_name {
+        name = self.name::value()
+    }
+    attr name: string
+}
+"""
+        self.assertEqual(format_document(document(source)), expected)
+        self.assertEqual(format_document(document(expected)), expected)
+
     def test_lookup_preserves_order_comments_and_multiline_paths(self):
         source = '''entity Security {attr name:string
 lookup by_name { #rule

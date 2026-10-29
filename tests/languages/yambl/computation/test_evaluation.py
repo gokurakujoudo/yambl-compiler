@@ -71,3 +71,12 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(
             evaluate(node, lambda name: 1), StructuredConstant('amount', (('value', 1),))
         )
+
+    def test_missing_values_and_lazy_input_fallback(self):
+        missing = object()
+        for source in ('A', 'input.day'):
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, 'missing value'):
+                evaluate(self.node(source), lambda name: missing, missing)
+        fallback = self.node("input.day ?? 'fallback'")
+        self.assertEqual(evaluate(fallback, lambda name: missing, missing), 'fallback')
+        self.assertEqual(evaluate(fallback, lambda name: 'provided', missing), 'provided')

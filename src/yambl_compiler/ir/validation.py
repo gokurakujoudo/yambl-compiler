@@ -183,8 +183,10 @@ def structural(model: Model) -> list[str]:
             if item.kind == "bool" and item.value not in ("true", "false"):
                 issues.append(path + ".value: invalid calculation boolean")
         elif isinstance(item, LookupBinding):
-            if bool(item.input_name) == bool(item.fixed_kind):
-                issues.append(path + ': expected exactly one input or fixed value')
+            if (bool(item.input_name) and bool(item.fixed_kind)) or not (
+                item.input_name or item.fixed_kind or item.expression
+            ):
+                issues.append(path + ': expected an input, fixed value, or expression')
             if item.fixed_kind != 'code' and item.fixed_target:
                 issues.append(path + '.fixed_target: only codes have a dictionary target')
             if item.fixed_kind == 'code' and not item.fixed_target:
@@ -318,7 +320,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
     """
     try:
         decode(encode(model), Model)
-        if model.format_revision != 8:
+        if model.format_revision != 9:
             return ('$.format_revision: unsupported IR revision; recompile the model repository',)
         issues = structural(model)
         if issues:

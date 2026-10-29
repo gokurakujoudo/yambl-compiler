@@ -56,6 +56,7 @@ class LookupIRTests(unittest.TestCase):
                 'by_issuer_industry': (
                     [('issuer_name', 'string', ()), ('industry', 'string', ())],
                     [
+                        ('as_of_date', 'date', ()),
                         ('classification', 'code', ('decodes.IndustryTypes',)),
                         ('industry_date', 'date', ()),
                     ],
@@ -171,7 +172,7 @@ extend E { lookup by_extension { key = self.key::value() } }
                 )
                 self.assertTrue(validate_ir(forged))
         wire = json.loads(dumps(first))
-        wire['format_revision'] = 7
+        wire['format_revision'] = 8
         with self.assertRaisesRegex(ValueError, 'unsupported IR revision'):
             loads(json.dumps(wire))
 
@@ -212,7 +213,7 @@ extend E { lookup by_extension { key = self.key::value() } }
                         ),
                     ),
                 ),
-                'expected exactly one input or fixed value',
+                'expected an input, fixed value, or expression',
             ),
             (
                 replace(

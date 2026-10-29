@@ -9,7 +9,7 @@ from importlib.metadata import requires
 from pathlib import Path
 
 from yambl_compiler.ir.codec import dumps
-from yambl_compiler.ir.model import CalculationInput, Field, Model, Type
+from yambl_compiler.ir.model import CalculationInput, Call, Field, Model, Type
 from yambl_compiler.storage.backends import Row, repository_contents
 from yambl_compiler.storage.contract import dumps as contract_json
 from yambl_compiler.storage.documentation import (
@@ -161,6 +161,23 @@ def python_package(layout: Layout, package: str) -> str:
             for p in field.calculation.inputs
         ]
 
+    def input_descriptions(calls: tuple[Call, ...], name: str) -> list[str]:
+        """Render the descriptions declared for one input as safe literal blocks.
+
+        :param calls: Metadata applied to the declaration.
+        :param name: Input parameter name.
+        :returns: rST literal sections in declaration order.
+        """
+        return [
+            line
+            for call in calls
+            if call.target == 'builtins.extra_input_param'
+            and any(bound.name == 'parameter' and bound.key == name for bound in call.bound)
+            for bound in call.bound
+            if bound.name == 'description' and bound.type.exact is not None
+            for line in literal_section('Input ' + name, bound.type.exact.text)
+        ]
+
     def computed_doc(field: Field) -> list[str]:
         """Describe inferred parameters, provenance and computation caching.
 
@@ -186,17 +203,10 @@ def python_package(layout: Layout, package: str) -> str:
             ":param best_effort: Keep successful contributions with PARTIAL when non-error rows fail; defaults to false.",
         ]
         for p in field.calculation.inputs:
-            descriptions = [
-                item.type.exact.text
-                for call in field.decorators
-                if call.target == 'builtins.extra_input_params'
-                and any(b.name == 'parameter' and b.key == p.name for b in call.bound)
-                for item in call.bound
-                if item.name == 'description' and item.type.exact is not None
-            ]
-            for description in descriptions:
+            descriptions = input_descriptions(field.decorators, p.name)
+            if descriptions:
                 text.append('')
-                text.extend(literal_section('Input ' + p.name, description))
+                text.extend(descriptions)
             sources = ", ".join(sorted({f"{s.path}:{s.line}:{s.column}" for s in p.sites}))
             default = (
                 (" Defaults to input." + p.default.value + " when omitted.")
@@ -612,9 +622,18 @@ def python_package(layout: Layout, package: str) -> str:
                     f'{rule.source.path}:{rule.source.line}:{rule.source.column}: generated reader method collision: {method}'
                 )
             lookup_methods.add(method)
-            args = ', '.join(f'{item.name}: {python_type(item.type)}' for item in rule.inputs)
+            args = ', '.join(
+                f'{item.name}: {parameter_type(item)}'
+                + (' = UNSET' if not item.required or item.default is not None else '')
+                for item in rule.inputs
+            )
             lookup_parameters = ', *, ' + args if args else ''
             values = '{' + ', '.join(f'{item.name!r}: {item.name}' for item in rule.inputs) + '}'
+            input_docs = [
+                line
+                for item in rule.inputs
+                for line in input_descriptions(rule.decorators, item.name)
+            ]
             lines.extend(
                 [
                     '',
@@ -623,8 +642,9 @@ def python_package(layout: Layout, package: str) -> str:
                         [
                             f'Prepare {rule.name} for {entity_id} and its descendants.',
                             '',
+                            *input_docs,
                             *(
-                                f':param {item.name}: Required value for this preparation.'
+                                f':param {item.name}: Value for this preparation.'
                                 for item in rule.inputs
                             ),
                             ':returns: A detached matcher, or ERROR if preparation fails.',
@@ -846,6 +866,7 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
         text = text.replace(
             "yambl_compiler.languages.yambl.computation.records", "._computation_records"
         )
+        text = text.replace('yambl_compiler.languages.yambl.computation.evaluation', '._evaluation')
         for module in modules:
             text = text.replace("yambl_compiler.storage." + module, "._" + module)
         contents[package + "/_" + name + ".py"] = text
@@ -873,6 +894,13 @@ def generate(model: Model, output: Path, package: str, dry_run: bool = False) ->
     contents[package + "/_computation_records.py"] = (
         Path(__file__).parents[1] / "languages/yambl/computation/records.py"
     ).read_text(encoding="utf-8")
+    contents[package + '/_evaluation.py'] = (
+        (Path(__file__).parents[1] / 'languages/yambl/computation/evaluation.py')
+        .read_text(encoding='utf-8')
+        .replace('yambl_compiler.languages.yambl.computation.records', '._computation_records')
+        .replace('yambl_compiler.storage.arithmetic', '._arithmetic')
+        .replace('yambl_compiler.storage.conversions', '._conversions')
+    )
     data_name = (
         "".join(word.capitalize() for word in package.removesuffix("_model").split("_")) + "Data"
     )

@@ -382,6 +382,7 @@ class Restoring:
                 Tree(
                     'lookup',
                     [
+                        *self.calls(lookup.decorators),
                         token('lookup', 'LOOKUP', lookup.source),
                         token(lookup.name, 'NAME', lookup.source),
                         token('{', 'LBRACE', lookup.source),

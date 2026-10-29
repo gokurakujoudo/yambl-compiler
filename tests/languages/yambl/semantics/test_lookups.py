@@ -343,16 +343,99 @@ class LookupTests(unittest.TestCase):
                 @temporal(choice: date) scd attr y: string
                 lookup conflict { x = self.x::value() y = self.y::value() }
                 lookup fixed { x = self.x::value(choice=D.One) y = self.y::value(choice='2026-10-29') }
-                lookup bad { x = self.x::value(choice=D.Missing) y = self.y::value(choice=input.day ?? input.other) }
+                lookup bad { x = self.x::value(choice=D.Missing) y = self.y::value(choice=self.y::value()) }
             }
         """)])
         messages = [d.message for d in analysis.diagnostics]
         self.assertIn('conflicting inferred parameter: choice', messages)
         self.assertIn(
-            'lookup binding requires a literal, constant, dictionary member or input', messages
+            'lookup binding requires a pure expression of inputs, literals, constants or dictionary members',
+            messages,
         )
         self.assertTrue(any('Missing' in message for message in messages))
         self.assertEqual(analysis.lookups[('', 'E')]['fixed'].inputs, ())
+
+    def test_declared_optional_inputs_and_pure_bindings(self):
+        analysis = analyze([document("""
+            entity E {
+                @temporal(day: date) scd attr name: string
+                @extra_input_param(industry_date: date, 'Optional industry date')
+                lookup by_name {
+                    name = self.name::value(day=input.industry_date ?? input.as_of_date)
+                }
+            }
+        """)])
+        self.assertEqual([item.message for item in analysis.diagnostics], [])
+        rule = analysis.lookups[('', 'E')]['by_name']
+        self.assertEqual(
+            [(item.name, item.type.name, item.required) for item in rule.inputs],
+            [('as_of_date', 'date', True), ('industry_date', 'date', False)],
+        )
+        self.assertEqual(rule.keys[0].steps[0].parameters[0].binding.value, '??')
+
+    def test_lookup_decorator_rejects_legacy_and_wrong_target(self):
+        analysis = analyze([document("""
+            entity E {
+                @extra_input_params(day: date)
+                lookup old { x = self.name::value() }
+                @temporal(day: date)
+                lookup wrong { x = self.name::value() }
+                attr name: string
+            }
+        """)])
+        messages = [item.message for item in analysis.diagnostics]
+        self.assertIn('use @extra_input_param instead of @extra_input_params', messages)
+        self.assertIn('decorator temporal does not allow this target', messages)
+        declared = analyze([document("""
+            @targets(DecoratorTargets.EntityAttr)
+            decorator @extra_input_params()
+            entity E { @extra_input_params attr x: string }
+        """)])
+        self.assertEqual(
+            [item.message for item in declared.diagnostics].count(
+                'use @extra_input_param instead of @extra_input_params'
+            ),
+            2,
+        )
+
+    def test_conditional_and_boolean_input_types(self):
+        analysis = analyze([document("""
+            entity E {
+                @temporal(day: date) scd attr x: string
+                lookup by_x {
+                    x = self.x::value(day=if input.first and not input.second then input.start else input.end)
+                }
+            }
+        """)])
+        self.assertEqual([item.message for item in analysis.diagnostics], [])
+        self.assertEqual(
+            [(item.name, item.type.name) for item in analysis.lookups[('', 'E')]['by_x'].inputs],
+            [('end', 'date'), ('first', 'bool'), ('second', 'bool'), ('start', 'date')],
+        )
+
+    def test_pure_calls_arithmetic_and_invalid_bindings(self):
+        analysis = analyze([document("""
+            entity E {
+                dimension source { value index: string }
+                @dimension(source) @temporal(day: date) scd attr name: string
+                @extra_input_param(offset: integer)
+                lookup by_name {
+                    name = self.name::value(day=parse_date(input.text), index=to_string(input.offset + 1))
+                }
+                lookup fixed {
+                    name = self.name::value(day=parse_date('2026-10-29'), index=to_string(1 + 2))
+                }
+            }
+        """)])
+        messages = [item.message for item in analysis.diagnostics]
+        self.assertEqual(messages, [])
+        rule = analysis.lookups[('', 'E')]['by_name']
+        self.assertEqual(
+            [(item.name, item.type.name) for item in rule.inputs],
+            [('offset', 'integer'), ('text', 'string')],
+        )
+        fixed = analysis.lookups[('', 'E')]['fixed'].keys[0].steps[0].parameters
+        self.assertEqual([item.value for item in fixed], [date(2026, 10, 29), '3'])
 
     def test_supported_types_and_branch_names(self):
         analysis = analyze([document("""
