@@ -197,12 +197,14 @@ class Call(Record):
     :param arguments: Invocation arguments in source order.
     :param bound: Bound parameters in formal order.
     :param source: Application location.
+    :param dimension_identity: Resolved dimension declaration, if applicable.
     """
 
     target: str
     arguments: tuple[Argument, ...]
     bound: tuple[Bound, ...]
     source: Source
+    dimension_identity: str = ''
 
 
 @dataclass(frozen=True)
@@ -286,6 +288,7 @@ class CalculationInput(Record):
     :param required: Whether an unbound input requires a caller value.
     :param default: Optional input-dependent or literal default.
     :param sites: Contributing expression locations.
+    :param default_dimension: Dimension declaring an inherited selector default, if any.
     """
 
     name: str
@@ -293,6 +296,7 @@ class CalculationInput(Record):
     required: bool
     default: CalculationExpression | None
     sites: tuple[Source, ...]
+    default_dimension: str = ''
 
 
 @dataclass(frozen=True)
@@ -341,6 +345,8 @@ class Dimension(Record):
     :param hierarchy_default: Optional selector reference ID.
     :param fallback: Per-instance fallback expression, or None.
     :param source: Original declaration location.
+    :param identity: Qualified dimension declaration identity.
+    :param references: Lexical names used in selection expressions.
     """
 
     name: str
@@ -350,6 +356,24 @@ class Dimension(Record):
     hierarchy_name: str
     hierarchy_default: CalculationExpression | None
     fallback: CalculationExpression | None
+    source: Source
+    identity: str = ''
+    references: tuple[Text, ...] = ()
+
+
+@dataclass(frozen=True)
+class HierarchyEntry(Record):
+    """Represent one named Hierarchy entry.
+
+    :param ordering: Canonical integer ordering.
+    :param value: String or dictionary code.
+    :param dictionary: Qualified Decodes identity for a code, empty for a string.
+    :param source: Declaration location.
+    """
+
+    ordering: str
+    value: str
+    dictionary: str
     source: Source
 
 
@@ -463,9 +487,19 @@ class Definition(Record):
     :param derived: Whether the declaration is derived from the language model.
     :param lookups: Rules declared directly on this entity, including extensions.
     :param effective_lookups: Visible rule names and declaring entity identities.
+    :param hierarchy_entries: Named Hierarchy's declared ordering and values.
     """
 
-    kind: Literal['entity', 'value', 'type_alias', 'decorator', 'decodes', 'constant']
+    kind: Literal[
+        'entity',
+        'value',
+        'type_alias',
+        'decorator',
+        'decodes',
+        'constant',
+        'dimension',
+        'hierarchy',
+    ]
     name: str
     identity: str
     final: bool
@@ -483,6 +517,7 @@ class Definition(Record):
     derived: bool = False
     lookups: tuple[Lookup, ...] = ()
     effective_lookups: tuple[Text, ...] = ()
+    hierarchy_entries: tuple[HierarchyEntry, ...] = ()
 
 
 @dataclass(frozen=True)

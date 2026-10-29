@@ -11,6 +11,7 @@ from yambl_compiler.languages.yambl.semantics.dimensions import check_dimensions
 from yambl_compiler.languages.yambl.semantics.entities import EntityIndex, check_entities
 from yambl_compiler.languages.yambl.semantics.expressions import check_aliases
 from yambl_compiler.languages.yambl.semantics.fields import check_field
+from yambl_compiler.languages.yambl.semantics.hierarchies import hierarchy_entries
 from yambl_compiler.languages.yambl.semantics.lookups import Lookup, check_lookups
 from yambl_compiler.languages.yambl.semantics.symbols import (
     EntityKey,
@@ -76,6 +77,8 @@ def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
                 )
         for decodes in children(unit.document.tree, 'decodes'):
             check_decodes(decodes, unit, diagnostics)
+        for hierarchy in children(unit.document.tree, 'hierarchy'):
+            hierarchy_entries(unit, hierarchy, diagnostics)
     calculations = check_computations(entities, diagnostics, units)
     lookups = check_lookups(sources, entities, diagnostics)
     return Analysis(

@@ -39,7 +39,9 @@ GENERICS = {
     'exact',
 }
 type EntityKey = tuple[str, str]
-type DeclarationKind = Literal['entity', 'decodes', 'value', 'type_alias', 'decorator', 'constant']
+type DeclarationKind = Literal[
+    'entity', 'decodes', 'value', 'type_alias', 'decorator', 'constant', 'dimension', 'hierarchy'
+]
 
 
 @dataclass(frozen=True)
@@ -132,7 +134,16 @@ def model_units(units: Sequence[Unit]) -> list[Unit]:
         return list(units)
     result = list(units)
     world = units[0].world
-    declarations = {'entity', 'value', 'decodes', 'type_alias', 'decorator', 'constant'}
+    declarations = {
+        'entity',
+        'value',
+        'decodes',
+        'type_alias',
+        'decorator',
+        'constant',
+        'dimension',
+        'hierarchy',
+    }
     for builtin in world.builtin_units:
         selected: list[Tree[Token] | Token] = []
         present = False
@@ -238,7 +249,15 @@ def resolve_scopes(
     declarations = {
         declaration_name(node): node
         for doc in builtin_documents
-        for kind in ('entity', 'value', 'decodes', 'type_alias', 'decorator')
+        for kind in (
+            'entity',
+            'value',
+            'decodes',
+            'type_alias',
+            'decorator',
+            'dimension',
+            'hierarchy',
+        )
         for node in children(doc.tree, kind)
     }
     reserved = VALUES | GENERICS | set(declarations) | set(constants or {}) | {'Entity'}
@@ -252,12 +271,14 @@ def resolve_scopes(
             *children(document.tree, 'type_alias'),
             *children(document.tree, 'decorator'),
             *children(document.tree, 'constant'),
+            *children(document.tree, 'dimension'),
+            *children(document.tree, 'hierarchy'),
         ]:
             name = declaration_name(declaration)
             key = symbol_key(document, name)
             pattern = (
                 r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*'
-                if declaration.data in ('value', 'type_alias', 'decorator')
+                if declaration.data in ('value', 'type_alias', 'decorator', 'dimension')
                 else (
                     r'[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*'
                     if declaration.data == 'constant'
@@ -273,9 +294,13 @@ def resolve_scopes(
                             (
                                 'decorator names must use snake_case'
                                 if declaration.data == 'decorator'
-                                else 'value names must use snake_case'
+                                else (
+                                    'dimension names must use snake_case'
+                                    if declaration.data == 'dimension'
+                                    else 'value names must use snake_case'
+                                )
                             )
-                            if declaration.data in ('value', 'type_alias', 'decorator')
+                            if declaration.data in ('value', 'type_alias', 'decorator', 'dimension')
                             else (
                                 'constant names must use UPPER_SNAKE_CASE'
                                 if declaration.data == 'constant'
@@ -342,6 +367,8 @@ def resolve_scopes(
                 'type_alias',
                 'decorator',
                 'constant',
+                'dimension',
+                'hierarchy',
             ):
                 world.declarations[('builtins', declaration_name(node))] = (
                     builtin,
@@ -356,6 +383,8 @@ def resolve_scopes(
                 'type_alias',
                 'decorator',
                 'constant',
+                'dimension',
+                'hierarchy',
             ):
                 world.declarations[symbol_key(unit.document, declaration_name(node))] = (unit, node)
         for name, symbol in builtin_scope.items():

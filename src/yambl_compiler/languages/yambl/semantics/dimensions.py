@@ -1,4 +1,4 @@
-"""Collect entity-scoped dimensions and check their field applications."""
+"""Resolve entity and shared dimensions and check their field applications."""
 
 import re
 from collections.abc import Sequence
@@ -29,7 +29,8 @@ from yambl_compiler.languages.yambl.syntax.parser import (
 class Dimension:
     """Retain a resolved dimension's names and instance-dependent selection policy.
 
-    :param owner: Entity declaring the dimension.
+    :param owner: Entity declaring the dimension, or the shared declaration identity.
+    :param identity: Complete declaration identity independent of its use site.
     :param name: Local declaration name.
     :param unit: Original lexical scope.
     :param node: Declaration syntax.
@@ -41,6 +42,7 @@ class Dimension:
     """
 
     owner: EntityKey
+    identity: EntityKey
     name: str
     unit: Unit
     node: Tree[Token]
@@ -96,7 +98,7 @@ def collect_dimensions(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> 
 def resolve_dimension(
     unit: Unit, owner: EntityKey, name: str, diagnostics: list[Diagnostic]
 ) -> Dimension | None:
-    """Find an inherited dimension and resolve its original lexical types.
+    """Find a local, inherited or visible shared dimension in its lexical scope.
 
     :param unit: Use-site compilation world.
     :param owner: Entity owning the decorated field.
@@ -106,52 +108,64 @@ def resolve_dimension(
     """
     for key in [owner, *unit.world.parents.get(owner, [])]:
         site = unit.world.dimensions.get(key, {}).get(name)
-        if site is None:
-            continue
-        scope, node = site
-        value = children(node, "dimension_value")[0]
-        hierarchy = children(node, "dimension_hierarchy")
-        fallback = children(node, "dimension_fallback")
-        resolver = Resolver(scope, diagnostics, {})
-        value_type = resolver.resolve(children(value, "type_expr")[0])
-        hierarchy_default = None
-        if hierarchy:
-            selector = resolver.resolve(children(hierarchy[0], "type_expr")[0])
-            if selector.key != scope.scope["Hierarchy"].key:
-                diagnostics.append(
-                    diagnostic(
-                        scope.document,
-                        hierarchy[0],
-                        "dimension hierarchy requires Hierarchy",
-                    )
-                )
-            defaults = [part for part in branches(hierarchy[0]) if part.data != "type_expr"]
-            if defaults:
-                hierarchy_default = expression(defaults[0])
-                if hierarchy_default.kind != "string":
-                    diagnostics.append(
-                        diagnostic(
-                            scope.document,
-                            hierarchy[0],
-                            "hierarchy default requires a string reference ID",
-                        )
-                    )
-        if value_type.name not in ("string", "code"):
-            diagnostics.append(
-                diagnostic(scope.document, value, "dimension value must be string or code")
+        if site is not None:
+            return dimension_at(
+                site[0], site[1], key, (key[0], key[1] + '::dimension.' + name), diagnostics
             )
-        return Dimension(
-            key,
-            name,
-            scope,
-            node,
-            str(tokens(value)[1]),
-            value_type,
-            str(tokens(hierarchy[0])[1]) if hierarchy else "",
-            hierarchy_default,
-            expression(branches(fallback[0])[0]) if fallback else None,
+    symbol = unit.scope.get(name)
+    if symbol is None or symbol.kind != 'dimension':
+        return None
+    scope, node = unit.world.declarations[symbol.key]
+    return dimension_at(scope, node, symbol.key, symbol.key, diagnostics)
+
+
+def dimension_at(
+    scope: Unit,
+    node: Tree[Token],
+    owner: EntityKey,
+    identity: EntityKey,
+    diagnostics: list[Diagnostic],
+) -> Dimension:
+    """Resolve one dimension at its original declaration site.
+
+    :param scope: Declaration scope.
+    :param node: Dimension syntax.
+    :param owner: Owning entity or shared declaration.
+    :param identity: Full declaration identity.
+    :param diagnostics: Destination for source errors.
+    :returns: Checked dimension contract.
+    """
+    value = children(node, 'dimension_value')[0]
+    hierarchy = children(node, 'dimension_hierarchy')
+    fallback = children(node, 'dimension_fallback')
+    resolver = Resolver(scope, diagnostics, {})
+    value_type = resolver.resolve(children(value, 'type_expr')[0])
+    hierarchy_default = None
+    if hierarchy:
+        selector = resolver.resolve(children(hierarchy[0], 'type_expr')[0])
+        if selector.key != scope.scope['Hierarchy'].key:
+            diagnostics.append(
+                diagnostic(scope.document, hierarchy[0], 'dimension hierarchy requires Hierarchy')
+            )
+        defaults = [part for part in branches(hierarchy[0]) if part.data != 'type_expr']
+        if defaults:
+            hierarchy_default = expression(defaults[0])
+    if value_type.name not in ('string', 'code'):
+        diagnostics.append(
+            diagnostic(scope.document, value, 'dimension value must be string or code')
         )
-    return None
+    return Dimension(
+        owner,
+        identity,
+        declaration_name(node),
+        scope,
+        node,
+        str(tokens(value)[1]),
+        value_type,
+        str(tokens(hierarchy[0])[1]) if hierarchy else '',
+        hierarchy_default,
+        expression(branches(fallback[0])[0]) if fallback else None,
+    )
 
 
 def field_dimension(
@@ -212,6 +226,23 @@ def check_dimensions(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
     """
     visited: set[tuple[EntityKey, str]] = set()
     for unit in units:
+        for node in children(unit.document.tree, 'dimension'):
+            for role in [
+                *children(node, 'dimension_value'),
+                *children(node, 'dimension_hierarchy'),
+            ]:
+                if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', str(tokens(role)[1])):
+                    diagnostics.append(
+                        diagnostic(unit.document, role, 'dimension names must use snake_case')
+                    )
+            if any(token.type == 'SELF' for token in tokens(node)):
+                diagnostics.append(
+                    diagnostic(unit.document, node, 'shared dimension cannot use self')
+                )
+            name = declaration_name(node)
+            symbol = unit.scope.get(name)
+            if symbol is not None and symbol.kind == 'dimension':
+                dimension_at(unit, node, symbol.key, symbol.key, diagnostics)
         for owner, definitions in unit.world.dimensions.items():
             for name, (scope, node) in definitions.items():
                 if (owner, name) in visited:

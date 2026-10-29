@@ -27,6 +27,7 @@ from yambl_compiler.storage.contract import decode, load_contract, loads
 from yambl_compiler.storage.records import FILE_REVISION, Layout, quote
 from yambl_compiler.storage.results import Success
 from yambl_compiler.storage.runtime import Reader
+from yambl_compiler.storage.validation import validate_hierarchies
 from yambl_compiler.transactions.editing import Data
 from yambl_compiler.transactions.execution import Execution, prepare_rollback
 from yambl_compiler.transactions.incremental import IncrementalData
@@ -534,6 +535,18 @@ class DataStore:
                 with self.reader_type(data.overlay, self.layout) as reader:
                     reader.validate_candidate(data)
                     changes = data.overlay.changes()
+                    hierarchies = {
+                        str(row['hierarchy_id'])
+                        for table in ('tb_hierarchy', 'tb_hierarchy_entries')
+                        for change in changes.get(table, ())
+                        for row in (change.before, change.after)
+                        if row is not None
+                    }
+                    hierarchy_issues = validate_hierarchies(self.layout, data.select, hierarchies)
+                    if hierarchy_issues:
+                        raise ValueError(
+                            f'candidate hierarchy validation failed: {hierarchy_issues}'
+                        )
                     dictionaries = {
                         str(row['decodes_id'])
                         for table in ('tb_decodes', 'tb_decodes_entries')

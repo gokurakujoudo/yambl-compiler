@@ -1,6 +1,6 @@
 """Typed read outcomes without implicit fallback or propagation operators."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import ClassVar, Literal
 
@@ -113,3 +113,15 @@ class EntityRef[T]:
 
     target: str
     id: str | int
+
+
+@dataclass(frozen=True)
+class HierarchyView:
+    """Identify a read-only hierarchy derived from a Decodes instance.
+
+    :param dictionary: Decodes instance ID, resolved in the current read session.
+    :param session: Identity of the creating read session.
+    """
+
+    dictionary: str
+    session: object = field(repr=False)

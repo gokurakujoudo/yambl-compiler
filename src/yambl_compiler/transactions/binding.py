@@ -94,6 +94,10 @@ class Catalog:
                     raise ValueError(f'flags dictionary is read-only: {id_}')
                 if deleting:
                     raise ValueError(f'model dictionary cannot be deleted: {id_}')
+        elif entity.definition.identity == 'builtins.Hierarchy' and deleting:
+            definition = self.definitions.get(id_)
+            if definition is not None and definition.kind == 'hierarchy':
+                raise ValueError(f'model hierarchy cannot be deleted: {id_}')
 
     def field(self, entity: Entity, name: str) -> tuple[Field, StoredField]:
         """Resolve an effective writable field.

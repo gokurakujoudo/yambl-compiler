@@ -583,7 +583,7 @@ class GenerationTests(FilesystemCase):
             json.loads(schema_path.read_text(encoding="utf-8"))["$defs"]["Model"]["properties"][
                 "format_revision"
             ]["const"],
-            9,
+            10,
         )
         self.assertFalse(run_generation(replace(schema_args, output=""), False).ok)
         self.assertFalse(run_generation(replace(schema_args, output="schema.txt"), False).ok)

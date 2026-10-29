@@ -150,6 +150,37 @@ def validate_dictionaries(
     return tuple(issues)
 
 
+def validate_hierarchies(
+    layout: Layout,
+    select: Callable[[str, Mapping[str, object]], list[Row]],
+    hierarchies: set[str],
+) -> tuple[ValidationIssue, ...]:
+    """Protect model-declared Hierarchy entries in a data snapshot.
+
+    :param layout: Generated model contract.
+    :param select: Row selection on the candidate snapshot.
+    :param hierarchies: Hierarchy identities to inspect.
+    :returns: Diagnostics for missing or changed model entries.
+    """
+    issues: list[ValidationIssue] = []
+    for definition in layout.model.definitions:
+        if definition.kind != 'hierarchy' or definition.identity not in hierarchies:
+            continue
+        identity = definition.identity
+        headers = select('tb_hierarchy', {'hierarchy_id': identity})
+        if len(headers) != 1 or headers[0].get('hierarchy_entries__state') != STATE_CODES['VALUE']:
+            issues.append(ValidationIssue(identity, 'model hierarchy missing or entries not VALUE'))
+            continue
+        rows = select('tb_hierarchy_entries', {'hierarchy_id': identity})
+        entries = {str(row['ordering']): str(row['entry_value']) for row in rows}
+        for entry in definition.hierarchy_entries:
+            if entries.get(entry.ordering) != entry.value:
+                issues.append(
+                    ValidationIssue(identity, f'model hierarchy entry changed: {entry.ordering}')
+                )
+    return tuple(issues)
+
+
 def validate_data(
     layout: Layout,
     data: dict[str, list[Row]],
@@ -172,6 +203,15 @@ def validate_data(
                 row for row in data[name] if all(row[key] == value for key, value in keys.items())
             ],
             {d.identity for d in layout.model.definitions if d.kind == 'decodes'},
+        )
+    )
+    issues.extend(
+        validate_hierarchies(
+            layout,
+            lambda name, keys: [
+                row for row in data[name] if all(row[key] == value for key, value in keys.items())
+            ],
+            {d.identity for d in layout.model.definitions if d.kind == 'hierarchy'},
         )
     )
     tables = {t.name: t for t in layout.tables}

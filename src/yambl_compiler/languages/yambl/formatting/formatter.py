@@ -130,7 +130,14 @@ def format_document(document: Document) -> str:
     # The start and field rules contain only subtrees, as specified by grammar.lark.
     for declaration in cast(list[Tree[Token]], document.tree.children):
         items = tokens(declaration)
-        if declaration.data in ('entity', 'decodes', 'extension', 'value'):
+        if declaration.data in (
+            'entity',
+            'decodes',
+            'extension',
+            'value',
+            'dimension',
+            'hierarchy',
+        ):
             for metadata in annotations(declaration):
                 pieces.append(line_piece(tokens(metadata), 0))
             header_tokens = tokens(children(declaration, f"{declaration.data}_header")[0])
@@ -170,12 +177,19 @@ def format_document(document: Document) -> str:
                                 parentheses.append(cast(int, item.end_pos))
                             elif str(item) == ')':
                                 blocks.append((parentheses.pop(), cast(int, item.start_pos)))
-            for dimension in children(declaration, "dimension"):
-                dimension_items = tokens(dimension)
-                opening = line_piece(dimension_items[:3], 1)
-                ending = line_piece(dimension_items[-1:], 1)
-                pieces.extend((opening, ending))
-                blocks.append((opening.end, ending.start))
+            dimensions = (
+                [declaration]
+                if declaration.data == 'dimension'
+                else children(declaration, 'dimension')
+            )
+            for dimension in dimensions:
+                indent = 0 if dimension is declaration else 1
+                if indent:
+                    dimension_items = tokens(dimension)
+                    opening = line_piece(dimension_items[:3], indent)
+                    ending = line_piece(dimension_items[-1:], indent)
+                    pieces.extend((opening, ending))
+                    blocks.append((opening.end, ending.start))
                 for role in [
                     *children(dimension, "dimension_value"),
                     *children(dimension, "dimension_hierarchy"),
@@ -184,7 +198,7 @@ def format_document(document: Document) -> str:
                     pieces.append(
                         line_piece(
                             tokens(role),
-                            2,
+                            indent + 1,
                             calculation=role.data == "dimension_fallback",
                         )
                     )
@@ -209,6 +223,8 @@ def format_document(document: Document) -> str:
                         elif str(item) == ')':
                             blocks.append((lookup_parentheses.pop(), cast(int, item.start_pos)))
             for entry in children(declaration, 'entry'):
+                pieces.append(line_piece(tokens(entry), 1))
+            for entry in children(declaration, 'hierarchy_entry'):
                 pieces.append(line_piece(tokens(entry), 1))
         else:
             annotation_offsets: set[int | None] = set()

@@ -186,18 +186,24 @@ class Resolver:
                     if params:
                         self.issue(node, 'invalid parameters for Entity')
                     result = Term(ENTITY)
-                elif symbol is not None and symbol.kind not in ('decorator', 'constant'):
+                elif symbol is not None and symbol.kind not in (
+                    'decorator',
+                    'constant',
+                    'dimension',
+                ):
                     if params:
                         self.issue(
                             node,
                             f'invalid parameters for {name}; do not mix positional and named parameters',
                         )
-                    if symbol.kind == 'decodes':
+                    if symbol.kind in ('decodes', 'hierarchy'):
                         result = Term(
                             Resolved(
-                                'Decodes',
+                                'Decodes' if symbol.kind == 'decodes' else 'Hierarchy',
                                 'reference',
-                                key=self.unit.scope['Decodes'].key,
+                                key=self.unit.scope[
+                                    'Decodes' if symbol.kind == 'decodes' else 'Hierarchy'
+                                ].key,
                                 exact=repr(symbol.key),
                                 exact_key=symbol.key,
                             ),

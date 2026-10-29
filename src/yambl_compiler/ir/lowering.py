@@ -28,6 +28,7 @@ from yambl_compiler.ir.model import (
     External,
     Field,
     Formal,
+    HierarchyEntry,
     LogicalField,
     Lookup,
     LookupBinding,
@@ -43,9 +44,17 @@ from yambl_compiler.ir.model import (
 from yambl_compiler.languages.yambl.computation.records import Expression as CalculationExpression
 from yambl_compiler.languages.yambl.semantics.decodes import is_flags
 from yambl_compiler.languages.yambl.semantics.decorators import bind_call, parameters
-from yambl_compiler.languages.yambl.semantics.dimensions import resolve_dimension
+from yambl_compiler.languages.yambl.semantics.dimensions import (
+    Dimension as CheckedDimension,
+)
+from yambl_compiler.languages.yambl.semantics.dimensions import (
+    dimension_at,
+    field_dimension,
+    resolve_dimension,
+)
 from yambl_compiler.languages.yambl.semantics.expressions import Resolver, Term, integer_text
 from yambl_compiler.languages.yambl.semantics.fields import field_name
+from yambl_compiler.languages.yambl.semantics.hierarchies import hierarchy_entries
 from yambl_compiler.languages.yambl.semantics.symbols import (
     GENERICS,
     VALUES,
@@ -413,12 +422,18 @@ class Lowering:
                     )
                 )
             target = qualified(unit.scope[str(tokens(call)[1])].key)
+            dimension = (
+                field_dimension(unit, node, call, [])
+                if target == 'builtins.dimension' and node.data == 'field'
+                else None
+            )
             result.append(
                 Call(
                     target,
                     tuple(arguments),
                     tuple(Bound(n, k, self.type(t)) for n, k, t in bound),
                     self.source(unit, call),
+                    qualified(dimension.identity) if dimension else '',
                 )
             )
         return tuple(
@@ -479,6 +494,7 @@ class Lowering:
                         )
                         for scope, site in p.sites
                     ),
+                    qualified(p.default_dimension) if p.default_dimension else '',
                 )
                 for p in checked.inputs
             ),
@@ -594,6 +610,7 @@ class Lowering:
                         )
                         for scope, span in p.sites
                     ),
+                    qualified(p.default_dimension) if p.default_dimension else '',
                 )
                 for p in rule.inputs
             )
@@ -625,21 +642,51 @@ class Lowering:
         for name in sorted(self.world.dimensions.get(key, {})):
             dimension = resolve_dimension(unit, key, name, [])
             assert dimension is not None
-            syntax = children(children(dimension.node, "dimension_value")[0], "type_expr")[0]
-            resolver = Resolver(dimension.unit, [], self.analysis.entities.field_types(key))
-            result.append(
-                Dimension(
-                    name,
-                    dimension.value_name,
-                    self.expression(syntax, dimension.unit, resolver),
-                    self.type(dimension.value_type),
-                    dimension.hierarchy_name,
-                    dimension.hierarchy_default,
-                    dimension.fallback,
-                    self.source(dimension.unit, dimension.node),
-                )
-            )
+            result.append(self.dimension(dimension))
         return tuple(result)
+
+    def dimension(self, dimension: CheckedDimension) -> Dimension:
+        """Lower one dimension in its declaration scope.
+
+        :param dimension: Checked local or shared declaration.
+        :returns: Portable identity, type and lexical selection expressions.
+        """
+        syntax = children(children(dimension.node, 'dimension_value')[0], 'type_expr')[0]
+        resolver = Resolver(dimension.unit, [], self.analysis.entities.field_types(dimension.owner))
+        references: dict[str, str] = {}
+
+        def visit(expression: CalculationExpression) -> None:
+            """Retain declaration names used by selection expressions.
+
+            :param expression: Expression subtree.
+            :returns: None; records resolved names.
+            """
+            if expression.kind == 'name':
+                symbol = dimension.unit.scope.get(expression.value)
+                if symbol is not None:
+                    references[expression.value] = qualified(symbol.key)
+            for child in expression.operands:
+                visit(child)
+            for argument in expression.arguments:
+                visit(argument.expression)
+            for case in expression.cases:
+                visit(case.expression)
+
+        for expression in (dimension.hierarchy_default, dimension.fallback):
+            if expression:
+                visit(expression)
+        return Dimension(
+            dimension.name,
+            dimension.value_name,
+            self.expression(syntax, dimension.unit, resolver),
+            self.type(dimension.value_type),
+            dimension.hierarchy_name,
+            dimension.hierarchy_default,
+            dimension.fallback,
+            self.source(dimension.unit, dimension.node),
+            qualified(dimension.identity),
+            tuple(Text(name, target) for name, target in sorted(references.items())),
+        )
 
     def definition(self, key: EntityKey, unit: Unit, node: Tree[Token]) -> Definition:
         """Lower a declaration and all merged implementations it owns.
@@ -783,7 +830,11 @@ class Lowering:
             tuple(effective),
             tuple(sorted(entries, key=lambda entry: entry.code)),
             self.source(unit, header(node)),
-            self.dimensions(key, unit),
+            (
+                (self.dimension(dimension_at(unit, node, key, key, [])),)
+                if node.data == 'dimension'
+                else self.dimensions(key, unit)
+            ),
             unit.world.constant_expressions.get(key) if node.data == 'constant' else None,
             (
                 tuple(
@@ -798,6 +849,19 @@ class Lowering:
             effective_lookups=tuple(
                 Text(name, qualified(rule.owner))
                 for name, rule in sorted(self.analysis.lookups.get(key, {}).items())
+            ),
+            hierarchy_entries=(
+                tuple(
+                    HierarchyEntry(
+                        str(entry.ordering),
+                        entry.value,
+                        qualified(entry.dictionary) if entry.dictionary else '',
+                        self.source(unit, entry.node),
+                    )
+                    for entry in hierarchy_entries(unit, node, [])
+                )
+                if node.data == 'hierarchy'
+                else ()
             ),
         )
 
@@ -896,7 +960,7 @@ class Lowering:
         )
         return seal(
             Model(
-                9,
+                10,
                 self.version,
                 self.prefix,
                 primitives,
@@ -942,4 +1006,6 @@ type ExpressionKind = Literal[
 type ArgumentKind = Literal['positional', 'keyword', 'pair']
 type FieldCategory = Literal['id', 'static', 'config', 'snapshot', 'scd', "computed"]
 type CalculationOperation = Literal["best_available", "value"]
-type DefinitionKind = Literal['entity', 'value', 'type_alias', 'decorator', 'decodes', 'constant']
+type DefinitionKind = Literal[
+    'entity', 'value', 'type_alias', 'decorator', 'decodes', 'constant', 'dimension', 'hierarchy'
+]

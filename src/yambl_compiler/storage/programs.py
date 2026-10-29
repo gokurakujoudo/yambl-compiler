@@ -2,7 +2,7 @@
 
 from collections.abc import Mapping
 
-from yambl_compiler.ir.model import CalculationAccess, Dimension, Field, Model
+from yambl_compiler.ir.model import CalculationAccess, Field, Model
 from yambl_compiler.languages.yambl.computation.records import Expression
 from yambl_compiler.storage.conversions import SIGNATURES
 
@@ -88,6 +88,18 @@ class Emitter:
             if node.value in {c.name for c in self.model.constants}:
                 return f"engine.status({frame}, {node.value!r})"
             target = self.references.get(node.value)
+            if any(
+                d.identity == target and d.kind in ('decodes', 'hierarchy')
+                for d in self.model.definitions
+            ):
+                entity = (
+                    'builtins.Decodes'
+                    if any(
+                        d.identity == target and d.kind == 'decodes' for d in self.model.definitions
+                    )
+                    else 'builtins.Hierarchy'
+                )
+                return f'engine.literal({frame}, EntityRef[object]({entity!r}, {target!r}))'
             definition = next(
                 (
                     d
@@ -159,6 +171,8 @@ class Emitter:
             return f"engine.choose({frame}, {emit(node.operands[0])}, lambda {branch}: {alternatives[0]}, lambda {branch}: {alternatives[1]})"
         if node.kind in ("call", "recover"):
             selected = node.operands[0]
+            if selected.kind == 'descriptor' and selected.value == 'hierarchy':
+                return f'engine.hierarchy_view({frame}, {emit(selected.operands[0])})'
             if selected.kind == 'name':
                 signature = SIGNATURES[selected.value]
                 arguments = {
@@ -182,11 +196,14 @@ class Emitter:
             return f"engine.sequence({frame}, {emit(receiver)}, {method!r}, lambda {branch}, {value}: {body})"
         raise ValueError(f"unsupported generated calculation node: {node.kind}")
 
-    def fallback_accesses(self, expression: Expression, owner: str) -> None:
+    def fallback_accesses(
+        self, expression: Expression, owner: str, allow_temporal: bool = False
+    ) -> None:
         """Resolve configuration references in a checked dimension policy.
 
         :param expression: Policy expression.
         :param owner: Original dimension owner.
+        :param allow_temporal: Allow temporal fields in hierarchy defaults.
         :returns: None.
         :raises ValueError: If a policy references an unsupported field.
         """
@@ -201,9 +218,16 @@ class Emitter:
             """
             if node.kind == "name" and node.value == "self":
                 return owner
+            if node.kind == 'recover':
+                visit(node.operands[0].operands[0])
+                for case in node.cases:
+                    visit(case.expression)
+                return ''
             if node.kind == "call" and node.operands[0].kind == "descriptor":
                 receiver = node.operands[0].operands[0]
                 target = visit(receiver)
+                if node.operands[0].value == 'hierarchy':
+                    return target
                 access = self.accesses[receiver.span]
                 self.accesses[node.span] = CalculationAccess(
                     node.span, access.identity, access.implementation, "value"
@@ -222,7 +246,9 @@ class Emitter:
                         f"{self.field.identity}: unresolved fallback field {node.value}"
                     )
                 field = fields[effective.implementation]
-                if field.category not in ("static", "config", "id"):
+                if field.category not in ("static", "config", "id") and not (
+                    allow_temporal and field.category in ('snapshot', 'scd', 'computed')
+                ):
                     raise ValueError(
                         f"{field.identity}: fallback requires stored static or config dependencies"
                     )
@@ -256,7 +282,6 @@ def programs(model: Model) -> str:
         "",
     ]
     registry: dict[str, str] = {}
-    definitions = {d.identity: d for d in model.definitions}
 
     def function(
         key: str,
@@ -299,7 +324,11 @@ def programs(model: Model) -> str:
             calculation = field.calculation
             if calculation is not None:
                 emitter = Emitter(model, field)
-                pending = {p.name: p.default for p in calculation.inputs if p.default is not None}
+                pending = {
+                    p.name: p.default
+                    for p in calculation.inputs
+                    if p.default is not None and not p.default_dimension
+                }
 
                 def dependencies(node: Expression) -> set[str]:
                     """Find input dependencies for default scheduling.
@@ -341,16 +370,27 @@ def programs(model: Model) -> str:
                     calculation.body.result,
                     tuple((b.name, b.expression) for b in calculation.body.bindings),
                 )
-            owner = definition.identity
-            visible: dict[str, tuple[str, Dimension]] = {}
-            while owner in definitions:
-                for dimension in definitions[owner].dimensions:
-                    visible.setdefault(dimension.name, (owner, dimension))
-                owner = definitions[owner].parent
+            visible = {
+                dimension.identity: (definition.identity, dimension)
+                for definition in model.definitions
+                for dimension in definition.dimensions
+            }
             for call in field.decorators:
                 if call.target != "builtins.dimension":
                     continue
-                owner, dimension = visible[call.arguments[0].expression.name]
+                owner, dimension = visible[call.dimension_identity]
+                if dimension.hierarchy_default is not None:
+                    emitter = Emitter(model, field)
+                    emitter.references = {item.name: item.value for item in dimension.references}
+                    if dimension.identity != owner:
+                        emitter.fallback_accesses(
+                            dimension.hierarchy_default, owner, allow_temporal=True
+                        )
+                    function(
+                        'hierarchy_default:' + field.implementation + ':' + dimension.identity,
+                        emitter,
+                        dimension.hierarchy_default,
+                    )
                 if dimension.fallback is not None:
                     emitter = Emitter(model, field)
                     emitter.fallback_accesses(dimension.fallback, owner)

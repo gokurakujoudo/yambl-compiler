@@ -67,9 +67,17 @@ def supported(type_: Type, entities: dict[str, Definition], model: Model) -> boo
     if type_.dependent:
         return False
     if type_.kind == "reference":
-        return type_.target in entities
+        return type_.target in entities or type_.target in (
+            'builtins.Decodes',
+            'builtins.Hierarchy',
+            'builtins.ConfigGroup',
+        )
     if type_.name == "collection":
-        return len(type_.arguments) == 1 and type_.arguments[0].target in entities
+        return len(type_.arguments) == 1 and (
+            type_.arguments[0].target in entities
+            or type_.arguments[0].target
+            in ('builtins.Decodes', 'builtins.Hierarchy', 'builtins.ConfigGroup')
+        )
     if type_.name == "code":
         target = type_.arguments[0].target
         return not any(
@@ -311,7 +319,11 @@ def build_layout(model: Model) -> Layout:
         if sparse or config:
             sparse_tables.add(name)
             state = "state"
-            type_ = ids[roots[f.type.target]].type if f.type.kind == "reference" else f.type
+            if f.type.kind == 'reference' and f.type.target not in roots:
+                definition = next(d for d in model.definitions if d.identity == f.type.target)
+                type_ = next(item.type for item in definition.fields if item.category == 'id')
+            else:
+                type_ = ids[roots[f.type.target]].type if f.type.kind == "reference" else f.type
             value = (
                 ""
                 if collection
@@ -579,6 +591,8 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
             stored[f.identity] = StoredField(f, identity, name, state, value, members, ())
     dictionary = next(t for t in tables if t.name == "tb_decodes")
     entries = next(t for t in tables if t.name == "tb_decodes_entries")
+    hierarchy = next(t for t in tables if t.name == 'tb_hierarchy')
+    hierarchy_items = next(t for t in tables if t.name == 'tb_hierarchy_entries')
     for definition in model.definitions:
         if definition.kind == "decodes":
             dictionary.rows.append((definition.identity, STATE_CODES['VALUE']))
@@ -590,4 +604,13 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
                     "ordering": entry.ordering,
                 }
                 entries.rows.append(tuple(values[c.name] for c in entries.columns))
+        elif definition.kind == 'hierarchy':
+            hierarchy.rows.append((definition.identity, STATE_CODES['VALUE']))
+            for hierarchy_entry in definition.hierarchy_entries:
+                values = {
+                    'hierarchy_id': definition.identity,
+                    'entry_value': hierarchy_entry.value,
+                    'ordering': hierarchy_entry.ordering,
+                }
+                hierarchy_items.rows.append(tuple(values[c.name] for c in hierarchy_items.columns))
     return tables

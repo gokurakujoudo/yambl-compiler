@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, cast
 
 from lark import Token, Tree
 
@@ -44,6 +44,7 @@ class Input:
     :param required: Whether omission is invalid without a default.
     :param default: Literal or input-dependent default expression.
     :param sites: Source uses that contributed to this parameter.
+    :param default_dimension: Declaration identity for a dimension-provided default.
     """
 
     name: str
@@ -51,6 +52,7 @@ class Input:
     required: bool
     default: Expression | None
     sites: tuple[tuple[Unit, Span], ...] = ()
+    default_dimension: EntityKey | None = None
 
 
 @dataclass(frozen=True)
@@ -486,22 +488,74 @@ class Checker:
         declared = self.declared.get(name)
         if declared is not None:
             requirement = replace(
-                requirement, required=False, default=declared.default or requirement.default
+                requirement,
+                required=False,
+                default=declared.default or requirement.default,
+                default_dimension=(
+                    None if declared.default is not None else requirement.default_dimension
+                ),
             )
         if prior is not None:
             if prior.type != requirement.type or (
                 prior.default is not None
                 and requirement.default is not None
-                and structural(prior.default) != structural(requirement.default)
+                and (
+                    structural(prior.default) != structural(requirement.default)
+                    or self.default_references(prior) != self.default_references(requirement)
+                )
             ):
                 self.issue(node, f"conflicting inferred parameter: {name}")
             requirement = replace(
                 prior,
                 required=prior.required or requirement.required,
                 default=(prior.default if prior.default is not None else requirement.default),
+                default_dimension=(
+                    prior.default_dimension
+                    if prior.default is not None
+                    else requirement.default_dimension
+                ),
                 sites=prior.sites + requirement.sites,
             )
         self.inputs[name] = requirement
+
+    def default_references(self, parameter: Input) -> frozenset[EntityKey]:
+        """Compare lexical declarations used by an inferred default.
+
+        :param parameter: Input with a possible dimension-provided default.
+        :returns: Referenced declarations and the owning instance context.
+        """
+        scope = self.unit
+        owner = self.owner
+        identity = parameter.default_dimension
+        if identity is not None:
+            entity, marker, dimension = identity[1].partition('::dimension.')
+            if marker:
+                owner = (identity[0], entity)
+                scope = self.unit.world.dimensions[owner][dimension][0]
+            else:
+                scope = self.unit.world.declarations[identity][0]
+
+        def references(node: Expression) -> set[EntityKey]:
+            """Collect lexical references in one default expression.
+
+            :param node: Expression subtree.
+            :returns: Declaration identities used by the subtree.
+            """
+            result: set[EntityKey] = set()
+            if node.kind == 'name':
+                if node.value == 'self':
+                    result.add(owner)
+                elif (symbol := scope.scope.get(node.value)) is not None:
+                    result.add(symbol.key)
+            for child in node.operands:
+                result.update(references(child))
+            for argument in node.arguments:
+                result.update(references(argument.expression))
+            for case in node.cases:
+                result.update(references(case.expression))
+            return result
+
+        return frozenset(references(parameter.default)) if parameter.default else frozenset()
 
     def bind_input(
         self, requirement: Input, expression: Expression, environment: dict[str, Value]
@@ -529,13 +583,14 @@ class Checker:
                     requirement.required,
                     default if default is not None else requirement.default,
                     ((self.unit, expression.span),),
+                    requirement.default_dimension if default is None else None,
                 ),
                 expression,
             )
             if default is not None:
                 saved = dict(self.inputs)
                 self.bind_input(
-                    replace(requirement, default=None, required=True),
+                    replace(requirement, default=None, required=True, default_dimension=None),
                     default,
                     environment,
                 )
@@ -665,9 +720,52 @@ class Checker:
                         False,
                         dimension.hierarchy_default,
                         ((self.unit, node.span),),
+                        dimension.identity if dimension.hierarchy_default is not None else None,
                     )
                 )
         return result
+
+    def dimension_inputs(
+        self,
+        dimension: Dimension,
+        owner: EntityKey,
+        node: Expression,
+        explicit: dict[str, Expression],
+        environment: dict[str, Value],
+    ) -> None:
+        """Merge inputs needed to evaluate an active hierarchy default.
+
+        :param dimension: Original dimension declaration and lexical scope.
+        :param owner: Static receiver type for instance-dependent defaults.
+        :param node: Field selection being checked.
+        :param explicit: Field parameters rebound at the use site.
+        :param environment: Use-site calculation environment.
+        :returns: None; merges inferred dependencies into the calculation.
+        """
+        assert dimension.hierarchy_default is not None
+        checker = Checker(self.computations, owner, dimension.unit)
+        checker.declared = dict(self.declared)
+        checker.inputs = dict(self.declared)
+        baseline = {name: len(item.sites) for name, item in checker.inputs.items()}
+        default_environment = (
+            {}
+            if dimension.owner == dimension.identity
+            else {'self': Value(Resolved(owner[1], 'reference', key=owner))}
+        )
+        checker.read(
+            checker.infer(dimension.hierarchy_default, default_environment),
+            dimension.hierarchy_default,
+        )
+        self.dependencies.update(checker.dependencies)
+        for name, parameter in checker.inputs.items():
+            sites = parameter.sites[baseline.get(name, 0) :]
+            if not sites:
+                continue
+            parameter = replace(parameter, required=False, sites=sites)
+            if name in explicit:
+                self.bind_input(parameter, explicit[name], environment)
+            else:
+                self.add_input(parameter, node)
 
     def read(self, value: Value, node: Expression, navigation: bool = False) -> Value:
         """Require explicit retrieval except for intermediate scalar reference navigation.
@@ -779,6 +877,17 @@ class Checker:
             symbol = self.unit.scope.get(node.value)
             if symbol is not None and symbol.kind == 'constant':
                 return Value(self.computations.constant(symbol.key, self.unit))
+            if symbol is not None and symbol.kind in ('decodes', 'hierarchy'):
+                name = 'Decodes' if symbol.kind == 'decodes' else 'Hierarchy'
+                return Value(
+                    Resolved(
+                        name,
+                        'reference',
+                        key=self.unit.scope[name].key,
+                        exact=repr(symbol.key),
+                        exact_key=symbol.key,
+                    )
+                )
             if node.value in self.unit.world.constants and node.value != "PARTIAL":
                 return Value(Resolved("non_normal", "unknown"))
             self.issue(node, f"unknown calculation name: {node.value}")
@@ -1099,6 +1208,18 @@ class Checker:
         receiver = selected.operands[0]
         method = selected.value
         if selected.kind == "descriptor":
+            if method == 'hierarchy':
+                value = self.read(self.infer(receiver, environment), receiver)
+                if value.type.name != 'Decodes' and value.type.kind != 'unknown':
+                    self.issue(node, '::hierarchy() requires a Decodes reference')
+                declaration = self.unit.world.declarations.get(value.type.exact_key or ('', ''))
+                if declaration is not None and annotations(declaration[1], 'flags'):
+                    self.issue(node, 'flags Decodes cannot be converted to Hierarchy')
+                if node.arguments:
+                    self.issue(node, '::hierarchy() does not accept arguments')
+                return Value(
+                    Resolved('Hierarchy', 'reference', key=self.unit.scope['Hierarchy'].key)
+                )
             value = self.infer(receiver, environment)
             if value.site is None:
                 self.issue(node, "field operation requires a field descriptor")
@@ -1159,6 +1280,25 @@ class Checker:
                         node,
                         "best_available supports one automatic Hierarchy; bind the other dimension values",
                     )
+                for dimension in automatic:
+                    selection = explicit.get(dimension.hierarchy_name)
+                    if selection is None:
+                        input_name = dimension.hierarchy_name
+                    elif (
+                        selection.kind == 'member'
+                        and selection.operands[0].kind == 'name'
+                        and selection.operands[0].value == 'input'
+                    ):
+                        input_name = selection.value
+                    else:
+                        continue
+                    selected_input = self.inputs.get(input_name)
+                    if (
+                        selected_input is not None
+                        and selected_input.default_dimension == dimension.identity
+                    ):
+                        assert value.owner is not None
+                        self.dimension_inputs(dimension, value.owner, node, explicit, environment)
             return Value(value.type)
         value = self.read(
             self.infer(receiver, environment, expected if method == 'recover' else None), receiver
@@ -1258,21 +1398,60 @@ def check_computations(
                 analyzer.constant(symbol.key, unit)
     visited: set[tuple[EntityKey, str]] = set()
     for unit in units:
-        for owner, dimensions in unit.world.dimensions.items():
-            for name in dimensions:
-                if (owner, name) in visited:
-                    continue
-                visited.add((owner, name))
-                dimension = resolve_dimension(unit, owner, name, [])
-                if dimension is None or dimension.fallback is None:
-                    continue
-                checker = Checker(analyzer, owner, dimension.unit)
+        candidates = [
+            (owner, name)
+            for owner, dimensions in unit.world.dimensions.items()
+            for name in dimensions
+        ]
+        candidates.extend(
+            (symbol.key, name) for name, symbol in unit.scope.items() if symbol.kind == 'dimension'
+        )
+        for owner, name in candidates:
+            if (owner, name) in visited:
+                continue
+            visited.add((owner, name))
+            dimension = cast(Dimension, resolve_dimension(unit, owner, name, []))
+            checker = Checker(analyzer, owner, dimension.unit)
+            environment = (
+                {}
+                if owner == dimension.identity
+                else {'self': Value(Resolved(owner[1], 'reference', key=owner))}
+            )
+            if dimension.hierarchy_default is not None:
+
+                def result_literal(node: Expression) -> bool:
+                    """Identify explicitly named non-normal values in a model default.
+
+                    :param node: Default expression or subtree.
+                    :returns: Whether it contains a result constant.
+                    """
+                    return (
+                        (node.kind == 'name' and node.value in unit.world.constants)
+                        or any(result_literal(child) for child in node.operands)
+                        or any(result_literal(argument.expression) for argument in node.arguments)
+                        or any(result_literal(case.expression) for case in node.cases)
+                    )
+
                 actual = checker.read(
-                    checker.infer(
-                        dimension.fallback,
-                        {"self": Value(Resolved(owner[1], "reference", key=owner))},
-                    ),
-                    dimension.fallback,
+                    checker.infer(dimension.hierarchy_default, environment),
+                    dimension.hierarchy_default,
+                )
+                if (
+                    result_literal(dimension.hierarchy_default)
+                    or actual.type.name != 'Hierarchy'
+                    and not (
+                        actual.type.name == 'string'
+                        and dimension.hierarchy_default.kind == 'string'
+                    )
+                    and actual.type.kind != 'unknown'
+                ):
+                    checker.issue(
+                        dimension.hierarchy_default,
+                        'hierarchy default requires a Hierarchy reference or view',
+                    )
+            if dimension.fallback is not None:
+                actual = checker.read(
+                    checker.infer(dimension.fallback, environment), dimension.fallback
                 )
                 if actual.type.name != "integer" and actual.type.kind != "unknown":
                     checker.issue(

@@ -172,7 +172,7 @@ extend E { lookup by_extension { key = self.key::value() } }
                 )
                 self.assertTrue(validate_ir(forged))
         wire = json.loads(dumps(first))
-        wire['format_revision'] = 8
+        wire['format_revision'] = 9
         with self.assertRaisesRegex(ValueError, 'unsupported IR revision'):
             loads(json.dumps(wire))
 

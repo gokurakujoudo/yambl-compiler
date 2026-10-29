@@ -50,7 +50,8 @@ def python_package(layout: Layout, package: str) -> str:
         if type_.target in value_names and type_.kind == 'value':
             return value_names[type_.target]
         if type_.kind == "reference":
-            return f"EntityRef[{names.get(type_.target, 'object')}]"
+            annotation = f"EntityRef[{names.get(type_.target, 'object')}]"
+            return annotation + (' | HierarchyView' if type_.target == 'builtins.Hierarchy' else '')
         if type_.name == "mapping":
             return f"Mapping[{python_type(type_.arguments[0])}, {python_type(type_.arguments[1])}]"
         if type_.name in ("collection", 'values'):
@@ -259,6 +260,7 @@ def python_package(layout: Layout, package: str) -> str:
         "TransactionStatus",
         "ReadResult",
         "EntityRef",
+        "HierarchyView",
         "Success",
         "NonNormalResult",
         "Status",
@@ -314,7 +316,7 @@ def python_package(layout: Layout, package: str) -> str:
         "from pathlib import Path",
         "from typing import Self, cast",
         "",
-        "from ._results import CalculationIssue, EntityRef, NonNormalResult, Partial, ReadResult, Status, Success",
+        "from ._results import CalculationIssue, EntityRef, HierarchyView, NonNormalResult, Partial, ReadResult, Status, Success",
         "from ._computing import Omitted, UNSET",
         "from ._calculations import PROGRAMS",
         "from ._runtime import EntityHandle, Reader",
@@ -745,6 +747,7 @@ def python_package(layout: Layout, package: str) -> str:
                     [
                         *public_names,
                         "EntityRef",
+                        "HierarchyView",
                         "ReadResult",
                         "Success",
                         "NonNormalResult",

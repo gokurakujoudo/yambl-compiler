@@ -24,6 +24,7 @@ from yambl_compiler.storage.records import quote, table_name
 from yambl_compiler.storage.results import (
     CalculationIssue,
     EntityRef,
+    HierarchyView,
     NonNormalResult,
     Partial,
     Status,
@@ -206,6 +207,26 @@ class ProgramTests(FilesystemCase):
             self.assertEqual(security.read_input_value().value, 7)
             self.assertEqual(security.read_input_value(count=0).value, 0)
             self.assertNotIn('unused_day', security.read_declared_price.__annotations__)
+
+    def test_dictionary_hierarchy_view_on_both_backends(self):
+        self.writer.executemany(
+            'INSERT INTO tb_decodes_entries (decodes_id, code, decode, ordering) VALUES (?, ?, ?, ?)',
+            [('Industries', 'X', 'First feed', '2'), ('Industries', 'Y', 'Second feed', '3')],
+        )
+        self.writer.commit()
+        for reader in self.readers():
+            available = Available(reader._batch)
+            view = HierarchyView('Industries', available)
+            self.assertEqual(available.hierarchy([view])[view], Success(('Primary', 'X', 'Y')))
+            missing = HierarchyView('Missing', available)
+            self.assertEqual(
+                available.hierarchy([missing])[missing].status, Status.ENTITY_NOT_FOUND
+            )
+            point = FieldRequest(
+                EntityRef('Security', 's'), 'Security.price', (), date(2026, 1, 10)
+            )
+            result = available.read([BestRequest(point, (('hierarchy', view),), 3)])[0]
+            self.assertEqual(result, Success(Decimal('3')))
 
     def test_generated_batch_dates_defaults_and_repeated_contributions(self):
         for reader in self.readers():

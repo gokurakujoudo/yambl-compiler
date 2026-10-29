@@ -17,6 +17,7 @@ from yambl_compiler.storage.conversions import convert
 from yambl_compiler.storage.results import (
     CalculationIssue,
     EntityRef,
+    HierarchyView,
     NonNormalResult,
     Partial,
     ReadResult,
@@ -197,6 +198,8 @@ class Computing:
         :returns: Detached, immutable, type-correct payload.
         :raises ValueError: On an incompatible or out-of-range result.
         """
+        if type_.target == 'builtins.Hierarchy' and isinstance(value, HierarchyView):
+            return value
         definition = next(
             (
                 d
@@ -288,6 +291,47 @@ class Computing:
         :returns: Typed code results.
         """
         return self.literal(frame, self.reader.code_types.get(target, str)(value))
+
+    def hierarchy_view(self, frame: Frame, source: Vector) -> Vector:
+        """Resolve Decodes references as read-only session hierarchy views.
+
+        :param frame: Active contributions.
+        :param source: Decodes reference results.
+        :returns: Views or the dictionary's non-normal result for each lane.
+        """
+
+        def view(value: object) -> HierarchyView:
+            """Bind a dictionary identity to a view.
+
+            :param value: Decodes reference.
+            :returns: Immutable view identity.
+            """
+            return HierarchyView(cast(str, cast(EntityRef[object], value).id), self.available)
+
+        def keep_view(value: object, entries: object) -> object:
+            """Keep the view while retaining the selected hierarchy outcome.
+
+            :param value: View value.
+            :param entries: Validated hierarchy entries.
+            :returns: Original view.
+            """
+            return value
+
+        converted: dict[Lane, ReadResult[object]] = {
+            lane: lift(view, [at(source, lane)]) for lane in frame.lanes
+        }
+        views = [
+            result.value for result in converted.values() if not isinstance(result, NonNormalResult)
+        ]
+        available = self.available.hierarchy(cast(list[HierarchyView], views))
+        output: Vector = {}
+        for lane, result in converted.items():
+            if isinstance(result, NonNormalResult):
+                output[lane] = result
+            else:
+                hierarchy = available[cast(HierarchyView, result.value)]
+                output[lane] = lift(keep_view, [result, cast(ReadResult[object], hierarchy)])
+        return output
 
     def status(self, frame: Frame, name: str) -> Vector:
         """Preserve an explicitly returned native non-normal result.
@@ -533,7 +577,7 @@ class Computing:
                 continue
             parameters = {**frame.inputs, **arguments}
             dims: list[tuple[str, object]] = []
-            selectors: list[tuple[str, str]] = []
+            selectors: list[tuple[str, str | HierarchyView]] = []
             failure_result: NonNormalResult | None = None
             for dimension in self.available.dimensions(field):
                 for name, is_selector in (
@@ -544,8 +588,26 @@ class Computing:
                         continue
                     vector = parameters.get(name)
                     result = at(vector, lane) if vector is not None else Success(UNSET)
+                    if (
+                        is_selector
+                        and failure_result is None
+                        and not isinstance(result, NonNormalResult)
+                        and result.value is UNSET
+                        and dimension.hierarchy_default is not None
+                        and not any(key == dimension.value_name for key, _ in dims)
+                    ):
+                        program = (
+                            'hierarchy_default:' + field.implementation + ':' + dimension.identity
+                        )
+                        result = at(
+                            self.programs[program](
+                                self, Frame((lane,), owners, parameters, frame.modes)
+                            ),
+                            lane,
+                        )
                     if isinstance(result, NonNormalResult):
                         failure_result = result
+                        break
                     elif result.value is not UNSET:
                         if is_selector:
                             payload = result.value
@@ -554,7 +616,7 @@ class Computing:
                                 if isinstance(payload, EntityRef)
                                 else payload
                             )
-                            if not isinstance(raw, str):
+                            if not isinstance(raw, (str, HierarchyView)):
                                 failure_result = NonNormalResult(
                                     Status.ERROR,
                                     "Hierarchy requires a string reference ID",
@@ -563,6 +625,11 @@ class Computing:
                                 selectors.append((name, raw))
                         else:
                             dims.append((name, result.value))
+                if failure_result is not None:
+                    break
+            if failure_result is not None:
+                output[lane] = failure_result
+                continue
             when = None
             time_parameters = [
                 call.bound[0].key for call in field.decorators if call.target == "builtins.temporal"
@@ -662,7 +729,11 @@ class Computing:
                 for p in field.calculation.inputs
             }
             child = Frame(tuple(lanes), owners, inputs, frame.modes)
-            pending = {p.name: p for p in field.calculation.inputs if p.default is not None}
+            pending = {
+                p.name: p
+                for p in field.calculation.inputs
+                if p.default is not None and not p.default_dimension
+            }
             # Inference has rejected cycles; emitted ordering is topological at generation time.
             for name in self.programs_order(implementation, pending):
 
@@ -692,6 +763,10 @@ class Computing:
                         if value is UNSET:
                             if parameter.required and parameter.default is None:
                                 raise ValueError(f"missing calculation parameter: {parameter.name}")
+                        elif parameter.type.target == 'builtins.Hierarchy' and isinstance(
+                            value, HierarchyView
+                        ):
+                            pass
                         elif parameter.type.kind == "reference" and isinstance(value, str):
                             value = EntityRef[object](parameter.type.target, value)
                             inputs[parameter.name] = {

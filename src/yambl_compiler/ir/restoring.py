@@ -318,9 +318,16 @@ class Restoring:
         if dimensions:
             for dimension in dimensions:
                 p = dimension.source
+                for reference in dimension.references:
+                    self.reference(reference.value, p)
                 members: list[Token | Tree[Token]] = [
-                    token("dimension", "DIMENSION", p),
-                    token(dimension.name, "NAME", p),
+                    Tree(
+                        'dimension_header',
+                        [
+                            token("dimension", "DIMENSION", p),
+                            token(dimension.name, "NAME", p),
+                        ],
+                    ),
                 ]
                 members.append(
                     Tree(
@@ -355,7 +362,10 @@ class Restoring:
                         )
                     )
                 members.append(token("}", "RBRACE", p))
-                body.append(Tree("dimension", members))
+                if kind == 'dimension':
+                    body.extend(members[1:])
+                else:
+                    body.append(Tree("dimension", members))
         body.extend(
             self.field(f)
             for f in (
@@ -405,6 +415,24 @@ class Restoring:
                         ],
                     )
                 )
+        for hierarchy_entry in (() if extension is not None else definition.hierarchy_entries):
+            item: list[Token | Tree[Token]] = [
+                token('-', 'MINUS', hierarchy_entry.source),
+                token(hierarchy_entry.ordering, 'INT', hierarchy_entry.source),
+            ]
+            if hierarchy_entry.dictionary:
+                item.extend(
+                    [
+                        self.reference(hierarchy_entry.dictionary, hierarchy_entry.source),
+                        token('.', 'DOT', hierarchy_entry.source),
+                        token(hierarchy_entry.value, 'NAME', hierarchy_entry.source),
+                    ]
+                )
+            else:
+                item.append(
+                    scalar(Value('string', hierarchy_entry.value, ''), hierarchy_entry.source)
+                )
+            body.append(Tree('hierarchy_entry', item))
         namespace: Tree[Token] = Tree(
             'namespace_decl',
             [
@@ -437,7 +465,7 @@ def restore(model: Model) -> Analysis:
         own_dimensions: list[Dimension] = []
         for dimension in definition.dimensions:
             source, owner = dimension.source, definition.source
-            if (
+            if definition.kind == 'dimension' or (
                 source.path == owner.path
                 and source.namespace == owner.namespace
                 and (owner.line, owner.column) <= (source.line, source.column)

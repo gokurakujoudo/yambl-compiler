@@ -51,6 +51,30 @@ class PlanValidator:
             raise ValueError(f'model dictionary entries are immutable: {identity}')
         self.codes[identity] = {str(item['code']) for item in entries}
 
+    def track_hierarchy(self, operation: Operation) -> None:
+        """Protect model-declared Hierarchy entries during Plan validation.
+
+        :param operation: Already type-checked Plan operation.
+        :returns: None when model entries are preserved.
+        :raises ValueError: If the replacement changes a declared entry.
+        """
+        if operation.target != 'builtins.Hierarchy.hierarchy_entries':
+            return
+        identity = cast(str, next(c.value for c in operation.scope if c.name == 'hierarchy_id'))
+        definition = self.catalog.definitions.get(identity)
+        if definition is None or definition.kind != 'hierarchy':
+            return
+        value = (
+            operation.rows[0][operation.columns.index('value')]
+            if operation.kind == 'replace' and operation.rows
+            else ()
+        )
+        entries = [object_items(item) for item in value] if isinstance(value, tuple) else []
+        provided = {(item['ordering'], item['entry_value']) for item in entries}
+        original = {(int(entry.ordering), entry.value) for entry in definition.hierarchy_entries}
+        if not original <= provided:
+            raise ValueError(f'model hierarchy entries are immutable: {identity}')
+
     def value(self, entity: Entity, field: Field, stored: StoredField, value: Value) -> None:
         """Check a field literal using the same encoders as apply.
 
@@ -158,3 +182,4 @@ class PlanValidator:
             for operation in group.operations:
                 self.operation(operation)
                 self.track_dictionary(operation)
+                self.track_hierarchy(operation)

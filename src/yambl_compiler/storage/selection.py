@@ -9,7 +9,13 @@ from yambl_compiler.ir.model import Dimension, Field
 from yambl_compiler.storage.backends import Row, Selection
 from yambl_compiler.storage.batch import Batch, FieldRequest
 from yambl_compiler.storage.records import STATE_CODES, STATE_NAMES
-from yambl_compiler.storage.results import NonNormalResult, ReadResult, Status, Success
+from yambl_compiler.storage.results import (
+    HierarchyView,
+    NonNormalResult,
+    ReadResult,
+    Status,
+    Success,
+)
 
 
 @dataclass(frozen=True)
@@ -22,7 +28,7 @@ class BestRequest:
     """
 
     point: FieldRequest
-    hierarchies: tuple[tuple[str, str], ...] = ()
+    hierarchies: tuple[tuple[str, str | HierarchyView], ...] = ()
     fallback_days: int = 0
 
 
@@ -36,7 +42,7 @@ class Available:
         :returns: None.
         """
         self.batch = batch
-        self.hierarchies: dict[str, ReadResult[tuple[str, ...]]] = {}
+        self.hierarchies: dict[str | HierarchyView, ReadResult[tuple[str, ...]]] = {}
         self.cache: dict[BestRequest, ReadResult[object]] = {}
 
     def dimensions(self, field: Field) -> tuple[Dimension, ...]:
@@ -45,21 +51,20 @@ class Available:
         :param field: Actual field implementation.
         :returns: Attached dimensions in metadata order.
         """
-        definitions = {d.identity: d for d in self.batch.reader.layout.model.definitions}
-        owner = field.implementation.rsplit(".", 1)[0]
-        visible: dict[str, Dimension] = {}
-        while owner in definitions:
-            definition = definitions[owner]
-            for dimension in definition.dimensions:
-                visible.setdefault(dimension.name, dimension)
-            owner = definition.parent
+        dimensions = {
+            dimension.identity: dimension
+            for definition in self.batch.reader.layout.model.definitions
+            for dimension in definition.dimensions
+        }
         return tuple(
-            visible[c.arguments[0].expression.name]
+            dimensions[c.dimension_identity]
             for c in field.decorators
             if c.target == "builtins.dimension"
         )
 
-    def hierarchy(self, names: Sequence[str]) -> dict[str, ReadResult[tuple[str, ...]]]:
+    def hierarchy(
+        self, names: Sequence[str | HierarchyView]
+    ) -> dict[str | HierarchyView, ReadResult[tuple[str, ...]]]:
         """Resolve ordered source codes for all unique hierarchy IDs together.
 
         :param names: Hierarchy IDs needed by this batch.
@@ -71,6 +76,63 @@ class Available:
             return results
         reader = self.batch.reader
         reader.ready()
+        views = [name for name in missing if isinstance(name, HierarchyView)]
+        for view in views:
+            if view.session is not self:
+                results[view] = NonNormalResult(
+                    Status.ERROR, 'hierarchy view belongs to a different reader'
+                )
+                continue
+            definition = next(
+                (d for d in reader.layout.model.definitions if d.identity == view.dictionary), None
+            )
+            if definition and any(
+                call.target == 'builtins.flags' for call in definition.decorators
+            ):
+                results[view] = NonNormalResult(
+                    Status.ERROR, 'flags do not support hierarchy conversion'
+                )
+                continue
+            header = reader.backend.rows_many(
+                'tb_decodes', [Selection((('decodes_id', view.dictionary),))]
+            )[0]
+            view_result: ReadResult[tuple[str, ...]]
+            if not header:
+                view_result = NonNormalResult(
+                    Status.ENTITY_NOT_FOUND, f'Decodes not found: {view.dictionary}'
+                )
+            elif header[0]['entries__state'] != STATE_CODES['VALUE']:
+                state = STATE_NAMES.get(cast(int, header[0]['entries__state']))
+                view_result = (
+                    NonNormalResult(Status(state))
+                    if state in ('NO_ENTRY', 'EMPTY', 'NOT_APPLICABLE')
+                    else NonNormalResult(Status.ERROR, 'invalid Decodes state')
+                )
+            else:
+                members = reader.backend.rows_many(
+                    'tb_decodes_entries', [Selection((('decodes_id', view.dictionary),))]
+                )[0]
+                try:
+                    orders = [int(str(row['ordering'])) for row in members]
+                    if any(
+                        str(order) != row['ordering']
+                        for order, row in zip(orders, members, strict=True)
+                    ) or len(set(orders)) != len(orders):
+                        raise ValueError('Decodes ordering must contain unique canonical integers')
+                    view_result = Success(
+                        tuple(
+                            str(row['code'])
+                            for _, row in sorted(
+                                zip(orders, members, strict=True), key=lambda item: item[0]
+                            )
+                        )
+                    )
+                except (ValueError, KeyError, TypeError) as error:
+                    view_result = NonNormalResult(Status.ERROR, str(error))
+            results[view] = view_result
+            if not isinstance(view_result, NonNormalResult) or view_result.status != Status.ERROR:
+                self.hierarchies[view] = view_result
+        missing = [name for name in missing if isinstance(name, str)]
         selections = [Selection((("hierarchy_id", name),)) for name in missing]
         headers = reader.backend.rows_many("tb_hierarchy", selections)
         entries = reader.backend.rows_many("tb_hierarchy_entries", selections)
@@ -116,8 +178,10 @@ class Available:
         """
         results: dict[BestRequest, ReadResult[object]] = {}
         pending = [r for r in dict.fromkeys(requests) if r not in self.cache]
-        specs: dict[BestRequest, tuple[Field, tuple[Dimension, ...], Dimension | None, str]] = {}
-        needed: list[str] = []
+        specs: dict[
+            BestRequest, tuple[Field, tuple[Dimension, ...], Dimension | None, str | HierarchyView]
+        ] = {}
+        needed: list[str | HierarchyView] = []
         for request in pending:
             field = self.batch.implementation(request.point.owner.target, request.point.identity)
             if field is None:
@@ -138,12 +202,17 @@ class Available:
                 )
                 continue
             selected = automatic[0] if automatic else None
-            hierarchy_id = ""
+            hierarchy_id: str | HierarchyView = ""
             if selected:
-                hierarchy_id = dict(request.hierarchies).get(
-                    selected.hierarchy_name,
-                    (selected.hierarchy_default.value if selected.hierarchy_default else ""),
-                )
+                default: str | HierarchyView = ''
+                expression = selected.hierarchy_default
+                if expression is not None:
+                    references = {item.name: item.value for item in selected.references}
+                    if expression.kind == 'string':
+                        default = expression.value
+                    elif expression.kind == 'name':
+                        default = references.get(expression.value, '')
+                hierarchy_id = dict(request.hierarchies).get(selected.hierarchy_name, default)
                 if not hierarchy_id:
                     results[request] = NonNormalResult(
                         Status.ERROR,
@@ -163,10 +232,17 @@ class Available:
                 continue
             codes = hierarchy.value
             stored = reader.layout.fields[request.point.identity]
-            for priority, code in enumerate(codes):
+            try:
+                decoded = (
+                    [reader.decode(selected.type, code) for code in codes] if selected else codes
+                )
+            except (ValueError, TypeError) as error:
+                results[request] = NonNormalResult(Status.ERROR, str(error))
+                continue
+            for priority, code in enumerate(decoded):
                 dims = dict(request.point.dimensions)
                 if selected is not None:
-                    dims[selected.value_name] = reader.decode(selected.type, code)
+                    dims[selected.value_name] = code
                 point = FieldRequest(
                     request.point.owner,
                     request.point.identity,

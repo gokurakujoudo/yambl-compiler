@@ -2,7 +2,7 @@ start: namespace_decl? import_decl* declaration*
 namespace_decl: NAMESPACE qualified_name
 qualified_name: NAME ("." NAME)*
 import_decl: FROM qualified_name IMPORT NAME
-?declaration: entity | decodes | extension | value | type_alias | decorator | constant
+?declaration: entity | decodes | extension | value | type_alias | decorator | constant | dimension | hierarchy
 constant: constant_header ":" type_expr "=" calculation
 constant_header: CONST NAME
 decorator: annotation* decorator_header
@@ -25,10 +25,14 @@ field_body: (ID | ATTR | STATIC ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) N
           | COMPUTED ATTR NAME ":" type_expr computation
 lookup: annotation* LOOKUP NAME "{" lookup_key* "}"
 lookup_key: NAME "=" calculation
-dimension: DIMENSION NAME "{" dimension_value dimension_hierarchy? dimension_fallback? "}"
+dimension: dimension_header "{" dimension_value dimension_hierarchy? dimension_fallback? "}"
+dimension_header: DIMENSION NAME
 dimension_value: VALUE NAME ":" type_expr
 dimension_hierarchy: HIERARCHY NAME ":" type_expr ("=" calculation)?
 dimension_fallback: FALLBACK_DAYS "=" calculation
+hierarchy: hierarchy_header "{" hierarchy_entry* "}"
+hierarchy_header: HIERARCHY NAME
+hierarchy_entry: "-" INT (STRING | NAME "." NAME)
 computation: "{" let_statement* return_statement "}"
 let_statement: LET NAME (":" type_expr)? "=" calculation
 return_statement: RETURN calculation

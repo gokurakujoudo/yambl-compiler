@@ -38,7 +38,7 @@ class DimensionTests(unittest.TestCase):
             ),
             (
                 "entity E { dimension prices { value source: string hierarchy h: Hierarchy = 1 } }",
-                "string reference ID",
+                "Hierarchy reference or view",
             ),
             ("entity E { dimension Prices { value source: string } }", "snake_case"),
             (

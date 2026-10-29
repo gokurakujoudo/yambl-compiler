@@ -138,10 +138,7 @@ class ConfigurationTests(DualTests):
             "config_group_id": "g",
             "target_entity_type": "A",
             "priority": "1",
-            **{
-                k + "__state": 0
-                for k in ("target_entity_type", "priority", "when", "then_set")
-            },
+            **{k + "__state": 0 for k in ("target_entity_type", "priority", "when", "then_set")},
         }
         bad_cases = [
             ([header], [], [{**entry(), "config_group_id": "unknown"}]),

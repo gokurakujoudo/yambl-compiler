@@ -23,9 +23,9 @@ class ContractTests(FilesystemCase):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         self.assertEqual(load_contract(path, digest), layout)
         wire = json.loads(dumps(layout))
-        self.assertEqual(wire['runtime_revision'], 9)
+        self.assertEqual(wire['runtime_revision'], 10)
         self.assertEqual(LAYOUT_REVISION, 8)
-        wire['runtime_revision'] = 8
+        wire['runtime_revision'] = 9
         path.write_text(json.dumps(wire), encoding='utf-8')
         with self.assertRaisesRegex(ValueError, 'unsupported runtime contract revision'):
             load_contract(path, hashlib.sha256(path.read_bytes()).hexdigest())
@@ -35,7 +35,7 @@ class ContractTests(FilesystemCase):
             [],
             {},
             {"runtime_revision": True, "layout": {}},
-            {"runtime_revision": 8, "layout": {}},
+            {"runtime_revision": 9, "layout": {}},
             {"runtime_revision": 5, "layout": {}},
         ):
             path.write_text(json.dumps(value), encoding="utf-8")
