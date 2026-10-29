@@ -89,7 +89,7 @@ class StateFieldTests(FilesystemCase, unittest.IsolatedAsyncioTestCase):
                     )
                     validate_row(self.layout, table, row)
                     with self.assertRaisesRegex(ValueError, 'invalid stored field state'):
-                        validate_row(self.layout, table, {**row, 'state__state': 'invalid'})
+                        validate_row(self.layout, table, {**row, 'state__state': 99})
                     sparse_table = next(
                         t
                         for t in self.layout.tables

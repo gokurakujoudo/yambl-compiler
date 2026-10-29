@@ -4,7 +4,14 @@ from collections.abc import Callable, Mapping
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.storage.backends import Backend, Row, validate_row
-from yambl_compiler.storage.records import Layout, StoredField, mapped_field, table_name
+from yambl_compiler.storage.records import (
+    STATE_CODES,
+    Layout,
+    StoredField,
+    actual_type,
+    mapped_field,
+    table_name,
+)
 from yambl_compiler.storage.results import NonNormalResult, ReadResult, Status
 from yambl_compiler.transactions.editing import Data
 from yambl_compiler.transactions.incremental_validation import validate_affected_cycles
@@ -109,7 +116,7 @@ class IncrementalData(Data):
         for group_id in affected_groups:
             for row in self.select('tb_config_group', {'config_group_id': group_id}):
                 if any(
-                    row[name + '__state'] != 'VALUE'
+                    row[name + '__state'] != STATE_CODES['VALUE']
                     for name in ('target_entity_type', 'priority', 'when', 'then_set')
                 ):
                     raise ValueError(
@@ -165,7 +172,7 @@ class IncrementalData(Data):
                     owners = self.select(table_name(stored.root), {'id': row['id']})
                     if len(owners) != 1:
                         raise ValueError(f'missing or invalid owner entity: {identity}')
-                    actual = str(owners[0]['entity_type'])
+                    actual = actual_type(self.layout, stored.root, owners[0])
                     if (
                         actual not in self.layout.entities
                         or self.layout.roots[actual] != stored.root

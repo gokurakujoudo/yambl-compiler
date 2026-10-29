@@ -5,7 +5,7 @@ from typing import cast
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.storage.backends import Row
-from yambl_compiler.storage.records import Layout, StoredField, table_name
+from yambl_compiler.storage.records import Layout, StoredField, actual_type, table_name
 from yambl_compiler.storage.results import EntityRef, NonNormalResult, ReadResult, Status
 from yambl_compiler.storage.validation import ValidationIssue, ValidationReport, cycles
 
@@ -91,7 +91,7 @@ def validate_affected_cycles(
                 rows = select(table_name(stored.root), {'id': id_})
                 if len(rows) > 1:
                     raise ValueError('duplicate identity record')
-                found = str(rows[0]['entity_type']) if rows else None
+                found = actual_type(layout, stored.root, rows[0]) if rows else None
                 if found is not None and (
                     found not in layout.entities or layout.roots[found] != stored.root
                 ):

@@ -24,7 +24,7 @@ from yambl_compiler.languages.yatran.syntax import valid_id
 from yambl_compiler.languages.yatran.writing import seal
 from yambl_compiler.storage.backends import FileBackend, Row, SQLiteBackend, repository_contents
 from yambl_compiler.storage.contract import decode, load_contract, loads
-from yambl_compiler.storage.records import Layout, quote
+from yambl_compiler.storage.records import FILE_REVISION, Layout, quote
 from yambl_compiler.storage.results import Success
 from yambl_compiler.storage.runtime import Reader
 from yambl_compiler.transactions.editing import Data
@@ -260,7 +260,10 @@ class DataStore:
             FilePointer,
             decode(loads((self.path / 'repository.json').read_text(encoding='utf-8')), FilePointer),
         )
-        if metadata.format_revision != 2 or metadata.model_digest != self.layout.model.model_digest:
+        if (
+            metadata.format_revision != FILE_REVISION
+            or metadata.model_digest != self.layout.model.model_digest
+        ):
             raise ValueError('file repository metadata does not match this model')
         for id_ in (metadata.generation, *metadata.transactions):
             if not valid_id(id_):
@@ -464,7 +467,7 @@ class DataStore:
             write_file(version / 'transaction.yatran', dumps(transaction))
             ids.append(id_)
         metadata = {
-            'format_revision': 2,
+            'format_revision': FILE_REVISION,
             'model_digest': self.layout.model.model_digest,
             'generation': id_,
             'transactions': ids,
@@ -486,7 +489,7 @@ class DataStore:
         version = self.path / 'versions' / transaction.id
         prepare_files(source, version, self.layout, data.overlay.changes(), transaction)
         metadata = {
-            'format_revision': 2,
+            'format_revision': FILE_REVISION,
             'model_digest': self.layout.model.model_digest,
             'generation': transaction.id,
             'transactions': [*self.file_pointer().transactions, transaction.id],

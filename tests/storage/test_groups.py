@@ -127,25 +127,25 @@ class GroupTests(FilesystemCase):
             for name, column, value in values:
                 db.execute(
                     f'INSERT INTO {sparse.name}(id, field, state, "{column}") VALUES (?, ?, ?, ?)',
-                    ("b", "core.Security." + name, "VALUE", value),
+                    ("b", "core.Security." + name, 0, value),
                 )
             db.execute(
-                "INSERT INTO tb_core_security_details(id, name__state, name) VALUES ('b', 'VALUE', 'Bond')"
+                "INSERT INTO tb_core_security_details(id, name__state, name) VALUES ('b', 0, 'Bond')"
             )
             db.execute(
-                "INSERT INTO tb_core_security_details(id, notes__state, enabled__state) VALUES ('c', 'EMPTY', 'NOT_APPLICABLE')"
+                "INSERT INTO tb_core_security_details(id, notes__state, enabled__state) VALUES ('c', 2, 3)"
             )
             db.execute(
-                "INSERT INTO tb_core_security_bond_info(id, field, state) VALUES ('c', 'core.Security.coupon', 'EMPTY')"
+                "INSERT INTO tb_core_security_bond_info(id, field, state) VALUES ('c', 'core.Security.coupon', 2)"
             )
             for sql in (
                 "UPDATE tb_core_security_bond_info SET string = 'extra' WHERE field = 'core.Security.coupon'",
-                "UPDATE tb_core_security_bond_info SET decimal = NULL WHERE field = 'core.Security.coupon' AND state = 'VALUE'",
-                "UPDATE tb_core_security_bond_info SET state = 'EMPTY' WHERE state = 'VALUE'",
+                "UPDATE tb_core_security_bond_info SET decimal = NULL WHERE field = 'core.Security.coupon' AND state = 0",
+                "UPDATE tb_core_security_bond_info SET state = 2 WHERE state = 0",
                 "UPDATE tb_core_security_bond_info SET bool = 2 WHERE field = 'core.Security.active'",
                 "UPDATE tb_core_security_bond_info SET field = 'unknown'",
                 "UPDATE tb_core_security_bond_info SET state = 'ERROR'",
-                "UPDATE tb_core_security_details SET name = NULL WHERE name__state = 'VALUE'",
+                "UPDATE tb_core_security_details SET name = NULL WHERE name__state = 0",
             ):
                 with self.subTest(sql=sql), self.assertRaises(sqlite3.IntegrityError):
                     db.execute(sql)

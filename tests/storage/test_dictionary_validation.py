@@ -44,27 +44,27 @@ entity Right inherits Root { @overload static attr category: code<OtherSources> 
         with closing(sqlite3.connect(path)) as writer:
             writer.executescript((out / 'schema.sql').read_text(encoding='utf-8'))
             writer.execute(
-                f'INSERT INTO {quote(table_name("core.Item"))} (id, entity_type) VALUES (?, ?)',
-                ('i', 'core.Item'),
+                f'INSERT INTO {quote(table_name("core.Item"))} (id) VALUES (?)',
+                ('i',),
             )
             price = layout.fields['core.Item.price']
             writer.execute(
                 f'INSERT INTO {quote(price.table)} (id, dim_vendor, date, {quote(price.state)}) '
                 'VALUES (?, ?, ?, ?)',
-                ('i', 'Missing', '2026-01-01', 'NO_ENTRY'),
+                ('i', 'Missing', '2026-01-01', 1),
             )
             rating = layout.fields['core.Item.rating']
             writer.execute(
                 f'INSERT INTO {quote(rating.table)} '
                 f'(id, valid_from, valid_to, {quote(rating.state)}, {quote(rating.value)}) '
                 'VALUES (?, ?, ?, ?, ?)',
-                ('i', '2025-01-01', '2026-01-01', 'VALUE', 'Missing'),
+                ('i', '2025-01-01', '2026-01-01', 0, 'Missing'),
             )
             writer.execute(
                 'INSERT INTO tb_config_group '
                 '(config_group_id, target_entity_type, target_entity_type__state, priority, '
                 'priority__state, when__state, then_set__state) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                ('g', 'core.Item', 'VALUE', '1', 'VALUE', 'VALUE', 'VALUE'),
+                ('g', 'core.Item', 0, '1', 0, 0, 0),
             )
             contracts = {field.identity: field.type for field in model.fields}
             for table, identity in (
@@ -81,7 +81,7 @@ entity Right inherits Root { @overload static attr category: code<OtherSources> 
                     'INSERT INTO tb_config_group '
                     '(config_group_id, target_entity_type, target_entity_type__state, priority, '
                     'priority__state, when__state, then_set__state) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    (group, target, 'VALUE', '1', 'VALUE', 'VALUE', 'VALUE'),
+                    (group, target, 0, '1', 0, 0, 0),
                 )
                 envelope = json.dumps(
                     {'type': asdict(contracts['core.Root.category']), 'value': 'Missing'}

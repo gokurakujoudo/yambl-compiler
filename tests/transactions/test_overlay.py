@@ -53,7 +53,7 @@ class OverlayTests(FilesystemCase):
 
     def test_select_modify_insert_and_delete_stay_detached(self):
         row = self.candidate.select('tb_a', {'id': 'a00001'})[0]
-        row['text__state'] = 'VALUE'
+        row['text__state'] = 0
         row['text'] = 'changed'
         self.assertEqual(self.candidate.select('tb_a', {'id': 'a00001'}), [row])
         self.assertEqual(self.candidate.select('tb_a', {'id': 'a00002'})[0]['text'], None)
@@ -182,7 +182,7 @@ class OverlayTests(FilesystemCase):
                 'id': 'a00001',
                 'valid_from': '2026-01-01',
                 'valid_to': '2026-02-01',
-                'outstanding__state': 'VALUE',
+                'outstanding__state': 0,
                 'outstanding': '10',
             },
         )
@@ -192,7 +192,7 @@ class OverlayTests(FilesystemCase):
                 'id': 'a00001',
                 'valid_from': '2026-01-15',
                 'valid_to': '2026-03-01',
-                'outstanding__state': 'VALUE',
+                'outstanding__state': 0,
                 'outstanding': '20',
             },
         )
@@ -212,12 +212,12 @@ class OverlayTests(FilesystemCase):
             'tb_config_group',
             {
                 'config_group_id': 'group',
-                'target_entity_type__state': 'VALUE',
+                'target_entity_type__state': 0,
                 'target_entity_type': 'Missing',
-                'priority__state': 'VALUE',
+                'priority__state': 0,
                 'priority': '1',
-                'when__state': 'VALUE',
-                'then_set__state': 'VALUE',
+                'when__state': 0,
+                'then_set__state': 0,
             },
         )
         candidate.add('tb_config_group', group)
@@ -264,7 +264,7 @@ class OverlayTests(FilesystemCase):
                 'id': 'a00001',
                 'valid_from': '2026-01-01',
                 'valid_to': '2026-02-01',
-                'outstanding__state': 'VALUE',
+                'outstanding__state': 0,
                 'outstanding': '10',
             },
         )
@@ -295,7 +295,7 @@ class OverlayTests(FilesystemCase):
             with self.assertRaisesRegex(ValueError, 'missing or invalid owner'):
                 reader.validate_candidate(candidate)
         row['entity_type'] = 'A'
-        row['text__state'] = 'VALUE'
+        row['text__state'] = 0
         row['text'] = 'changed'
         with Reader(candidate.overlay, self.layout) as reader:
 
@@ -308,7 +308,7 @@ class OverlayTests(FilesystemCase):
     def test_candidate_batch_selection_and_non_key_filters(self):
         candidate = IncrementalData(self.layout, self.backend)
         row = candidate.select('tb_a', {'id': 'a00001'})[0]
-        row['text__state'], row['text'] = 'VALUE', 'changed'
+        row['text__state'], row['text'] = 0, 'changed'
         self.assertEqual(candidate.overlay.rows('tb_a', {'text': 'changed'})[0]['id'], 'a00001')
         candidate.select('tb_a', {'entity_type': 'A'})
         self.assertEqual(candidate.select('tb_a', {'id': 'a00001'})[0]['text'], 'changed')
@@ -319,7 +319,7 @@ class OverlayTests(FilesystemCase):
                     'id': 'a00001',
                     'valid_from': start,
                     'valid_to': end,
-                    'outstanding__state': 'VALUE',
+                    'outstanding__state': 0,
                     'outstanding': '10',
                 },
             )
@@ -336,7 +336,7 @@ class OverlayTests(FilesystemCase):
                 'id': 'a00001',
                 'date': '2026-02-01',
                 'dim_source': 'One',
-                'price__state': 'VALUE',
+                'price__state': 0,
                 'price': '10',
             },
         )
@@ -353,7 +353,7 @@ class OverlayTests(FilesystemCase):
                 'id': 'missing',
                 'valid_from': '2026-01-01',
                 'valid_to': '2026-02-01',
-                'outstanding__state': 'VALUE',
+                'outstanding__state': 0,
                 'outstanding': '10',
             },
         )
@@ -372,7 +372,7 @@ class OverlayTests(FilesystemCase):
         with closing(sqlite3.connect(path)) as connection, connection:
             connection.executescript(ddl(layout))
             connection.execute(
-                "INSERT INTO tb_node(id,entity_type,parent__state,parent) VALUES ('a','Node','VALUE','new')"
+                "INSERT INTO tb_node(id,entity_type,parent__state,parent) VALUES ('a','Node',0,'new')"
             )
         backend = SQLiteBackend(path, layout)
         self.addCleanup(backend.close)

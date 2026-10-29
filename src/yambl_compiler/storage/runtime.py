@@ -23,8 +23,11 @@ from yambl_compiler.storage.computing import Computing, Frame, Program, Vector
 from yambl_compiler.storage.configuration import Configuration
 from yambl_compiler.storage.contract import decode, load_contract, loads
 from yambl_compiler.storage.records import (
+    STATE_CODES,
+    STATE_NAMES,
     Layout,
     StoredField,
+    actual_type,
     table_name,
 )
 from yambl_compiler.storage.results import (
@@ -636,7 +639,7 @@ class Reader:
                 continue
             if stored.root not in owner_rows:
                 owner_rows[stored.root] = {
-                    str(row['id']): str(row['entity_type'])
+                    str(row['id']): actual_type(self._layout, stored.root, row)
                     for row in self._backend.rows(table_name(stored.root), {})
                 }
             for row in self._backend.rows(stored.table, dict(stored.key_values)):
@@ -653,7 +656,7 @@ class Reader:
                     if (
                         field.type.name == 'code'
                         and field.type.arguments[0].target in dictionaries
-                        and row[stored.state] == 'VALUE'
+                        and row[stored.state] == STATE_CODES['VALUE']
                     ):
                         self._decode(field.type, row[stored.value])
                 except (ValueError, TypeError, KeyError, InvalidOperation) as error:
@@ -768,7 +771,7 @@ class Reader:
             self._ready()
             selection = [Selection((("decodes_id", target),))]
             headers = self._backend.rows_many("tb_decodes", selection, ("entries__state",))[0]
-            if len(headers) != 1 or headers[0]["entries__state"] != "VALUE":
+            if len(headers) != 1 or headers[0]["entries__state"] != STATE_CODES['VALUE']:
                 raise ValueError(f"invalid dictionary state for {target}")
             self._dictionary_cache[target] = frozenset(
                 str(row["code"])
@@ -820,7 +823,7 @@ class Reader:
             rows = self._backend.rows(table_name(root), {id_name: encoded})
             if not rows:
                 return NonNormalResult(Status.NO_ENTRY)
-            actual = root if builtin else str(rows[0]["entity_type"])
+            actual = actual_type(self._layout, root, rows[0])
             if actual not in self._layout.entities or self._layout.roots[actual] != root:
                 raise ValueError("invalid actual entity type")
             ancestor = actual
@@ -867,14 +870,14 @@ class Reader:
                 Selection(((id_name, self._encode(self._layout.ids[root].type, value)),))
                 for value in ids
             ]
-            columns = (id_name,) if builtin else (id_name, "entity_type")
+            columns = (id_name, "entity_type") if self._layout.discriminators[root] else (id_name,)
             batches = self._backend.rows_many(table_name(root), selections, columns)
             result: list[ReadResult[EntityHandle]] = []
             for value, rows in zip(ids, batches, strict=True):
                 if not rows:
                     result.append(NonNormalResult(Status.NO_ENTRY))
                     continue
-                actual = root if builtin else str(rows[0]["entity_type"])
+                actual = actual_type(self._layout, root, rows[0])
                 if actual not in self._layout.entities or self._layout.roots[actual] != root:
                     raise ValueError("invalid actual entity type")
                 ancestor = actual
@@ -975,7 +978,7 @@ class Reader:
         try:
             if row is not None and "_result" in row:
                 return cast(ReadResult[object], row["_result"])
-            state = str(row[stored.state]) if row is not None else "NO_ENTRY"
+            state = STATE_NAMES.get(cast(int, row[stored.state])) if row is not None else "NO_ENTRY"
             if state == "NO_ENTRY" and field.category == "config" and field.default is not None:
                 raw: object = (
                     int(field.default.text == "true")

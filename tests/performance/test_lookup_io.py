@@ -55,10 +55,10 @@ entity Security { id id: string attr label: string attr market: string attr issu
             with closing(sqlite3.connect(database)) as connection:
                 connection.executescript((output / 'schema.sql').read_text(encoding='utf-8'))
                 connection.execute(
-                    "INSERT INTO tb_issuer (id, entity_type, name__state, name) VALUES ('i', 'Issuer', 'VALUE', 'shared')"
+                    "INSERT INTO tb_issuer (id, name__state, name) VALUES ('i', 0, 'shared')"
                 )
                 connection.executemany(
-                    "INSERT INTO tb_security (id, entity_type, label__state, label, market__state, market, issuer__state, issuer) VALUES (?, 'Security', 'VALUE', ?, 'VALUE', 'market', 'VALUE', 'i')",
+                    "INSERT INTO tb_security (id, label__state, label, market__state, market, issuer__state, issuer) VALUES (?, 0, ?, 0, 'market', 0, 'i')",
                     [(str(index), f'label-{index}') for index in range(count)],
                 )
                 connection.commit()
@@ -104,7 +104,6 @@ entity Security { id id: string attr label: string attr market: string attr issu
                         projected['tb_security'],
                         {
                             'id',
-                            'entity_type',
                             'label__state',
                             'label',
                             'market__state',
@@ -113,9 +112,7 @@ entity Security { id id: string attr label: string attr market: string attr issu
                             'issuer',
                         },
                     )
-                    self.assertEqual(
-                        projected['tb_issuer'], {'id', 'entity_type', 'name__state', 'name'}
-                    )
+                    self.assertEqual(projected['tb_issuer'], {'id', 'name__state', 'name'})
                     self.assertEqual(point_calls['Issuer.name'], 1)
                     self.assertEqual(matcher.stats.scanned_entities, count)
                     self.assertEqual(matcher.stats.indexed_entities, count)

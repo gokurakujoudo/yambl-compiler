@@ -8,6 +8,7 @@ from yambl_compiler.ir.model import Definition, Field, Model, Type
 from yambl_compiler.storage.records import (
     LAYOUT_REVISION as LAYOUT_REVISION,
 )
+from yambl_compiler.storage.records import STATE_CODES
 from yambl_compiler.storage.records import (
     Column as Column,
 )
@@ -168,17 +169,26 @@ def build_layout(model: Model) -> Layout:
     for root, id_ in sorted(ids.items()):
         name = table_name(root)
         claim(name, root)
+        root_types = [key for key, owner in roots.items() if owner == root]
         tables[name] = Table(
             name,
             f"Identity table for {root}",
             [
                 Column("id", meaning=id_.implementation + ": " + type_label(id_.type)),
-                Column("entity_type", meaning="Actual qualified entity type"),
+                *(
+                    [Column("entity_type", meaning="Actual qualified entity type")]
+                    if len(root_types) > 1
+                    else []
+                ),
             ],
             ("id",),
-            [
-                f'{quote("entity_type")} IN ({", ".join(sql_literal(k) for k in roots if roots[k] == root)})'
-            ],
+            (
+                [
+                    f'{quote("entity_type")} IN ({", ".join(sql_literal(k) for k in roots if roots[k] == root)})'
+                ]
+                if len(root_types) > 1
+                else []
+            ),
         )
     stored: dict[str, StoredField] = {}
     groups: dict[tuple[str, str, str], str] = {}
@@ -315,12 +325,13 @@ def build_layout(model: Model) -> Layout:
             additions = [
                 Column(
                     state,
-                    default="'NO_ENTRY'",
+                    "INTEGER",
+                    default=str(STATE_CODES['NO_ENTRY']),
                     meaning=f"{f.identity}: VALUE, NO_ENTRY, EMPTY or NOT_APPLICABLE",
                 )
             ]
             table.checks.append(
-                f"{quote(state)} IN ('VALUE', 'NO_ENTRY', 'EMPTY', 'NOT_APPLICABLE')"
+                f"{quote(state)} IN ({', '.join(str(code) for code in STATE_CODES.values())})"
             )
             if value:
                 additions.append(
@@ -332,7 +343,7 @@ def build_layout(model: Model) -> Layout:
                     )
                 )
                 table.checks.append(
-                    f"({quote(state)} = 'VALUE' AND {quote(value)} IS NOT NULL) OR ({quote(state)} <> 'VALUE' AND {quote(value)} IS NULL)"
+                    f"({quote(state)} = {STATE_CODES['VALUE']} AND {quote(value)} IS NOT NULL) OR ({quote(state)} <> {STATE_CODES['VALUE']} AND {quote(value)} IS NULL)"
                 )
             if set(c.name for c in additions) & set(c.name for c in table.columns):
                 raise ValueError(f"{f.identity}: SQL column collision")
@@ -393,7 +404,16 @@ def build_layout(model: Model) -> Layout:
             entities[definition.identity] = definition
             roots[definition.identity] = definition.identity
             ids[definition.identity] = next(f for f in definition.fields if f.category == "id")
-    return Layout(model, entities, roots, ids, stored, tuple(tables[k] for k in sorted(tables)))
+    discriminators = {root: sum(owner == root for owner in roots.values()) > 1 for root in ids}
+    return Layout(
+        model,
+        entities,
+        roots,
+        discriminators,
+        ids,
+        stored,
+        tuple(tables[k] for k in sorted(tables)),
+    )
 
 
 def sparse_columns(table: Table, field_: Field, value: str) -> None:
@@ -408,11 +428,14 @@ def sparse_columns(table: Table, field_: Field, value: str) -> None:
         table.columns.append(
             Column(
                 "state",
-                default="'NO_ENTRY'",
+                "INTEGER",
+                default=str(STATE_CODES['NO_ENTRY']),
                 meaning="VALUE, NO_ENTRY, EMPTY or NOT_APPLICABLE",
             )
         )
-        table.checks.append("state IN ('VALUE', 'NO_ENTRY', 'EMPTY', 'NOT_APPLICABLE')")
+        table.checks.append(
+            'state IN (' + ', '.join(str(code) for code in STATE_CODES.values()) + ')'
+        )
     if not value:
         return
     if value not in {c.name for c in table.columns}:
@@ -430,7 +453,7 @@ def sparse_columns(table: Table, field_: Field, value: str) -> None:
         else f"typeof({quote(value)}) = 'text'"
     )
     table.checks.append(
-        f"field <> {sql_literal(field_.identity)} OR ((state = 'VALUE' AND ({payload})) OR (state <> 'VALUE' AND {quote(value)} IS NULL))"
+        f"field <> {sql_literal(field_.identity)} OR ((state = {STATE_CODES['VALUE']} AND ({payload})) OR (state <> {STATE_CODES['VALUE']} AND {quote(value)} IS NULL))"
     )
 
 
@@ -484,10 +507,15 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
                 )
             state = f.name + "__state"
             table.columns.append(
-                Column(state, default="'NO_ENTRY'", meaning=f"{f.identity}: field state")
+                Column(
+                    state,
+                    "INTEGER",
+                    default=str(STATE_CODES['NO_ENTRY']),
+                    meaning=f"{f.identity}: field state",
+                )
             )
             table.checks.append(
-                f"{quote(state)} IN ('VALUE', 'NO_ENTRY', 'EMPTY', 'NOT_APPLICABLE')"
+                f"{quote(state)} IN ({', '.join(str(code) for code in STATE_CODES.values())})"
             )
             table.fields.append(f.identity)
             value, members = "", ""
@@ -501,7 +529,7 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
                     )
                 )
                 table.checks.append(
-                    f"({quote(state)} = 'VALUE' AND {quote(value)} IS NOT NULL) OR ({quote(state)} <> 'VALUE' AND {quote(value)} IS NULL)"
+                    f"({quote(state)} = {STATE_CODES['VALUE']} AND {quote(value)} IS NOT NULL) OR ({quote(state)} <> {STATE_CODES['VALUE']} AND {quote(value)} IS NULL)"
                 )
             else:
                 members = (
@@ -553,7 +581,7 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
     entries = next(t for t in tables if t.name == "tb_decodes_entries")
     for definition in model.definitions:
         if definition.kind == "decodes":
-            dictionary.rows.append((definition.identity, "VALUE"))
+            dictionary.rows.append((definition.identity, STATE_CODES['VALUE']))
             for entry in definition.entries:
                 values = {
                     "decodes_id": definition.identity,

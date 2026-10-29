@@ -100,25 +100,25 @@ entity Bond inherits Security { @override attr label: exact<'fixed'> }
         with closing(sqlite3.connect(database)) as connection:
             connection.executescript(ddl(layout))
             connection.execute(
-                "INSERT INTO tb_country (id, entity_type, name__state, name) VALUES ('country', 'Country', 'VALUE', 'China')"
+                "INSERT INTO tb_country (id, name__state, name) VALUES ('country', 0, 'China')"
             )
             connection.execute(
-                "INSERT INTO tb_issuer (id, entity_type, country__state, country) VALUES ('issuer', 'Issuer', 'VALUE', 'country')"
+                "INSERT INTO tb_issuer (id, country__state, country) VALUES ('issuer', 0, 'country')"
             )
             connection.executemany(
                 'INSERT INTO tb_security (id, entity_type, label__state, label, issuer__state, issuer) VALUES (?, ?, ?, ?, ?, ?)',
                 [
-                    ('root', 'Security', 'VALUE', 'ordinary', 'VALUE', 'issuer'),
-                    ('bond', 'Bond', 'VALUE', 'fixed', 'VALUE', 'issuer'),
-                    ('missing', 'Security', 'NO_ENTRY', None, 'NO_ENTRY', None),
+                    ('root', 'Security', 0, 'ordinary', 0, 'issuer'),
+                    ('bond', 'Bond', 0, 'fixed', 0, 'issuer'),
+                    ('missing', 'Security', 1, None, 1, None),
                 ],
             )
             connection.executemany(
                 f'INSERT INTO {quote(external.table)} (id, dim_market, {quote(external.state)}, {quote(external.value)}) VALUES (?, ?, ?, ?)',
                 [
-                    ('root', 'CN', 'VALUE', 'cn-root'),
-                    ('root', 'US', 'VALUE', 'us-root'),
-                    ('bond', 'CN', 'VALUE', 'cn-bond'),
+                    ('root', 'CN', 0, 'cn-root'),
+                    ('root', 'US', 0, 'us-root'),
+                    ('bond', 'CN', 0, 'cn-bond'),
                 ],
             )
             connection.commit()
@@ -205,21 +205,20 @@ entity Asset {
         with closing(sqlite3.connect(database)) as connection:
             connection.executescript(ddl(layout))
             connection.execute(
-                'INSERT INTO tb_asset (id, entity_type, amount__state, amount, day__state, day, active__state, active, count__state, count, alpha__state, alpha, beta__state, beta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'INSERT INTO tb_asset (id, amount__state, amount, day__state, day, active__state, active, count__state, count, alpha__state, alpha, beta__state, beta) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 (
                     'asset',
-                    'Asset',
-                    'VALUE',
+                    0,
                     '1.00',
-                    'VALUE',
+                    0,
                     '2026-10-28',
-                    'VALUE',
+                    0,
                     1,
-                    'VALUE',
+                    0,
                     '3',
-                    'VALUE',
+                    0,
                     'One',
-                    'VALUE',
+                    0,
                     'One',
                 ),
             )
@@ -325,8 +324,8 @@ entity Asset {
             connection.executemany(
                 'INSERT INTO tb_base (id, entity_type, target__state, target, label__state, label) VALUES (?, ?, ?, ?, ?, ?)',
                 [
-                    ('a', 'A', 'VALUE', 'p1', 'VALUE', 'Primary'),
-                    ('b', 'B', 'VALUE', 'p2', 'VALUE', 'Primary'),
+                    ('a', 'A', 0, 'p1', 0, 'Primary'),
+                    ('b', 'B', 0, 'p2', 0, 'Primary'),
                 ],
             )
             connection.commit()
@@ -394,7 +393,7 @@ entity Asset {
             connection.executescript(ddl(layout))
             connection.execute(
                 f'INSERT INTO {quote(table_name("core.Security"))} (id, entity_type, {quote(stored.state)}, {quote(stored.value)}) VALUES (?, ?, ?, ?)',
-                ('42', 'core.Security', 'VALUE', 'Alpha'),
+                ('42', 'core.Security', 0, 'Alpha'),
             )
             connection.commit()
         opened = module.SampleReader.open(database)
@@ -486,8 +485,8 @@ entity Asset {
             connection.executemany(
                 f'INSERT INTO {quote(stored.table)} (id, valid_from, valid_to, {quote(stored.state)}, {quote(stored.value)}) VALUES (?, ?, ?, ?, ?)',
                 [
-                    ('one', '2026-10-01', '2026-11-01', 'VALUE', 'October'),
-                    ('one', '2026-11-01', '2026-12-01', 'VALUE', 'November'),
+                    ('one', '2026-10-01', '2026-11-01', 0, 'October'),
+                    ('one', '2026-11-01', '2026-12-01', 0, 'November'),
                 ],
             )
             connection.commit()
@@ -564,12 +563,12 @@ entity E {
         database = self.root / 'inputs.sqlite'
         with closing(sqlite3.connect(database)) as connection:
             connection.executescript(ddl(layout))
-            connection.execute("INSERT INTO tb_e (id, entity_type) VALUES ('one', 'E')")
+            connection.execute("INSERT INTO tb_e (id) VALUES ('one')")
             for field_name in ('code_value', 'string_value'):
                 field = layout.fields['E.' + field_name]
                 connection.executemany(
                     f'INSERT INTO {quote(field.table)} (id, dim_source, {quote(field.state)}, {quote(field.value)}) VALUES (?, ?, ?, ?)',
-                    [('one', 'Wind', 'VALUE', 'wind'), ('one', 'Manual', 'VALUE', 'manual')],
+                    [('one', 'Wind', 0, 'wind'), ('one', 'Manual', 0, 'manual')],
                 )
             connection.commit()
         files = self.file_copy(layout, database)
@@ -629,16 +628,16 @@ entity E {
             connection.executescript(ddl(self.layout))
             connection.execute(
                 f'INSERT INTO {quote(table_name("core.Security"))} (id, entity_type, {quote(stored.state)}, {quote(stored.value)}) VALUES (?, ?, ?, ?)',
-                ('one', 'core.Security', 'VALUE', 'Alpha'),
+                ('one', 'core.Security', 0, 'Alpha'),
             )
             connection.execute(
                 f'INSERT INTO {quote(table_name("core.Security"))} (id, entity_type, {quote(stored.state)}, {quote(stored.value)}) VALUES (?, ?, ?, ?)',
-                ('two', 'core.Bond', 'VALUE', 'Alpha'),
+                ('two', 'core.Bond', 0, 'Alpha'),
             )
             scd = self.layout.fields['core.Security.code']
             connection.execute(
                 f'INSERT INTO {quote(scd.table)} (id, valid_from, valid_to, {quote(scd.state)}, {quote(scd.value)}) VALUES (?, ?, ?, ?, ?)',
-                ('two', '2026-10-01', '2026-11-01', 'VALUE', 'X'),
+                ('two', '2026-10-01', '2026-11-01', 0, 'X'),
             )
             connection.commit()
             connection.row_factory = sqlite3.Row
@@ -735,7 +734,7 @@ print(json.dumps(matches))
             )
             connection.execute(
                 f'INSERT INTO {quote(scd.table)} (id, valid_from, valid_to, {quote(scd.state)}, {quote(scd.value)}) VALUES (?, ?, ?, ?, ?)',
-                ('two', '2026-10-15', '2026-12-01', 'VALUE', 'Y'),
+                ('two', '2026-10-15', '2026-12-01', 0, 'Y'),
             )
             connection.commit()
             connection.row_factory = sqlite3.Row

@@ -63,7 +63,7 @@ class LiteralRuntimeTests(FilesystemCase):
         path = self.root / 'sample.db'
         with closing(sqlite3.connect(path)) as database:
             database.executescript((output / 'schema.sql').read_text())
-            database.execute("INSERT INTO tb_thing(id, entity_type) VALUES ('a', 'Thing')")
+            database.execute("INSERT INTO tb_thing(id) VALUES ('a')")
             database.commit()
             database.row_factory = sqlite3.Row
             rows = {

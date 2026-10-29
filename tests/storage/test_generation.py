@@ -251,7 +251,7 @@ class GenerationTests(FilesystemCase):
                     self.assertIn(table.name + "__index_" + str(i), reference)
             self.assertEqual(
                 dict(db.execute("SELECT * FROM tb_yambl_metadata")),
-                {"layout_revision": "7", "model_digest": self.model.model_digest},
+                {"layout_revision": "8", "model_digest": self.model.model_digest},
             )
         self.assertEqual(len(manifest["tables"]), len(layout.tables))
         self.assertIn("model default: 20", reference)
@@ -369,14 +369,14 @@ class GenerationTests(FilesystemCase):
                     "SELECT entries__state FROM tb_decodes WHERE decodes_id = ?",
                     ("Currencies",),
                 ).fetchone(),
-                ("VALUE",),
+                (0,),
             )
             db.execute(
-                "INSERT INTO tb_hierarchy (hierarchy_id, hierarchy_entries__state) VALUES ('prices', 'VALUE')"
+                "INSERT INTO tb_hierarchy (hierarchy_id, hierarchy_entries__state) VALUES ('prices', 0)"
             )
             db.execute("INSERT INTO tb_hierarchy_entries VALUES ('prices', 'Primary', '1')")
             db.execute(
-                "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, when__state, then_set__state) VALUES ('g', 'VALUE', 'A', 'VALUE', 'VALUE')"
+                "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, when__state, then_set__state) VALUES ('g', 0, 'A', 0, 0)"
             )
             encoded = json.dumps(
                 {"type": encode(layout.fields["A.text"].field.type), "value": "中'文"},

@@ -139,7 +139,7 @@ class ConfigurationTests(DualTests):
             "target_entity_type": "A",
             "priority": "1",
             **{
-                k + "__state": "VALUE"
+                k + "__state": 0
                 for k in ("target_entity_type", "priority", "when", "then_set")
             },
         }
@@ -150,7 +150,7 @@ class ConfigurationTests(DualTests):
             ([header], [], [entry(type_=types["A.text"])]),
             ([header], [], [entry("A.text", "x")]),
             ([header], [], [entry(), entry()]),
-            ([{**header, "priority__state": "EMPTY"}], [], []),
+            ([{**header, "priority__state": 2}], [], []),
             ([{**header, "priority": 1}], [], []),
             ([{**header, "priority": "01"}], [], []),
             ([{**header, "target_entity_type": "missing"}], [], []),
@@ -192,7 +192,7 @@ class ConfigurationTests(DualTests):
     def group(self, name, priority, assignments, conditions=None, target="A"):
         self.writer.execute(
             "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, priority__state, priority, when__state, then_set__state) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (name, "VALUE", target, "VALUE", str(priority), "VALUE", "VALUE"),
+            (name, 0, target, 0, str(priority), 0, 0),
         )
         fields = {f.identity: f.type for f in self.model.fields}
         for role, entries in [("when", conditions or {}), ("then_set", assignments)]:

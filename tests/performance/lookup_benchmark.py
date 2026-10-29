@@ -100,23 +100,23 @@ def fixture(root: Path, count: int, backends: tuple[str, ...]):
     with closing(sqlite3.connect(database)) as connection:
         connection.executescript((output / 'schema.sql').read_text(encoding='utf-8'))
         connection.executemany(
-            "INSERT INTO tb_issuer (id,entity_type,name__state,name) VALUES (?, 'Issuer', 'VALUE', ?)",
+            "INSERT INTO tb_issuer (id,name__state,name) VALUES (?, 0, ?)",
             ((str(i), f'Issuer-{i}') for i in range(issuer_count)),
         )
         connection.executemany(
-            "INSERT INTO tb_security (id,entity_type,label__state,label,issuer__state,issuer) VALUES (?, 'Security', 'VALUE', ?, 'VALUE', ?)",
+            "INSERT INTO tb_security (id,label__state,label,issuer__state,issuer) VALUES (?, 0, ?, 0, ?)",
             ((str(i), label_for(i), str((i // 3) % issuer_count)) for i in range(count)),
         )
         connection.executemany(
-            "INSERT INTO tb_security_lookup_sparse (id,field,state,string) VALUES (?, 'Security.market', 'VALUE', 'market')",
+            "INSERT INTO tb_security_lookup_sparse (id,field,state,string) VALUES (?, 'Security.market', 0, 'market')",
             ((str(i),) for i in range(count)),
         )
         connection.executemany(
-            "INSERT INTO tb_security_lookup_dense (id,sector__state,sector) VALUES (?, 'VALUE', 'sector')",
+            "INSERT INTO tb_security_lookup_dense (id,sector__state,sector) VALUES (?, 0, 'sector')",
             ((str(i),) for i in range(count)),
         )
         connection.executemany(
-            "INSERT INTO tb_security_rating (id,dim_agency,dim_provider,valid_from,valid_to,rating__state,rating) VALUES (?, ?, ?, ?, ?, 'VALUE', ?)",
+            "INSERT INTO tb_security_rating (id,dim_agency,dim_provider,valid_from,valid_to,rating__state,rating) VALUES (?, ?, ?, ?, ?, 0, ?)",
             (
                 (str(i), agency, provider, start, end, f'rating-{i % 10}')
                 for i in range(count)

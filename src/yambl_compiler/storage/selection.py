@@ -3,10 +3,12 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
+from typing import cast
 
 from yambl_compiler.ir.model import Dimension, Field
 from yambl_compiler.storage.backends import Row, Selection
 from yambl_compiler.storage.batch import Batch, FieldRequest
+from yambl_compiler.storage.records import STATE_CODES, STATE_NAMES
 from yambl_compiler.storage.results import NonNormalResult, ReadResult, Status, Success
 
 
@@ -78,8 +80,8 @@ class Available:
                 result = NonNormalResult(Status.ENTITY_NOT_FOUND, f"Hierarchy not found: {name}")
             elif len(header) != 1:
                 result = NonNormalResult(Status.ERROR, "duplicate Hierarchy identity")
-            elif header[0]["hierarchy_entries__state"] != "VALUE":
-                state = str(header[0]["hierarchy_entries__state"])
+            elif header[0]["hierarchy_entries__state"] != STATE_CODES['VALUE']:
+                state = STATE_NAMES.get(cast(int, header[0]["hierarchy_entries__state"]))
                 result = (
                     NonNormalResult(Status(state))
                     if state in ("NO_ENTRY", "EMPTY", "NOT_APPLICABLE")
@@ -247,11 +249,11 @@ class Available:
                 continue
             found = False
             for _, row in records:
-                state = str(row[stored.state])
-                if state == "NO_ENTRY":
+                state = row[stored.state]
+                if state == STATE_CODES['NO_ENTRY']:
                     continue
                 found = True
-                if state in ("EMPTY", "NOT_APPLICABLE"):
+                if state in (STATE_CODES['EMPTY'], STATE_CODES['NOT_APPLICABLE']):
                     continue
                 winners.append((request, row))
                 break

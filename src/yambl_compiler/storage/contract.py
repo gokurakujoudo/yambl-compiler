@@ -11,7 +11,7 @@ from typing import Literal, cast, get_args, get_origin, get_type_hints
 from yambl_compiler.storage.records import Layout
 
 type JSON = None | str | int | bool | list[JSON] | dict[str, JSON]
-RUNTIME_REVISION = 8
+RUNTIME_REVISION = 9
 
 
 def unique_object(pairs: list[tuple[str, JSON]]) -> dict[str, JSON]:
@@ -68,7 +68,16 @@ def decode(value: JSON, expected: object, path: str = "$") -> object:
     """
     origin, args = get_origin(expected), get_args(expected)
     if origin is UnionType:
-        return None if value is None else decode(value, args[0], path)
+        for option in args:
+            if option is type(None) and value is None:
+                return None
+            if option is type(None):
+                continue
+            try:
+                return decode(value, option, path)
+            except ValueError:
+                pass
+        raise ValueError(f'{path}: invalid union value')
     if origin is Literal:
         if type(value) is not str or value not in args:
             raise ValueError(f"{path}: invalid discriminator")

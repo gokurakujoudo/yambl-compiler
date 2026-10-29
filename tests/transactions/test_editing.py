@@ -26,7 +26,7 @@ class CandidateLoadingTests(FilesystemCase):
                     else (
                         'a'
                         if column.name == 'id'
-                        else 'NO_ENTRY' if column.name.endswith('__state') else None
+                        else 1 if column.name.endswith('__state') else None
                     )
                 )
                 for column in a.columns
@@ -53,8 +53,8 @@ class CandidateLoadingTests(FilesystemCase):
         entity = candidate.catalog.entity('A')
         self.assertEqual(candidate.actual(entity, 'a').definition.identity, 'A')
         self.assertEqual(backend.loaded, ['tb_a'])
-        candidate.select('tb_a', {'id': 'a'})[0]['text__state'] = 'EMPTY'
-        self.assertEqual(self.tables['tb_a'][0]['text__state'], 'NO_ENTRY')
+        candidate.select('tb_a', {'id': 'a'})[0]['text__state'] = 2
+        self.assertEqual(self.tables['tb_a'][0]['text__state'], 1)
         candidate.insert(entity, 'b')
         with self.assertRaisesRegex(ValueError, 'entity ID already exists'):
             candidate.insert(entity, 'b')

@@ -54,24 +54,24 @@ class IncrementalCycleTests(FilesystemCase):
             self.assertEqual(incremental.issues, tuple(full_cycles))
 
     def test_inserted_identity_activates_a_dangling_edge(self):
-        self.db.execute("UPDATE tb_node SET parent__state='VALUE', parent='new' WHERE id='a'")
+        self.db.execute("UPDATE tb_node SET parent__state=0, parent='new' WHERE id='a'")
         self.db.execute(
-            "INSERT INTO tb_node(id, entity_type, parent__state, parent) VALUES ('new', 'Node', 'VALUE', 'a')"
+            "INSERT INTO tb_node(id, entity_type, parent__state, parent) VALUES ('new', 'Node', 0, 'a')"
         )
         self.verify({'tb_node': [{'id': 'new', 'entity_type': 'Node'}]}, True)
 
     def test_subtype_mismatch_stays_dangling(self):
-        self.db.execute("UPDATE tb_node SET narrow__state='VALUE', narrow='a' WHERE id='a'")
+        self.db.execute("UPDATE tb_node SET narrow__state=0, narrow='a' WHERE id='a'")
         self.verify({'tb_node': [{'id': 'a'}]}, False)
-        self.db.execute("UPDATE tb_node SET narrow__state='VALUE', narrow='b' WHERE id='b'")
+        self.db.execute("UPDATE tb_node SET narrow__state=0, narrow='b' WHERE id='b'")
         self.verify({'tb_node': [{'id': 'b'}]}, True)
 
     def test_scd_intersection_and_exclusive_end(self):
         self.db.executemany(
             'INSERT INTO tb_node_period(id,valid_from,valid_to,period__state,period) VALUES (?,?,?,?,?)',
             [
-                ('a', '2026-01-01', '2026-01-03', 'VALUE', 'b'),
-                ('b', '2026-01-03', '2026-01-05', 'VALUE', 'a'),
+                ('a', '2026-01-01', '2026-01-03', 0, 'b'),
+                ('b', '2026-01-03', '2026-01-05', 0, 'a'),
             ],
         )
         self.verify({'tb_node_period': [{'id': 'a'}]}, False)
@@ -79,18 +79,18 @@ class IncrementalCycleTests(FilesystemCase):
         self.verify({'tb_node_period': [{'id': 'b'}]}, True)
 
     def test_collection_members(self):
-        self.db.execute("UPDATE tb_node SET children__state='VALUE' WHERE id IN ('a','b')")
+        self.db.execute("UPDATE tb_node SET children__state=0 WHERE id IN ('a','b')")
         self.db.executemany('INSERT INTO tb_node_children VALUES (?, ?)', [('a', 'b'), ('b', 'a')])
         self.verify({'tb_node_children': [{'id': 'b', 'member_id': 'a'}]}, True)
 
     def test_dimensions_and_snapshot_dates_stay_distinct(self):
         self.db.executemany(
             'INSERT INTO tb_node_static_source(id,dim_source,dim__state,dim) VALUES (?,?,?,?)',
-            [('a', 'X', 'VALUE', 'b'), ('b', 'Y', 'VALUE', 'a')],
+            [('a', 'X', 0, 'b'), ('b', 'Y', 0, 'a')],
         )
         self.db.executemany(
             'INSERT INTO tb_node_snap(id,date,snap__state,snap) VALUES (?,?,?,?)',
-            [('a', '2026-01-01', 'VALUE', 'b'), ('b', '2026-01-02', 'VALUE', 'a')],
+            [('a', '2026-01-01', 0, 'b'), ('b', '2026-01-02', 0, 'a')],
         )
         self.verify({'tb_node_static_source': [{'id': 'a'}], 'tb_node_snap': [{'id': 'a'}]}, False)
         self.db.execute("UPDATE tb_node_static_source SET dim_source='X' WHERE id='b'")
@@ -102,9 +102,9 @@ class IncrementalCycleTests(FilesystemCase):
     def test_only_reachable_identities_are_selected(self):
         self.db.executemany(
             'INSERT INTO tb_node(id,entity_type,parent__state,parent) VALUES (?,?,?,?)',
-            [('c', 'Node', 'VALUE', 'd'), ('d', 'Node', 'VALUE', 'c')],
+            [('c', 'Node', 0, 'd'), ('d', 'Node', 0, 'c')],
         )
-        self.db.execute("UPDATE tb_node SET parent__state='VALUE', parent='b' WHERE id='a'")
+        self.db.execute("UPDATE tb_node SET parent__state=0, parent='b' WHERE id='a'")
         tables = {
             table.name: [dict(row) for row in self.db.execute(f'SELECT * FROM "{table.name}"')]
             for table in self.layout.tables
@@ -127,10 +127,8 @@ class IncrementalCycleTests(FilesystemCase):
         self.assertEqual({keys['id'] for table, keys in selected if table == 'tb_node'}, {'a', 'b'})
 
     def test_other_root_reference_is_not_a_same_tree_cycle(self):
-        self.db.execute("INSERT INTO tb_other(id,entity_type) VALUES ('x','Other')")
-        self.db.execute(
-            'UPDATE tb_node SET foreign__state=\'VALUE\', "foreign"=\'x\' WHERE id=\'a\''
-        )
+        self.db.execute("INSERT INTO tb_other(id) VALUES ('x')")
+        self.db.execute('UPDATE tb_node SET foreign__state=0, "foreign"=\'x\' WHERE id=\'a\'')
         self.verify({'tb_node': [{'id': 'a'}]}, False)
 
     def test_invalid_identity_and_unreadable_field_fail_closed(self):

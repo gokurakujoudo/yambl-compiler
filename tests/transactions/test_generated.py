@@ -99,7 +99,7 @@ class GeneratedTransactionTests(CatalogCase):
         for backend in ('sqlite', 'files'):
             self.assertTrue((output / (backend + '.data')).exists())
         self.assertEqual(
-            json.loads((output / 'files.data/repository.json').read_text())['format_revision'], 2
+            json.loads((output / 'files.data/repository.json').read_text())['format_revision'], 3
         )
 
     def test_missing_or_duplicate_runtime_dependency_is_a_preflight_failure(self):

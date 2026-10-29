@@ -117,12 +117,17 @@ class ProgramTests(FilesystemCase):
             ("Issuer", ["i"]),
         ]:
             for id in ids:
-                self.writer.execute(
-                    f"INSERT INTO {quote(table_name(entity))} (id, entity_type) VALUES (?, ?)",
-                    (id, entity),
-                )
+                if self.layout.discriminators[entity]:
+                    self.writer.execute(
+                        f"INSERT INTO {quote(table_name(entity))} (id, entity_type) VALUES (?, ?)",
+                        (id, entity),
+                    )
+                else:
+                    self.writer.execute(
+                        f"INSERT INTO {quote(table_name(entity))} (id) VALUES (?)", (id,)
+                    )
         self.writer.execute(
-            "INSERT INTO tb_hierarchy (hierarchy_id, hierarchy_entries__state) VALUES ('Local', 'VALUE')"
+            "INSERT INTO tb_hierarchy (hierarchy_id, hierarchy_entries__state) VALUES ('Local', 0)"
         )
         self.writer.executemany(
             "INSERT INTO tb_hierarchy_entries (hierarchy_id, entry_value, ordering) VALUES (?, ?, ?)",
@@ -160,10 +165,10 @@ class ProgramTests(FilesystemCase):
 
     def put(self, identity, value=None, id="", **keys):
         stored = self.layout.fields[identity]
-        values = {"id": id, **dict(stored.key_values), **keys, stored.state: "VALUE"}
+        values = {"id": id, **dict(stored.key_values), **keys, stored.state: 0}
         if stored.value:
             values[stored.value] = value
-        if stored.table == table_name(stored.root):
+        if stored.table == table_name(stored.root) and self.layout.discriminators[stored.root]:
             values["entity_type"] = stored.root
         columns = ", ".join(quote(k) for k in values)
         self.writer.execute(
@@ -407,9 +412,9 @@ class ProgramTests(FilesystemCase):
                 past = replace(past, when=date(2026, 1, 7))
             self.assertEqual(available.read([BestRequest(past, (), days)])[0].status, expected)
         for state, expected in [
-            ("NO_ENTRY", Status.NO_ENTRY),
-            ("EMPTY", Status.NO_DATA),
-            ("NOT_APPLICABLE", Status.NO_DATA),
+            (1, Status.NO_ENTRY),
+            (2, Status.NO_DATA),
+            (3, Status.NO_DATA),
         ]:
             with patch.object(
                 reader._backend,
@@ -464,7 +469,7 @@ class ProgramTests(FilesystemCase):
                 "dim_industry_type": "Primary",
                 "valid_from": "2026-01-01",
                 "valid_to": "2999-12-31",
-                stored.state: "VALUE",
+                stored.state: 0,
                 stored.value: "A",
             }
         ] * 2
@@ -476,11 +481,11 @@ class ProgramTests(FilesystemCase):
 
     def test_hierarchy_validation_retains_arbitrary_integer_order(self):
         reader = next(self.readers())
-        header = {"hierarchy_entries__state": "VALUE"}
+        header = {"hierarchy_entries__state": 0}
         for headers, members, expected in [
             ([], [], Status.ENTITY_NOT_FOUND),
             ([header, header], [], Status.ERROR),
-            ([{"hierarchy_entries__state": "EMPTY"}], [], Status.EMPTY),
+            ([{"hierarchy_entries__state": 2}], [], Status.EMPTY),
             ([{"hierarchy_entries__state": "bad"}], [], Status.ERROR),
             ([header], [{"entry_value": "X", "ordering": "01"}], Status.ERROR),
             (
@@ -777,7 +782,7 @@ class ProgramTests(FilesystemCase):
             "id": "f",
             "valid_from": "2026-01-01",
             "valid_to": "2999-12-31",
-            stored.state: "VALUE",
+            stored.state: 0,
         }
         with patch.object(reader._backend, "rows_many", return_value=[[{"member_id": None}]]):
             batch.collections([(stored, field, row)])

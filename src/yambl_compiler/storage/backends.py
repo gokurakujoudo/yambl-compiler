@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from yambl_compiler.storage.contract import loads
-from yambl_compiler.storage.records import LAYOUT_REVISION, Layout, Table, quote
+from yambl_compiler.storage.records import (
+    FILE_REVISION,
+    LAYOUT_REVISION,
+    STATE_CODES,
+    Layout,
+    Table,
+    quote,
+)
 
 type Row = dict[str, object]
 
@@ -212,7 +219,7 @@ def validate_row(layout: Layout, table: Table, row: Row) -> None:
         elif type(value) is not (int if column.sql_type == "INTEGER" else str):
             raise ValueError(f"invalid column type: {column.name}")
         if column.name in states:
-            if value not in ("VALUE", "NO_ENTRY", "EMPTY", "NOT_APPLICABLE"):
+            if value not in STATE_CODES.values():
                 raise ValueError("invalid stored field state")
     if "valid_from" in table.primary and "valid_to" in row:
         start, end = str(row["valid_from"]), str(row["valid_to"])
@@ -238,7 +245,7 @@ def validate_row(layout: Layout, table: Table, row: Row) -> None:
     for stored in fields:
         if any(row[k] != v for k, v in stored.key_values):
             continue
-        normal = row[stored.state] == "VALUE"
+        normal = row[stored.state] == STATE_CODES['VALUE']
         if stored.value:
             payload = row[stored.value]
             if normal != (payload is not None):
@@ -276,7 +283,7 @@ def repository_contents(layout: Layout, tables: Mapping[str, list[Row]]) -> dict
         contents[f"tables/{table.name}.jsonl"] = "".join(rows)
         contents[f"indexes/{table.name}.jsonl"] = "".join(offsets)
     metadata = {
-        "format_revision": 2,
+        "format_revision": FILE_REVISION,
         "layout_revision": LAYOUT_REVISION,
         "model_digest": layout.model.model_digest,
         "tables": {
@@ -321,7 +328,7 @@ class FileBackend:
                 {"format_revision", "layout_revision", "model_digest", "tables", "indexes"},
             )
             or type(metadata["format_revision"]) is not int
-            or metadata["format_revision"] != 2
+            or metadata["format_revision"] != FILE_REVISION
             or type(metadata["layout_revision"]) is not int
             or metadata["layout_revision"] != LAYOUT_REVISION
             or metadata["model_digest"] != layout.model.model_digest

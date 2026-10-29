@@ -23,9 +23,9 @@ class ContractTests(FilesystemCase):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         self.assertEqual(load_contract(path, digest), layout)
         wire = json.loads(dumps(layout))
-        self.assertEqual(wire['runtime_revision'], 8)
-        self.assertEqual(LAYOUT_REVISION, 7)
-        wire['runtime_revision'] = 7
+        self.assertEqual(wire['runtime_revision'], 9)
+        self.assertEqual(LAYOUT_REVISION, 8)
+        wire['runtime_revision'] = 8
         path.write_text(json.dumps(wire), encoding='utf-8')
         with self.assertRaisesRegex(ValueError, 'unsupported runtime contract revision'):
             load_contract(path, hashlib.sha256(path.read_bytes()).hexdigest())
@@ -35,7 +35,7 @@ class ContractTests(FilesystemCase):
             [],
             {},
             {"runtime_revision": True, "layout": {}},
-            {"runtime_revision": 9, "layout": {}},
+            {"runtime_revision": 8, "layout": {}},
             {"runtime_revision": 5, "layout": {}},
         ):
             path.write_text(json.dumps(value), encoding="utf-8")
@@ -60,6 +60,9 @@ class ContractTests(FilesystemCase):
         self.assertEqual(decode([True], list[bool]), [True])
         self.assertEqual(decode(None, str | None), None)
         self.assertEqual(decode("x", str | None), "x")
+        self.assertEqual(decode(7, str | int), 7)
+        with self.assertRaisesRegex(ValueError, 'invalid union value'):
+            decode('invalid', int | None)
 
     def test_lookup_contract_roundtrip_without_sources(self):
         source = "entity E { id id: string attr name: string lookup by_name { name = self.name::value() } }"

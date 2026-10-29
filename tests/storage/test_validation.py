@@ -39,14 +39,12 @@ class ValidationTests(FilesystemCase):
             "INSERT INTO tb_node(id, entity_type) VALUES (?, ?)",
             [("a", "Node"), ("b", "Child"), ("c", "Node")],
         )
-        self.db.execute(
-            "INSERT INTO tb_other(id,entity_type,parent__state,parent) VALUES ('x','Other','VALUE','a')"
-        )
+        self.db.execute("INSERT INTO tb_other(id,parent__state,parent) VALUES ('x',0,'a')")
         self.db.executemany(
             'INSERT INTO tb_node_config(id,field,state,int,bool) VALUES (?,?,?,?,?)',
             [
-                ('a', 'Node.limit', 'VALUE', '1', None),
-                ('a', 'Node.active', 'VALUE', None, 1),
+                ('a', 'Node.limit', 0, '1', None),
+                ('a', 'Node.active', 0, None, 1),
             ],
         )
         self.db.commit()
@@ -64,10 +62,10 @@ class ValidationTests(FilesystemCase):
         if s.table == "tb_node":
             self.db.execute(
                 f'UPDATE tb_node SET "{s.state}" = ?, "{s.value}" = ? WHERE id = ?',
-                ("VALUE", target, owner),
+                (0, target, owner),
             )
         else:
-            row = {"id": owner, **coords, s.state: "VALUE", s.value: target}
+            row = {"id": owner, **coords, s.state: 0, s.value: target}
             self.db.execute(
                 'INSERT INTO "'
                 + s.table
@@ -131,12 +129,12 @@ class ValidationTests(FilesystemCase):
         self.db.execute(
             "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, "
             "priority__state, priority, when__state, then_set__state) "
-            "VALUES ('target', 'VALUE', 'Unknown', 'VALUE', '1', 'VALUE', 'VALUE')"
+            "VALUES ('target', 0, 'Unknown', 0, '1', 0, 0)"
         )
         self.db.execute(
             "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, "
             "priority__state, priority, when__state, then_set__state) "
-            "VALUES ('wrong-field', 'VALUE', 'Node', 'VALUE', '1', 'VALUE', 'VALUE')"
+            "VALUES ('wrong-field', 0, 'Node', 0, '1', 0, 0)"
         )
         self.db.execute(
             "INSERT INTO tb_config_group_when VALUES ('wrong-field', 'Other.parent', ?) ",
@@ -178,7 +176,7 @@ class ValidationTests(FilesystemCase):
         self.db.execute(
             "INSERT INTO tb_config_group (config_group_id, target_entity_type__state, target_entity_type, "
             "priority__state, priority, when__state, then_set__state) "
-            "VALUES ('bad-map', 'VALUE', 'Node', 'VALUE', '1', 'VALUE', 'VALUE')"
+            "VALUES ('bad-map', 0, 'Node', 0, '1', 0, 0)"
         )
         type_ = self.layout.fields['Node.limit'].field.type
         value = json.dumps({'type': asdict(type_), 'value': '1'})
@@ -242,7 +240,7 @@ class ValidationTests(FilesystemCase):
         self.edge("dim", "b", "a", dim_source="X")
         self.edge("snap", "b", "a", date="2026-01-01")
         self.edge("period", "b", "a", valid_from="2026-01-02", valid_to="2026-01-03")
-        self.db.execute("UPDATE tb_node SET children__state='VALUE' WHERE id IN ('a','b')")
+        self.db.execute("UPDATE tb_node SET children__state=0 WHERE id IN ('a','b')")
         self.db.executemany("INSERT INTO tb_node_children VALUES (?, ?)", [("a", "b"), ("b", "a")])
         self.db.commit()
         issues = self.report().value.issues
@@ -325,7 +323,7 @@ class ValidationTests(FilesystemCase):
         self.assertIn("same-field reference cycle", output.getvalue())
         reader.close()
         self.assertEqual(reader.validate().status, Status.ERROR)
-        self.db.execute("UPDATE tb_node SET parent__state='EMPTY', parent=NULL WHERE id='a'")
+        self.db.execute("UPDATE tb_node SET parent__state=2, parent=NULL WHERE id='a'")
         self.db.commit()
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.cli('sqlite', self.path), 0)
@@ -335,7 +333,7 @@ class ValidationTests(FilesystemCase):
             ):
                 self.assertNotEqual(self.cli('sqlite', self.path), 0)
         self.db.execute("PRAGMA ignore_check_constraints=ON")
-        self.db.execute("UPDATE tb_node SET parent__state='VALUE',parent=NULL WHERE id='a'")
+        self.db.execute("UPDATE tb_node SET parent__state=0,parent=NULL WHERE id='a'")
         self.db.commit()
         self.assertFalse(self.report().value.valid)
         self.db.execute("UPDATE tb_node SET entity_type='bad' WHERE id='a'")

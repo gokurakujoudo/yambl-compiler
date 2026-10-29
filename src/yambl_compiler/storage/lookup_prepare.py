@@ -14,7 +14,7 @@ from yambl_compiler.storage.batch import Batch
 from yambl_compiler.storage.computing import UNSET, Computing
 from yambl_compiler.storage.configuration import Configuration
 from yambl_compiler.storage.lookup import KeyField
-from yambl_compiler.storage.records import table_name
+from yambl_compiler.storage.records import actual_type, table_name
 from yambl_compiler.storage.results import EntityRef, NonNormalResult, Status, Success
 from yambl_compiler.storage.session import Session
 
@@ -230,7 +230,7 @@ def _prepare[KeyT, IdT: str | int, MatchT](
         selected = columns.setdefault(table_name(root), set())
         table_roots.setdefault(table_name(root), set()).add(root)
         selected.add(identifier)
-        if not builtin:
+        if layout.discriminators[root]:
             selected.add('entity_type')
     sites.setdefault(table_name(layout.roots[owner]), set()).update(
         (key.name, 'candidate identities') for key in rule.keys
@@ -276,7 +276,7 @@ def _prepare[KeyT, IdT: str | int, MatchT](
         encoded: dict[str | int, object] = {}
         for row in tables[table_name(root)]:
             identity = cast(str | int, session.decode(layout.ids[root].type, row[identifier]))
-            actual = root if builtin else str(row['entity_type'])
+            actual = actual_type(layout, root, row)
             if actual not in layout.entities or layout.roots[actual] != root:
                 source = ', '.join(
                     f'key {name}, field {field}'

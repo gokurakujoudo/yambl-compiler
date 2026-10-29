@@ -6,7 +6,14 @@ from typing import cast
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.storage.backends import Row, validate_row
-from yambl_compiler.storage.records import Layout, StoredField, mapped_field, table_name
+from yambl_compiler.storage.records import (
+    STATE_CODES,
+    Layout,
+    StoredField,
+    actual_type,
+    mapped_field,
+    table_name,
+)
 from yambl_compiler.storage.results import (
     EntityRef,
     NonNormalResult,
@@ -123,7 +130,7 @@ def validate_dictionaries(
             continue
         identity = definition.identity
         headers = select('tb_decodes', {'decodes_id': identity})
-        if len(headers) != 1 or headers[0].get('entries__state') != 'VALUE':
+        if len(headers) != 1 or headers[0].get('entries__state') != STATE_CODES['VALUE']:
             issues.append(
                 ValidationIssue(identity, 'model dictionary missing or entries not VALUE')
             )
@@ -210,7 +217,7 @@ def validate_data(
     for row in data['tb_config_group']:
         id_ = str(row['config_group_id'])
         if any(
-            row[name + '__state'] != 'VALUE'
+            row[name + '__state'] != STATE_CODES['VALUE']
             for name in ('target_entity_type', 'priority', 'when', 'then_set')
         ):
             issues.append(
@@ -247,7 +254,9 @@ def validate_data(
             or layout.entities[stored.root].source.origin == "builtin"
         ):
             continue
-        identities = {str(r["id"]): str(r["entity_type"]) for r in data[table_name(stored.root)]}
+        identities = {
+            str(r["id"]): actual_type(layout, stored.root, r) for r in data[table_name(stored.root)]
+        }
         for row in data[stored.table]:
             if any(row[k] != v for k, v in stored.key_values):
                 continue

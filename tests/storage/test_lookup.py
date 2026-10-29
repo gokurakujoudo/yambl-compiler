@@ -239,17 +239,15 @@ class PreparedLookupTests(FilesystemCase):
         with closing(sqlite3.connect(database)) as writer:
             writer.executescript((output / 'schema.sql').read_text(encoding='utf-8'))
             issuer, industry = layout.fields['Security.issuer'], layout.fields['Issuer.industry']
-            writer.execute(
-                'INSERT INTO tb_security (id, entity_type) VALUES (?, ?)', ('s', 'Security')
-            )
-            writer.execute('INSERT INTO tb_issuer (id, entity_type) VALUES (?, ?)', ('i', 'Issuer'))
+            writer.execute('INSERT INTO tb_security (id) VALUES (?)', ('s',))
+            writer.execute('INSERT INTO tb_issuer (id) VALUES (?)', ('i',))
             for stored, identity, start, end, value in [
                 (issuer, 's', '2024-01-01', '2026-01-01', 'i'),
                 (industry, 'i', '2026-01-01', '2028-01-01', 'Tech'),
             ]:
                 writer.execute(
                     f'INSERT INTO "{stored.table}" (id, valid_from, valid_to, "{stored.state}", "{stored.value}") VALUES (?, ?, ?, ?, ?)',
-                    (identity, start, end, 'VALUE', value),
+                    (identity, start, end, 0, value),
                 )
             writer.commit()
             writer.row_factory = sqlite3.Row
@@ -331,14 +329,14 @@ class PreparedLookupTests(FilesystemCase):
         with closing(sqlite3.connect(database)) as writer:
             writer.executescript((output / 'schema.sql').read_text(encoding='utf-8'))
             sparse, dense = layout.fields['E.x'], layout.fields['E.y']
-            writer.execute('INSERT INTO tb_e (id, entity_type) VALUES (?, ?)', ('a', 'E'))
+            writer.execute('INSERT INTO tb_e (id) VALUES (?)', ('a',))
             writer.execute(
                 f'INSERT INTO "{sparse.table}" (id, field, "{sparse.state}", "{sparse.value}") VALUES (?, ?, ?, ?)',
-                ('a', 'E.x', 'VALUE', 'alpha'),
+                ('a', 'E.x', 0, 'alpha'),
             )
             writer.execute(
                 f'INSERT INTO "{dense.table}" (id, "{dense.state}", "{dense.value}") VALUES (?, ?, ?)',
-                ('a', 'VALUE', 'beta'),
+                ('a', 0, 'beta'),
             )
             writer.commit()
             writer.row_factory = sqlite3.Row
@@ -424,7 +422,7 @@ class PreparedLookupTests(FilesystemCase):
                 )
                 writer.execute(
                     f'UPDATE tb_base SET "{label.state}" = ?, "{label.value}" = ? WHERE id = ?',
-                    ('VALUE', 'One', identity),
+                    (0, 'One', identity),
                 )
             writer.commit()
             writer.row_factory = sqlite3.Row
@@ -487,7 +485,7 @@ class PreparedLookupTests(FilesystemCase):
         with closing(sqlite3.connect(database)) as writer:
             writer.executescript((output / 'schema.sql').read_text(encoding='utf-8'))
             client = layout.fields['E.client']
-            writer.execute('INSERT INTO tb_e (id, entity_type) VALUES (?, ?)', ('a', 'E'))
+            writer.execute('INSERT INTO tb_e (id) VALUES (?)', ('a',))
             for market, vendor, value in [
                 ('CN', 'Wind', 'match'),
                 ('US', 'Wind', 'other'),
@@ -495,7 +493,7 @@ class PreparedLookupTests(FilesystemCase):
             ]:
                 writer.execute(
                     f'INSERT INTO "{client.table}" (id, dim_source, dim_market, valid_from, valid_to, "{client.state}", "{client.value}") VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    ('a', vendor, market, '2026-01-01', '2027-01-01', 'VALUE', value),
+                    ('a', vendor, market, '2026-01-01', '2027-01-01', 0, value),
                 )
             writer.commit()
             writer.row_factory = sqlite3.Row
@@ -593,7 +591,7 @@ class PreparedLookupTests(FilesystemCase):
                 )
                 writer.execute(
                     f'UPDATE tb_base SET "{target.state}" = ?, "{target.value}" = ? WHERE id = ?',
-                    ('VALUE', ref, identity),
+                    (0, ref, identity),
                 )
             writer.commit()
             writer.row_factory = sqlite3.Row
@@ -723,9 +721,7 @@ class PreparedLookupTests(FilesystemCase):
             self.assertEqual(reader.close(), Success(None))
 
         with closing(sqlite3.connect(database)) as writer:
-            writer.execute(
-                "UPDATE tb_decodes SET entries__state='NO_ENTRY' WHERE decodes_id='Sources'"
-            )
+            writer.execute("UPDATE tb_decodes SET entries__state=1 WHERE decodes_id='Sources'")
             writer.commit()
             writer.row_factory = sqlite3.Row
             rows = {
@@ -757,7 +753,7 @@ class PreparedLookupTests(FilesystemCase):
             self.assertEqual(reader.close(), Success(None))
 
     def test_full_table_projection_both_backends_and_detached_matcher(self):
-        source = 'entity E { id id: string attr name: string attr market: string }'
+        source = 'entity E { id id: string attr name: string attr market: string } entity EChild inherits E {}'
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write('main.yambl', source)
         model = compile_repository(self.root)
@@ -789,7 +785,7 @@ class PreparedLookupTests(FilesystemCase):
                 writer.execute('INSERT INTO tb_e (id, entity_type) VALUES (?, ?)', (identity, 'E'))
                 writer.execute(
                     f'UPDATE tb_e SET "{name.state}" = ?, "{name.value}" = ?, "{market.state}" = ?, "{market.value}" = ? WHERE id = ?',
-                    ('VALUE', label, 'VALUE', exchange, identity),
+                    (0, label, 0, exchange, identity),
                 )
             writer.commit()
             writer.row_factory = sqlite3.Row
@@ -884,11 +880,11 @@ class PreparedLookupTests(FilesystemCase):
             name = layout.fields['E.name']
             writer.execute('DROP TABLE tb_e')
             writer.execute(
-                f'CREATE TABLE tb_e (id TEXT, entity_type TEXT, "{name.state}" TEXT, "{name.value}" TEXT, "{market.state}" TEXT, "{market.value}" TEXT)'
+                f'CREATE TABLE tb_e (id TEXT, entity_type TEXT, "{name.state}" INTEGER, "{name.value}" TEXT, "{market.state}" INTEGER, "{market.value}" TEXT)'
             )
             writer.executemany(
                 'INSERT INTO tb_e VALUES (?, ?, ?, ?, ?, ?)',
-                [('a', 'E', 'VALUE', 'x', 'VALUE', 'y'), ('a', 'E', 'VALUE', 'x', 'VALUE', 'y')],
+                [('a', 'E', 0, 'x', 0, 'y'), ('a', 'E', 0, 'x', 0, 'y')],
             )
             writer.commit()
         opened = module.SampleReader.open_sqlite(database)
@@ -922,23 +918,23 @@ class PreparedLookupTests(FilesystemCase):
             name = layout.fields['Issuer.name']
             issuer = layout.fields['Security.issuer']
             client = layout.fields['Security.client']
-            writer.execute('INSERT INTO tb_issuer (id, entity_type) VALUES (?, ?)', ('i', 'Issuer'))
+            writer.execute('INSERT INTO tb_issuer (id) VALUES (?)', ('i',))
             writer.execute(
                 f'UPDATE tb_issuer SET "{name.state}" = ?, "{name.value}" = ? WHERE id = ?',
-                ('VALUE', 'Acme', 'i'),
+                (0, 'Acme', 'i'),
             )
             for identity, ref in [('a', 'i'), ('b', 'i'), ('c', 'missing')]:
                 writer.execute(
-                    'INSERT INTO tb_security (id, entity_type) VALUES (?, ?)',
-                    (identity, 'Security'),
+                    'INSERT INTO tb_security (id) VALUES (?)',
+                    (identity,),
                 )
                 writer.execute(
                     f'UPDATE tb_security SET "{issuer.state}" = ?, "{issuer.value}" = ? WHERE id = ?',
-                    ('VALUE', ref, identity),
+                    (0, ref, identity),
                 )
             writer.execute(
                 f'INSERT INTO "{client.table}" (id, valid_from, valid_to, "{client.state}", "{client.value}") VALUES (?, ?, ?, ?, ?)',
-                ('a', '2026-01-01', '2027-01-01', 'VALUE', '123'),
+                ('a', '2026-01-01', '2027-01-01', 0, '123'),
             )
             writer.commit()
             writer.row_factory = sqlite3.Row
@@ -1074,7 +1070,7 @@ class PreparedLookupTests(FilesystemCase):
         with closing(sqlite3.connect(database)) as writer:
             writer.execute(
                 f'INSERT INTO "{client.table}" (id, valid_from, valid_to, "{client.state}", "{client.value}") VALUES (?, ?, ?, ?, ?)',
-                ('a', '2026-10-01', '2026-12-01', 'VALUE', '456'),
+                ('a', '2026-10-01', '2026-12-01', 0, '456'),
             )
             writer.commit()
             writer.row_factory = sqlite3.Row
@@ -1115,7 +1111,7 @@ class PreparedLookupTests(FilesystemCase):
             writer.execute(f'DELETE FROM "{client.table}" WHERE id = ?', ('a',))
             writer.execute(
                 f'INSERT INTO "{client.table}" (id, valid_from, valid_to, "{client.state}", "{client.value}") VALUES (?, ?, ?, ?, ?)',
-                ('a', '2026-13-01', '2027-01-01', 'VALUE', 'invalid'),
+                ('a', '2026-13-01', '2027-01-01', 0, 'invalid'),
             )
             writer.commit()
         opened = module.SampleReader.open_sqlite(database)

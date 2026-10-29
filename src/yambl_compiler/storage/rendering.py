@@ -45,7 +45,7 @@ def ddl(layout: Layout) -> str:
     sql = "PRAGMA foreign_keys = ON;\n\n" + "\n".join(table_sql(t) for t in layout.tables)
     for table in layout.tables:
         for row in table.rows:
-            sql += f'INSERT INTO {quote(table.name)} VALUES ({", ".join(sql_literal(v) for v in row)});\n'
+            sql += f'INSERT INTO {quote(table.name)} VALUES ({", ".join(sql_literal(v) if isinstance(v, str) else str(v) for v in row)});\n'
     for key, value in (
         ("layout_revision", str(LAYOUT_REVISION)),
         ("model_digest", layout.model.model_digest),
@@ -83,7 +83,7 @@ def reference(layout: Layout) -> str:
         f"Model SHA-256: `{layout.model.model_digest}`.",
         f"IR revision: {layout.model.format_revision}. Storage layout revision: {LAYOUT_REVISION}.",
         "",
-        "Each field state is VALUE, NO_ENTRY, EMPTY or NOT_APPLICABLE. A missing row is NO_ENTRY. "
+        "Physical state columns use integers: VALUE = 0, NO_ENTRY = 1, EMPTY = 2, and NOT_APPLICABLE = 3. A missing row is NO_ENTRY. "
         "EMPTY has a NULL payload. An existing VALUE collection header with no members is an empty collection.",
         "",
         "Snapshot dates match exactly. SCD periods use [valid_from, valid_to); both boundaries are required, "

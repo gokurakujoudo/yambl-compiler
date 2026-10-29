@@ -6,7 +6,7 @@ from datetime import date
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.storage.backends import Row, Selection
-from yambl_compiler.storage.records import StoredField, table_name
+from yambl_compiler.storage.records import STATE_CODES, StoredField, actual_type, table_name
 from yambl_compiler.storage.results import (
     EntityRef,
     NonNormalResult,
@@ -74,14 +74,14 @@ class Batch:
                 Selection(((id_name, reader.encode(reader.layout.ids[root].type, ref.id)),))
                 for ref in refs
             ]
-            columns = (id_name,) if builtin else (id_name, "entity_type")
+            columns = (id_name, "entity_type") if reader.layout.discriminators[root] else (id_name,)
             rows = reader.backend.rows_many(table_name(root), selections, columns)
             for ref, group in zip(refs, rows, strict=True):
                 result: ReadResult[EntityRef[object]] = NonNormalResult(Status.ENTITY_NOT_FOUND)
                 if len(group) > 1:
                     result = NonNormalResult(Status.ERROR, "duplicate identity record")
                 elif group:
-                    actual = root if builtin else str(group[0]["entity_type"])
+                    actual = actual_type(reader.layout, root, group[0])
                     if actual not in reader.layout.entities or reader.layout.roots[actual] != root:
                         result = NonNormalResult(Status.ERROR, "invalid actual entity type")
                     elif self.is_type(actual, ref.target):
@@ -247,7 +247,7 @@ class Batch:
         """
         groups: dict[str, list[tuple[StoredField, Field, Row, Selection]]] = {}
         for stored, field, row in records:
-            if not stored.members or row[stored.state] != "VALUE":
+            if not stored.members or row[stored.state] != STATE_CODES['VALUE']:
                 continue
             keys = [
                 "id",

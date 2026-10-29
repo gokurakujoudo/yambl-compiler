@@ -8,7 +8,7 @@ from yambl_compiler.ir.model import Type
 from yambl_compiler.storage.backends import Selection
 from yambl_compiler.storage.batch import Batch, FieldRequest
 from yambl_compiler.storage.contract import decode, loads
-from yambl_compiler.storage.records import mapped_field
+from yambl_compiler.storage.records import STATE_CODES, mapped_field
 from yambl_compiler.storage.results import (
     EntityRef,
     NonNormalResult,
@@ -124,7 +124,7 @@ class Configuration:
         for row in headers:
             group_id = str(row["config_group_id"])
             if any(
-                row[name + "__state"] != "VALUE"
+                row[name + "__state"] != STATE_CODES['VALUE']
                 for name in ("priority", "target_entity_type", "when", "then_set")
             ):
                 raise ValueError(

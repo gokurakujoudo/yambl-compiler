@@ -4,6 +4,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import date
+from typing import cast
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol, Value
@@ -11,7 +12,14 @@ from yambl_compiler.languages.shared.writing import literal
 from yambl_compiler.languages.yatran.model import Image
 from yambl_compiler.storage.backends import Row, validate_row
 from yambl_compiler.storage.contract import loads
-from yambl_compiler.storage.records import Layout, StoredField, mapped_field
+from yambl_compiler.storage.records import (
+    STATE_CODES,
+    STATE_NAMES,
+    Layout,
+    StoredField,
+    actual_type,
+    mapped_field,
+)
 from yambl_compiler.transactions.binding import Catalog, Entity, object_items
 
 STATES = ('NO_ENTRY', 'EMPTY', 'NOT_APPLICABLE')
@@ -83,7 +91,10 @@ class Data:
         :returns: Complete physical row.
         """
         return {
-            c.name: values.get(c.name, 'NO_ENTRY' if c.default == "'NO_ENTRY'" else None)
+            c.name: values.get(
+                c.name,
+                STATE_CODES['NO_ENTRY'] if c.default == str(STATE_CODES['NO_ENTRY']) else None,
+            )
             for c in self.schema[table].columns
         }
 
@@ -99,9 +110,7 @@ class Data:
         row = next(iter(self.select(entity.table, {entity.column: encoded})), None)
         if row is None:
             raise ValueError(f'entity does not exist: {entity.definition.identity} {literal(id_)}')
-        if entity.definition.source.origin == 'builtin':
-            return entity
-        actual = self.catalog.entity(str(row['entity_type']))
+        actual = self.catalog.entity(actual_type(self.layout, entity.root, row))
         ancestor = actual.definition
         while (
             ancestor.identity != entity.definition.identity
@@ -124,7 +133,7 @@ class Data:
         if self.select(entity.table, {entity.column: encoded}):
             raise ValueError('entity ID already exists')
         values: Row = {entity.column: encoded}
-        if entity.definition.source.origin == 'model':
+        if self.layout.discriminators[entity.root]:
             values['entity_type'] = entity.definition.identity
         self.add(entity.table, self.blank(entity.table, values))
 
@@ -229,7 +238,7 @@ class Data:
         :param row: Located owner record.
         :returns: Data literal, collection or stored state.
         """
-        state = str(row[stored.state])
+        state = STATE_NAMES.get(cast(int, row[stored.state]))
         if state in STATES:
             return Symbol(state)
         if state != 'VALUE':
@@ -343,7 +352,7 @@ class Data:
         ):
             self.remove(stored.table, row)
         else:
-            row[stored.state] = 'NO_ENTRY'
+            row[stored.state] = STATE_CODES['NO_ENTRY']
             if stored.value:
                 row[stored.value] = None
 
@@ -494,7 +503,7 @@ class Data:
                 raise ValueError('replacement interval crosses scope boundary')
             value = data['value']
             state = value.name if isinstance(value, Symbol) and value.name in STATES else 'VALUE'
-            row[stored.state] = state
+            row[stored.state] = STATE_CODES[state]
             if stored.value:
                 row[stored.value] = (
                     self.catalog.scalar(actual_field.type, value) if state == 'VALUE' else None
@@ -595,7 +604,7 @@ class Data:
                         raise ValueError(f'overlapping SCD intervals in {table.name}')
         for row in self.tables['tb_config_group']:
             if any(
-                row[name + '__state'] != 'VALUE'
+                row[name + '__state'] != STATE_CODES['VALUE']
                 for name in ('target_entity_type', 'priority', 'when', 'then_set')
             ):
                 raise ValueError(

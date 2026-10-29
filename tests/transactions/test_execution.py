@@ -375,10 +375,10 @@ class ExecutionTests(CatalogCase):
     def test_corrupt_payloads_and_missing_owners_are_rejected(self):
         _, stored = self.catalog.field(self.entity, 'text')
         row = self.data.tables[stored.table][0]
-        row[stored.state] = 'UNSUPPORTED'
+        row[stored.state] = 99
         with self.assertRaisesRegex(ValueError, 'invalid stored state'):
             self.data.image('A.text', self.scope)
-        row[stored.state] = 'NO_ENTRY'
+        row[stored.state] = 1
         self.put('A.members', (((),),))
         member_table = self.catalog.field(self.entity, 'members')[1].members
         self.data.tables[member_table].append({'id': 'missing', 'member_id': '1'})

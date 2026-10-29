@@ -1,11 +1,15 @@
 """Portable physical records shared by generation and read backends."""
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from yambl_compiler.ir.model import Bound, Definition, Field, Model
 
-LAYOUT_REVISION = 7
+LAYOUT_REVISION = 8
+FILE_REVISION = 3
+STATE_CODES = {'VALUE': 0, 'NO_ENTRY': 1, 'EMPTY': 2, 'NOT_APPLICABLE': 3}
+STATE_NAMES = {value: name for name, value in STATE_CODES.items()}
 
 
 def quote(name: str) -> str:
@@ -86,7 +90,7 @@ class Table:
     foreign_keys: list[str] = field(default_factory=list[str])
     indexes: list[tuple[str, ...]] = field(default_factory=list[tuple[str, ...]])
     fields: list[str] = field(default_factory=list[str])
-    rows: list[tuple[str, ...]] = field(default_factory=list[tuple[str, ...]])
+    rows: list[tuple[str | int, ...]] = field(default_factory=list[tuple[str | int, ...]])
     parents: list[str] = field(default_factory=list[str])
 
 
@@ -121,6 +125,7 @@ class Layout:
     :param model: Complete IR.
     :param entities: Supported business entities by identity.
     :param roots: Entity to business root mapping.
+    :param discriminators: Whether each root identity table stores actual types.
     :param ids: Root to unique ID declaration mapping.
     :param fields: Logical fields to storage records.
     :param tables: Complete physical schema.
@@ -129,9 +134,21 @@ class Layout:
     model: Model
     entities: dict[str, Definition]
     roots: dict[str, str]
+    discriminators: dict[str, bool]
     ids: dict[str, Field]
     fields: dict[str, StoredField]
     tables: tuple[Table, ...]
+
+
+def actual_type(layout: Layout, root: str, row: Mapping[str, object]) -> str:
+    """Resolve the actual entity type from its identity table.
+
+    :param layout: Physical layout with root discriminator information.
+    :param root: Inheritance root identity.
+    :param row: Identity row or projection.
+    :returns: Qualified actual entity type.
+    """
+    return str(row['entity_type']) if layout.discriminators[root] else root
 
 
 def mapped_field(layout: Layout, identity: str) -> tuple[Field, str] | None:

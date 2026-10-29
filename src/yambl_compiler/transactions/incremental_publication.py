@@ -12,7 +12,7 @@ from typing import cast
 from yambl_compiler.languages.yatran.model import Transaction
 from yambl_compiler.storage.backends import FileBackend, Row
 from yambl_compiler.storage.contract import loads
-from yambl_compiler.storage.records import LAYOUT_REVISION, Layout, Table, quote
+from yambl_compiler.storage.records import FILE_REVISION, LAYOUT_REVISION, Layout, Table, quote
 from yambl_compiler.transactions.overlay import RowChange
 from yambl_compiler.transactions.writing import dumps
 
@@ -200,7 +200,7 @@ def prepare_files(
                 indexes[table.name] = _index_legacy(source, destination, table)
     source.check_snapshot()
     metadata = {
-        'format_revision': 2,
+        'format_revision': FILE_REVISION,
         'layout_revision': LAYOUT_REVISION,
         'model_digest': layout.model.model_digest,
         'tables': hashes,

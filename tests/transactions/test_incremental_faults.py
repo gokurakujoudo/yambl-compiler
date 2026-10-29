@@ -341,7 +341,7 @@ class IncrementalFaultTests(CatalogCase):
                 exports = set(store.transaction_directory().glob('*.yatran'))
                 invalid = store.snapshot()
                 row = invalid.select('tb_a', {'id': 'a'})[0]
-                row['count__state'], row['count'] = 'VALUE', '01'
+                row['count__state'], row['count'] = 0, '01'
                 with self.assertRaisesRegex(ValueError, 'candidate data validation failed'):
                     store.finish(invalid, plan, ())
                 clean = store.snapshot()
@@ -434,14 +434,14 @@ class DetachedCandidateValidationTests(CatalogCase):
                     'id': 'a',
                     'valid_from': '2026-01-01',
                     'valid_to': '2026-02-01',
-                    'outstanding__state': 'VALUE',
+                    'outstanding__state': 0,
                     'outstanding': '1',
                 },
                 {
                     'id': 'a',
                     'valid_from': '2026-01-31',
                     'valid_to': '2026-03-01',
-                    'outstanding__state': 'VALUE',
+                    'outstanding__state': 0,
                     'outstanding': '2',
                 },
             ]
@@ -455,12 +455,12 @@ class DetachedCandidateValidationTests(CatalogCase):
             data.validate()
         group.update(
             {
-                'target_entity_type__state': 'VALUE',
+                'target_entity_type__state': 0,
                 'target_entity_type': 'Missing',
-                'priority__state': 'VALUE',
+                'priority__state': 0,
                 'priority': '1',
-                'when__state': 'VALUE',
-                'then_set__state': 'VALUE',
+                'when__state': 0,
+                'then_set__state': 0,
             }
         )
         with self.assertRaisesRegex(ValueError, 'target must be a business entity'):

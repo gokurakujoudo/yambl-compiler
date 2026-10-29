@@ -264,7 +264,7 @@ class DualTests(RuntimeTests):
         for identity, keys, temporal, start, end, value in cases:
             stored = self.layout.fields[identity]
             indexed = Selection(keys, temporal, start, end)
-            scanned = Selection(((stored.state, "VALUE"),), temporal, start, end)
+            scanned = Selection(((stored.state, 0),), temporal, start, end)
             columns = ("id", stored.value)
             expected = [[{"id": "a", stored.value: value}]]
             for indexed_first in (True, False):
@@ -292,7 +292,7 @@ class DualTests(RuntimeTests):
         index_file.write_bytes(original)
         file = path / "tables/tb_a.jsonl"
         records = [json.loads(line) for line in file.read_text(encoding="utf-8").splitlines()]
-        records[1]["text__state"] = "ERROR"
+        records[1]["text__state"] = 4
         records_text = "".join(
             json.dumps(row, sort_keys=True, separators=(",", ":")) + "\n" for row in records
         )
@@ -644,7 +644,7 @@ class DualTests(RuntimeTests):
         row = {
             "dim_source": "X",
             "date": "2026-01-01",
-            "price__state": "VALUE",
+            "price__state": 0,
             "price": "2",
         }
         with patch.object(reader._backend, "rows", return_value=[row, row]):

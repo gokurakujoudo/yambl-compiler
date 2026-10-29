@@ -1197,8 +1197,8 @@ with asyncio.run(module.SampleData.open(config)) as store:
         metadata = json.loads(original)
         cases = [
             ('[]', 'expected object'),
-            (original.replace('"format_revision":2', '"format_revision":true'), 'scalar type'),
-            (original.replace('"format_revision":2', '"format_revision":2.0'), 'JSON number'),
+            (original.replace('"format_revision":3', '"format_revision":true'), 'scalar type'),
+            (original.replace('"format_revision":3', '"format_revision":3.0'), 'JSON number'),
             ('{"generation":"x",' + original[1:], 'duplicate JSON key'),
         ]
         for changes, message in (

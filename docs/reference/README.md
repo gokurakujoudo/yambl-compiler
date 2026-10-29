@@ -53,7 +53,7 @@ write_ir(model, Path('build/tutorial-demo/api-model.json'))
 assert load_ir(Path('build/tutorial-demo/api-model.json')) == model
 ```
 
-生成目录包含 Python 包、`pyproject.toml`、`schema.sql`、`schema.md`、`storage-manifest.json`、`schema-relations.puml`、`python-schema.md` 和 JSONL 模板。生成包携带 IR 和受摘要保护的运行时契约，当前 `runtime_revision` 为 8，物理存储 `layout_revision` 为 7。依赖及 Python 版本写入生成项目配置；运行时不依赖编译器或模型源文件。生成前会拒绝后端不支持的字段类型，例如当前生成后端不支持 float 存储。生成包随模型重新生成，不提供数据库迁移。
+生成目录包含 Python 包、`pyproject.toml`、`schema.sql`、`schema.md`、`storage-manifest.json`、`schema-relations.puml`、`python-schema.md` 和 JSONL 模板。生成包携带 IR 和受摘要保护的运行时契约，当前 `runtime_revision` 为 9，物理存储 `layout_revision` 为 8。状态列以整数保存，单一实际类型的身份表省略类型判别列。依赖及 Python 版本写入生成项目配置；运行时不依赖编译器或模型源文件。生成前会拒绝后端不支持的字段类型，例如当前生成后端不支持 float 存储。生成包随模型重新生成，不提供数据库迁移。
 
 ### 存储生成支持范围
 

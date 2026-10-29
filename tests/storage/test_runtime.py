@@ -64,14 +64,11 @@ class RuntimeTests(FilesystemCase):
         self.writer.executescript(
             "BEGIN;\n" + (self.output / "schema.sql").read_text(encoding="utf-8") + "\nCOMMIT;"
         )
-        for root, values in [
-            ("A", [("a", "A"), ("b", "B"), ("c", "C")]),
-            ("Other", [("1", "Other")]),
-        ]:
-            self.writer.executemany(
-                f"INSERT INTO {quote(table_name(root))} (id, entity_type) VALUES (?, ?)",
-                values,
-            )
+        self.writer.executemany(
+            "INSERT INTO tb_a (id, entity_type) VALUES (?, ?)",
+            [("a", "A"), ("b", "B"), ("c", "C")],
+        )
+        self.writer.execute("INSERT INTO tb_other (id) VALUES ('1')")
         self.writer.commit()
 
     def open(self):
@@ -83,10 +80,16 @@ class RuntimeTests(FilesystemCase):
 
     def put(self, identity, value=None, state="VALUE", id="a", **keys):
         stored = self.layout.fields[identity]
-        values = {"id": id, **dict(stored.key_values), **keys, stored.state: state}
+        states = {"VALUE": 0, "NO_ENTRY": 1, "EMPTY": 2, "NOT_APPLICABLE": 3}
+        values = {
+            "id": id,
+            **dict(stored.key_values),
+            **keys,
+            stored.state: states.get(state, state),
+        }
         if stored.value:
             values[stored.value] = value
-        if stored.table == table_name(stored.root):
+        if stored.table == table_name(stored.root) and stored.root == "A":
             values["entity_type"] = self.writer.execute(
                 f"SELECT entity_type FROM {quote(stored.table)} WHERE id = ?", (id,)
             ).fetchone()[0]
@@ -242,7 +245,7 @@ class RuntimeTests(FilesystemCase):
                 self.put(identity, value)
         with self.assertRaises(sqlite3.IntegrityError):
             self.writer.execute(
-                "INSERT INTO tb_a_config (id,field,state,int) VALUES ('b', 'A.unknown', 'VALUE', 'x')"
+                "INSERT INTO tb_a_config (id,field,state,int) VALUES ('b', 'A.unknown', 0, 'x')"
             )
         with self.assertRaises(sqlite3.IntegrityError):
             self.writer.execute(
@@ -413,7 +416,7 @@ class RuntimeTests(FilesystemCase):
         from yambl_compiler.ir.model import Value
 
         self.writer.execute("PRAGMA ignore_check_constraints = ON")
-        self.put("A.text", "bad", state="CORRUPT")
+        self.put("A.text", "bad", state=4)
         self.writer.execute("UPDATE tb_a SET entity_type = ? WHERE id = ?", ("unknown", "b"))
         self.writer.commit()
         reader = self.open()

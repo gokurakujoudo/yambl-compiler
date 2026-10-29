@@ -188,8 +188,8 @@ async def run(rows: int, backend_names: tuple[str, ...]) -> dict[str, object]:
                 fixture.row_factory = sqlite3.Row
                 fixture.executescript((package_root / 'schema.sql').read_text(encoding='utf-8'))
                 fixture.executemany(
-                    'INSERT INTO tb_bench_record (id, entity_type) VALUES (?, ?)',
-                    ((f'r{i:08d}', 'BenchRecord') for i in range(rows)),
+                    'INSERT INTO tb_bench_record (id) VALUES (?)',
+                    ((f'r{i:08d}',) for i in range(rows)),
                 )
                 tables = {
                     table.name: [
@@ -200,8 +200,8 @@ async def run(rows: int, backend_names: tuple[str, ...]) -> dict[str, object]:
             if 'sqlite' in stores:
                 with closing(sqlite3.connect(stores['sqlite'].path)) as connection, connection:
                     connection.executemany(
-                        'INSERT INTO tb_bench_record (id, entity_type) VALUES (?, ?)',
-                        ((f'r{i:08d}', 'BenchRecord') for i in range(rows)),
+                        'INSERT INTO tb_bench_record (id) VALUES (?)',
+                        ((f'r{i:08d}',) for i in range(rows)),
                     )
                     if (
                         connection.execute('SELECT COUNT(*) FROM tb_bench_record').fetchone()[0]

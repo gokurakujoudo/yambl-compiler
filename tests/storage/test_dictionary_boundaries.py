@@ -63,10 +63,10 @@ class DictionaryBoundaryTests(FilesystemCase):
             [(i.field, i.message) for i in report],
             [('core.Sources', 'model dictionary missing or entries not VALUE')],
         )
-        headers.append({**item, 'entries__state': 'NO_ENTRY'})
+        headers.append({**item, 'entries__state': 1})
         report = validate_dictionaries(self.layout, SnapshotBackend(tables).rows, {'core.Sources'})
         self.assertEqual(report[0].message, 'model dictionary missing or entries not VALUE')
-        headers[-1]['entries__state'] = 'VALUE'
+        headers[-1]['entries__state'] = 0
         entries = tables['tb_decodes_entries']
         entries.append(next(row.copy() for row in entries if row['decodes_id'] == 'core.Sources'))
         report = validate_dictionaries(self.layout, SnapshotBackend(tables).rows, {'core.Sources'})
@@ -76,10 +76,10 @@ class DictionaryBoundaryTests(FilesystemCase):
 
     def test_reader_rejects_code_from_dictionary_with_invalid_state(self):
         self.writer.execute(
-            "INSERT INTO tb_core_item (id,entity_type,source__state,source) VALUES ('i','core.Item','VALUE','Known')"
+            "INSERT INTO tb_core_item (id,source__state,source) VALUES ('i',0,'Known')"
         )
         self.writer.execute(
-            "UPDATE tb_decodes SET entries__state='NO_ENTRY' WHERE decodes_id='core.Sources'"
+            "UPDATE tb_decodes SET entries__state=1 WHERE decodes_id='core.Sources'"
         )
         reader = self.reader()
         outcome = reader.get_item('i').value.read_source()
@@ -94,7 +94,7 @@ class DictionaryBoundaryTests(FilesystemCase):
         self.writer.execute("PRAGMA foreign_keys=OFF")
         self.writer.execute("INSERT INTO tb_core_root (id,entity_type) VALUES ('root','core.Root')")
         self.writer.execute(
-            "INSERT INTO tb_core_item_price (id,dim_vendor,date,price__state) VALUES ('ghost','Known','2025-01-01','NO_ENTRY')"
+            "INSERT INTO tb_core_item_price (id,dim_vendor,date,price__state) VALUES ('ghost','Known','2025-01-01',1)"
         )
         reader = self.reader()
         report = reader.validate_dictionary_references({'core.Sources'})
@@ -106,7 +106,7 @@ class DictionaryBoundaryTests(FilesystemCase):
     def test_invalid_mapping_envelopes_are_reported(self):
         self.writer.execute('PRAGMA ignore_check_constraints=ON')
         self.writer.execute(
-            "INSERT INTO tb_config_group (config_group_id,target_entity_type,target_entity_type__state,priority,priority__state,when__state,then_set__state) VALUES ('g','core.Item','VALUE','1','VALUE','VALUE','VALUE')"
+            "INSERT INTO tb_config_group (config_group_id,target_entity_type,target_entity_type__state,priority,priority__state,when__state,then_set__state) VALUES ('g','core.Item',0,'1',0,0,0)"
         )
         self.writer.execute(
             "INSERT INTO tb_config_group_when (config_group_id,field,value) VALUES ('g','core.Item.source','{}')"
@@ -136,7 +136,7 @@ class DictionaryBoundaryTests(FilesystemCase):
             "INSERT INTO tb_config_group "
             "(config_group_id,target_entity_type,target_entity_type__state,priority,"
             "priority__state,when__state,then_set__state) "
-            "VALUES ('g','core.Root','VALUE','1','VALUE','VALUE','VALUE')"
+            "VALUES ('g','core.Root',0,'1',0,0,0)"
         )
         type_ = next(f.type for f in self.model.fields if f.identity == 'core.Root.category')
         envelope = json.dumps({'type': asdict(type_), 'value': 'Present'})

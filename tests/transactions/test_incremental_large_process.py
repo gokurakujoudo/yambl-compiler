@@ -41,8 +41,8 @@ for backend in ('files', 'sqlite'):
 with asyncio.run(model.SampleData.create(configs['sqlite'])) as sqlite_store:
     with closing(sqlite3.connect(sqlite_store.path)) as connection, connection:
         connection.executemany(
-            'INSERT INTO tb_node (id,entity_type) VALUES (?,?)',
-            ((f'n{i:06d}', 'Node') for i in range(count)),
+            'INSERT INTO tb_node (id) VALUES (?)',
+            ((f'n{i:06d}',) for i in range(count)),
         )
         connection.row_factory = sqlite3.Row
         tables = {
@@ -68,13 +68,13 @@ def verify_all(store, backend, expected):
             total = connection.execute('SELECT COUNT(*) FROM tb_node').fetchone()[0]
             bad = connection.execute(
                 "SELECT COUNT(*) FROM tb_node WHERE id != ? AND "
-                "(text__state != 'NO_ENTRY' OR text IS NOT NULL)", ('n050000',)
+                "(text__state != 1 OR text IS NOT NULL)", ('n050000',)
             ).fetchone()[0]
             target = connection.execute(
                 'SELECT text__state,text FROM tb_node WHERE id=?', ('n050000',)
             ).fetchone()
         assert total == count and bad == 0
-        assert target == (('VALUE', 'updated') if expected else ('NO_ENTRY', None))
+        assert target == ((0, 'updated') if expected else (1, None))
     else:
         ids = set()
         with (store.file_version() / 'tables' / 'tb_node.jsonl').open('rb') as rows:
@@ -83,7 +83,7 @@ def verify_all(store, backend, expected):
                 assert row['id'] not in ids
                 ids.add(row['id'])
                 changed = row['id'] == 'n050000' and expected
-                assert row['text__state'] == ('VALUE' if changed else 'NO_ENTRY')
+                assert row['text__state'] == (0 if changed else 1)
                 assert row['text'] == ('updated' if changed else None)
         assert len(ids) == count and 'n050000' in ids
 
