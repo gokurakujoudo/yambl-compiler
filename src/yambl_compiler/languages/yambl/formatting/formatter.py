@@ -69,7 +69,7 @@ def line_piece(items: list[Token], indent: int, calculation: bool = False) -> Pi
         space = (
             result
             and value not in ('?', '.', '::', ':', ',', ')', '>', ']', '(', '[', '<')
-            and previous not in ('*', '.', '::', '@', '(', '<', '[')
+            and previous not in ('*', '...', '.', '::', '@', '(', '<', '[')
         )
         if expression_context:
             space = (

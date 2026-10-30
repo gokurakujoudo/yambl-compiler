@@ -13,6 +13,7 @@ from yambl_compiler.languages.yambl.semantics.symbols import (
     Unit,
     declaration_name,
     header,
+    qualified,
 )
 from yambl_compiler.languages.yambl.semantics.types import UNKNOWN, Resolved, accepts
 from yambl_compiler.languages.yambl.syntax.parser import (
@@ -35,6 +36,7 @@ class Parameter:
     :param pair: Whether this parameter receives a new key and type.
     :param optional: Whether a pair can be omitted.
     :param default: Ordinary parameter's default expression, if present.
+    :param variadic: Whether this parameter accepts remaining positional arguments.
     """
 
     node: Tree[Token]
@@ -43,6 +45,7 @@ class Parameter:
     pair: bool
     optional: bool
     default: Tree[Token] | None
+    variadic: bool
 
 
 def parameters(declaration: Tree[Token]) -> list[Parameter]:
@@ -63,6 +66,7 @@ def parameters(declaration: Tree[Token]) -> list[Parameter]:
                 str(items[0]) == '*',
                 any(str(t) == '?' for t in items),
                 children(defaults[0], 'type_expr')[0] if defaults else None,
+                str(items[0]) == '...',
             )
         )
     return result
@@ -94,7 +98,38 @@ def argument_type(resolver: Resolver, syntax: Tree[Token], expected: Resolved) -
     :param expected: Declared value constraint.
     :returns: Actual type, preserving a constant value when available.
     """
-    actual = resolver.value_type(resolver.evaluate(syntax))
+    term = resolver.evaluate(syntax)
+    actual = resolver.value_type(term)
+    if (
+        expected.name == 'attrs'
+        and term.sort == 'field'
+        and term.source
+        and len(expected.args) == 2
+    ):
+        category, target = expected.args
+        for owner, fields in resolver.unit.world.fields.items():
+            if owner != target.key and target.key not in resolver.unit.world.parents.get(owner, []):
+                continue
+            for name, (scope, field) in fields.items():
+                body = children(field, 'field_body')[0]
+                field_syntax = children(body, 'type_expr')[0]
+                if scope is not term.source[0] or field_syntax is not term.source[1]:
+                    continue
+                mode = field_mode(body)
+                resolved = Resolver(scope, [], {}).resolve(field_syntax)
+                if (
+                    mode == 'id'
+                    or resolved.kind == 'collection'
+                    or (
+                        category.exact is not None
+                        and mode.capitalize() not in category.exact.split('+')
+                    )
+                ):
+                    continue
+                ancestors = resolver.unit.world.parents.get(owner, [])
+                root = ancestors[-1] if ancestors else owner
+                actual = replace(expected, exact=qualified(root) + '.' + name)
+                break
     literal_types = {
         'string': {'STRING'},
         'integer': {'INT'},
@@ -167,6 +202,65 @@ def relationship_argument(resolver: Resolver, syntax: Tree[Token], formal: str) 
     return UNKNOWN
 
 
+def unique_fields(
+    call: Tree[Token], node: Tree[Token], unit: Unit, diagnostics: list[Diagnostic]
+) -> tuple[str, ...]:
+    """Resolve a unique key to the entity's logical field identities.
+
+    :param call: Built-in unique_by application.
+    :param node: Decorated entity declaration.
+    :param unit: Declaration scope.
+    :param diagnostics: Destination for invalid fields.
+    :returns: Ordered logical identities for valid direct field arguments.
+    """
+    entity = unit.scope.get(declaration_name(node))
+    if entity is None or node.data != 'entity':
+        return ()
+    fields = unit.world.fields.get(entity.key, {})
+    ancestors = unit.world.parents.get(entity.key, [])
+    root = ancestors[-1] if ancestors else entity.key
+    arguments = [argument for argument in children(call, 'positional_argument')]
+    if not arguments:
+        diagnostics.append(diagnostic(unit.document, call, 'unique_by requires at least one field'))
+    result: list[str] = []
+    for argument in arguments:
+        syntax = children(argument, 'type_expr')[0]
+        items = tokens(syntax)
+        if len(items) != 3 or str(items[0]) != 'self' or str(items[1]) != '.':
+            diagnostics.append(
+                diagnostic(unit.document, argument, 'unique_by requires direct self fields')
+            )
+            continue
+        name = str(items[2])
+        site = fields.get(name)
+        if site is None:
+            continue
+        scope, field = site
+        body = children(field, 'field_body')[0]
+        field_type = Resolver(scope, [], {}).resolve(children(body, 'type_expr')[0])
+        if (
+            field_mode(body) != 'static'
+            or field_type.kind == 'collection'
+            or annotations(field, 'dimension')
+        ):
+            diagnostics.append(
+                diagnostic(
+                    unit.document,
+                    argument,
+                    'unique_by requires an undimensioned static scalar field',
+                )
+            )
+            continue
+        identity = qualified(root) + '.' + name
+        if identity in result:
+            diagnostics.append(
+                diagnostic(unit.document, argument, 'unique_by repeats a logical field')
+            )
+        else:
+            result.append(identity)
+    return tuple(result)
+
+
 def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Diagnostic]) -> None:
     """Validate even unused decorator signatures and independent defaults.
 
@@ -192,7 +286,7 @@ def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Dia
             )
         )
     seen: set[str] = set()
-    pair_seen = optional_seen = False
+    pair_seen = optional_seen = variadic_seen = False
     resolver = Resolver(unit, diagnostics, {})
     for formal in parameters(declaration):
         if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', formal.name):
@@ -209,8 +303,13 @@ def check_parameters(declaration: Tree[Token], unit: Unit, diagnostics: list[Dia
             )
         if (formal.optional and not formal.pair) or (formal.pair and formal.default is not None):
             resolver.issue(formal.node, 'only pairs use ?; only ordinary parameters use defaults')
+        if variadic_seen:
+            resolver.issue(formal.node, 'variadic parameter must be last')
+        if formal.variadic and (pair_seen or formal.optional or formal.default is not None):
+            resolver.issue(formal.node, 'variadic parameter cannot use pairs, ? or defaults')
         pair_seen |= formal.pair
         optional_seen |= formal.optional
+        variadic_seen |= formal.variadic
         if 'self' not in map(str, tokens(formal.type)):
             expected = resolver.resolve(formal.type)
             if expected.name == 'input_type' and not formal.pair:
@@ -232,7 +331,8 @@ def call_arguments(
     :returns: Explicit arguments and optional description expression.
     """
     arguments = [c for c in call.children if isinstance(c, Tree)]
-    ordinary = [p for p in formals if not p.pair]
+    ordinary = [p for p in formals if not p.pair and not p.variadic]
+    variadic = any(p.variadic for p in formals)
     result: list[Tree[Token]] = []
     description = None
     position = 0
@@ -243,6 +343,7 @@ def call_arguments(
         named = argument.data == 'keyword_argument' and str(tokens(argument)[0]) == 'description'
         trailing = (
             argument.data == 'positional_argument'
+            and not variadic
             and i == len(arguments) - 1
             and (pair_seen or all(p.name in supplied for p in ordinary))
             and len(tokens(syntax)) == 1
@@ -341,9 +442,11 @@ def bind_call(
             )
         )
     formal_resolver = Resolver(scope, diagnostics, {}, bindings=actual_resolver.bindings)
-    ordinary = [p for p in formals if not p.pair]
+    ordinary = [p for p in formals if not p.pair and not p.variadic]
     pairs = [p for p in formals if p.pair]
+    variadic = next((p for p in formals if p.variadic), None)
     supplied: dict[str, Tree[Token]] = {}
+    variadic_arguments: list[Tree[Token]] = []
     position = pair_position = 0
     keyword_seen = pair_seen = False
     keys: set[str] = set()
@@ -366,12 +469,14 @@ def bind_call(
         else:
             if keyword_seen:
                 actual_resolver.issue(argument, 'positional arguments must precede named arguments')
-            formal = ordinary[position] if position < len(ordinary) else None
+            formal = ordinary[position] if position < len(ordinary) else variadic
             position += 1
         if pair_seen and kind != 'pair_argument':
             actual_resolver.issue(argument, 'new pairs must follow ordinary arguments')
         if formal is None:
             actual_resolver.issue(argument, f"unexpected argument for decorator: {name}")
+        elif formal.variadic:
+            variadic_arguments.append(argument)
         elif formal.name in supplied:
             actual_resolver.issue(argument, f"duplicate decorator argument: {formal.name}")
         else:
@@ -381,6 +486,11 @@ def bind_call(
         expected = formal_resolver.resolve(formal.type)
         if expected.kind == 'collection':
             formal_resolver.issue(formal.type, 'decorator parameters cannot be collections')
+        if formal.variadic:
+            for argument in variadic_arguments:
+                syntax = children(argument, 'type_expr')[0]
+                bound.append((formal.name, '', argument_type(actual_resolver, syntax, expected)))
+            continue
         provided = supplied.get(formal.name)
         if provided is None:
             if formal.default is not None:
@@ -508,6 +618,8 @@ def check_decorators(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
                     if symbol is not None and symbol.kind == 'decorator':
                         check_target(call, node, declaration, unit, diagnostics)
                         definition = unit.world.declarations[symbol.key][1]
+                        if name == 'unique_by' and symbol.key[0].split('\0')[-1] == 'builtins':
+                            unique_fields(call, node, unit, diagnostics)
                         if name in seen and (
                             name == 'allow_multiple'
                             or not annotations(definition, 'allow_multiple')

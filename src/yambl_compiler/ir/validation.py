@@ -42,6 +42,7 @@ REQUIRED = {
     'field_mapping',
     'targets',
     'allow_multiple',
+    'unique_by',
     'title',
     'description',
     'temporal',
@@ -255,6 +256,27 @@ def structural(model: Model) -> list[str]:
                 issues.append(path + '.parent: only entities inherit')
             if item.parameters and item.kind not in ('type_alias', 'decorator'):
                 issues.append(path + '.parameters: unsupported declaration parameters')
+            if item.unique_keys and (
+                item.kind != 'entity'
+                or any(
+                    key.entity != item.identity
+                    or not key.fields
+                    or len(set(key.fields)) != len(key.fields)
+                    for key in item.unique_keys
+                )
+            ):
+                issues.append(path + '.unique_keys: invalid unique key')
+            variadic = [
+                index for index, parameter in enumerate(item.parameters) if parameter.variadic
+            ]
+            if variadic and (
+                item.kind != 'decorator'
+                or variadic != [len(item.parameters) - 1]
+                or any(parameter.pair for parameter in item.parameters)
+                or item.parameters[-1].optional
+                or item.parameters[-1].default is not None
+            ):
+                issues.append(path + '.parameters: invalid variadic parameter')
             for i, entry in enumerate(item.entries):
                 if not re.fullmatch(r'-?(?:0|[1-9][0-9]*)', entry.ordering):
                     issues.append(f"{path}.entries[{i}].ordering: invalid integer")
@@ -433,7 +455,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
     """
     try:
         decode(encode(model), Model)
-        if model.format_revision != 12:
+        if model.format_revision != 13:
             return ('$.format_revision: unsupported IR revision; recompile the model repository',)
         issues = structural(model)
         if issues:

@@ -4,6 +4,7 @@ namespace builtins
 # Decorators
 
 普通参数接收值；* 参数接收调用处新定义的 key: Type。
+末尾 ... 参数接收零个或多个普通位置实参，不与 * 参数混用。
 可选 pair 位于末尾，未提供的普通参数使用声明的默认值。
 @allow_multiple 仅修饰 decorator，允许同一对象重复使用该 decorator。
 每个 decorator 必须通过 @targets 显式声明适用范围，包括 @targets 自身。
@@ -48,6 +49,9 @@ decorator @dense(cat: string)
 decorator @flags()
 @targets(DecoratorTargets.Entity)
 decorator @decodes_rank(k: integer, decode: string)
+@targets(DecoratorTargets.Entity)
+@allow_multiple
+decorator @unique_by(...fields: attrs<AttrCats.Static, self>)
 @targets(DecoratorTargets.EntityAttr)
 decorator @override()
 @targets(DecoratorTargets.EntityAttr)

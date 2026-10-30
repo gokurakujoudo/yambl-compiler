@@ -309,6 +309,8 @@ class Restoring:
             items: list[Token | Tree[Token]] = []
             if parameter.pair:
                 items.append(token('*', 'STAR', p))
+            if parameter.variadic:
+                items.append(token('...', 'ELLIPSIS', p))
             items.append(token(parameter.name, 'NAME', p))
             if parameter.optional:
                 items.append(token('?', 'QMARK', p))

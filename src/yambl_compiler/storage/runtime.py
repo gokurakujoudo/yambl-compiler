@@ -565,6 +565,7 @@ class Reader:
 
         :returns: Immutable report or ERROR on repository access failure.
         """
+        from yambl_compiler.storage.entity_validation import validate_entities
         from yambl_compiler.storage.validation import validate_data
 
         try:
@@ -584,7 +585,11 @@ class Reader:
                 d.identity for d in self._layout.model.definitions if d.kind == 'decodes'
             }
             dictionary_report = self.validate_dictionary_references(dictionaries)
-            issues = tuple(dict.fromkeys((*report.value.issues, *dictionary_report.issues)))
+            issues = tuple(
+                dict.fromkeys(
+                    (*report.value.issues, *dictionary_report.issues, *validate_entities(self))
+                )
+            )
             try:
                 self._configuration.load()
             except (ValueError, TypeError, KeyError, InvalidOperation) as error:
@@ -606,6 +611,11 @@ class Reader:
         """
         self._ready()
         candidate.validate_business(self._batch.implementation, self._value)
+        from yambl_compiler.storage.entity_validation import validate_entities
+
+        issues = validate_entities(self)
+        if issues:
+            raise ValueError(f'candidate entity validation failed: {issues}')
 
     def validate_dictionary_references(
         self, dictionaries: set[str], removed: dict[str, set[str]] | None = None

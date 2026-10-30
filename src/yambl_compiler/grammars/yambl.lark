@@ -7,7 +7,7 @@ constant: constant_header ":" type_expr "=" calculation
 constant_header: CONST NAME
 decorator: annotation* decorator_header
 decorator_header: DECORATOR "@" NAME "(" [decorator_parameter ("," decorator_parameter)*] ")"
-decorator_parameter: "*"? NAME "?"? ":" type_expr decorator_default?
+decorator_parameter: ("*" | "...")? NAME "?"? ":" type_expr decorator_default?
 decorator_default: "=" type_expr
 type_alias: annotation* type_alias_header "=" type_expr
 type_alias_header: TYPE NAME type_parameters?

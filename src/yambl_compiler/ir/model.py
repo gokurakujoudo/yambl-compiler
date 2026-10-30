@@ -201,6 +201,7 @@ class Formal(Record):
     :param pair: Whether this parameter accepts a new key/type pair.
     :param optional: Whether the pair may be omitted.
     :param source: Parameter location.
+    :param variadic: Whether remaining positional arguments bind to this parameter.
     """
 
     name: str
@@ -209,6 +210,7 @@ class Formal(Record):
     pair: bool
     optional: bool
     source: Source
+    variadic: bool = False
 
 
 @dataclass(frozen=True)
@@ -452,6 +454,20 @@ class Lookup(Record):
 
 
 @dataclass(frozen=True)
+class UniqueKey(Record):
+    """Describe a checked unique key for an entity subtree.
+
+    :param entity: Declaring entity identity.
+    :param fields: Ordered logical field identities.
+    :param source: Decorator application location.
+    """
+
+    entity: str
+    fields: tuple[str, ...]
+    source: Source
+
+
+@dataclass(frozen=True)
 class Definition(Record):
     """Preserve a declaration and its checked effective view.
 
@@ -475,6 +491,7 @@ class Definition(Record):
     :param effective_lookups: Visible rule names and declaring entity identities.
     :param hierarchy_entries: Named Hierarchy's declared ordering and values.
     :param abstract: Whether the entity cannot be instantiated directly.
+    :param unique_keys: Unique combinations declared on this entity.
     """
 
     kind: Literal[
@@ -506,6 +523,7 @@ class Definition(Record):
     effective_lookups: tuple[Text, ...] = ()
     hierarchy_entries: tuple[HierarchyEntry, ...] = ()
     abstract: bool = False
+    unique_keys: tuple[UniqueKey, ...] = ()
 
 
 @dataclass(frozen=True)

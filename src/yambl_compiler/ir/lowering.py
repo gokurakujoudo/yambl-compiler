@@ -39,12 +39,13 @@ from yambl_compiler.ir.model import (
     Source,
     Text,
     Type,
+    UniqueKey,
     Value,
 )
 from yambl_compiler.languages.yambl.computation.records import Expression as CalculationExpression
 from yambl_compiler.languages.yambl.computation.records import TypeHint
 from yambl_compiler.languages.yambl.semantics.decodes import is_flags
-from yambl_compiler.languages.yambl.semantics.decorators import bind_call, parameters
+from yambl_compiler.languages.yambl.semantics.decorators import bind_call, parameters, unique_fields
 from yambl_compiler.languages.yambl.semantics.dimensions import (
     Dimension as CheckedDimension,
 )
@@ -799,6 +800,7 @@ class Lowering:
                         parameter.pair,
                         parameter.optional,
                         self.source(unit, parameter.node),
+                        parameter.variadic,
                     )
                 )
         else:
@@ -950,6 +952,15 @@ class Lowering:
                 else ()
             ),
             abstract=node.data == 'entity' and tokens(header(node))[0].type == 'ABSTRACT',
+            unique_keys=tuple(
+                UniqueKey(
+                    qualified(key), unique_fields(call, node, unit, []), self.source(unit, call)
+                )
+                for call in annotations(node, 'unique_by')
+                if node.data == 'entity'
+                and (symbol := unit.scope.get('unique_by')) is not None
+                and symbol.key[0].split('\0')[-1] == 'builtins'
+            ),
         )
 
     def model(self) -> Model:
@@ -1048,7 +1059,7 @@ class Lowering:
         )
         return seal(
             Model(
-                12,
+                13,
                 self.version,
                 self.prefix,
                 primitives,

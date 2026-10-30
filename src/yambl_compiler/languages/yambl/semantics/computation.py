@@ -219,6 +219,11 @@ class Computations:
             node = calculation_expression(source)
             checker = Checker(self, ('', ''), unit)
             before = len(self.diagnostics)
+            if node.kind == 'name' and node.value in unit.world.constants:
+                checker.issue(
+                    node, f'result constant {node.value} cannot be used in model expressions'
+                )
+                continue
 
             def flags_expression(expression: Expression) -> Tree[Token] | None:
                 """Adapt flags set operations to the existing symbolic type resolver.

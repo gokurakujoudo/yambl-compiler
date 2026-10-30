@@ -7,7 +7,7 @@
             "properties": {
                 "format_revision": {
                     "type": "integer",
-                    "const": 12
+                    "const": 13
                 },
                 "compiler_version": {
                     "type": "string"
@@ -198,6 +198,12 @@
                 },
                 "abstract": {
                     "type": "boolean"
+                },
+                "unique_keys": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/UniqueKey"
+                    }
                 }
             },
             "required": [
@@ -220,7 +226,8 @@
                 "lookups",
                 "effective_lookups",
                 "hierarchy_entries",
-                "abstract"
+                "abstract",
+                "unique_keys"
             ],
             "additionalProperties": false
         },
@@ -251,6 +258,9 @@
                 },
                 "source": {
                     "$ref": "#/$defs/Source"
+                },
+                "variadic": {
+                    "type": "boolean"
                 }
             },
             "required": [
@@ -259,7 +269,8 @@
                 "default",
                 "pair",
                 "optional",
-                "source"
+                "source",
+                "variadic"
             ],
             "additionalProperties": false
         },
@@ -1489,6 +1500,29 @@
                 "ordering",
                 "value",
                 "dictionary",
+                "source"
+            ],
+            "additionalProperties": false
+        },
+        "UniqueKey": {
+            "type": "object",
+            "properties": {
+                "entity": {
+                    "type": "string"
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "source": {
+                    "$ref": "#/$defs/Source"
+                }
+            },
+            "required": [
+                "entity",
+                "fields",
                 "source"
             ],
             "additionalProperties": false

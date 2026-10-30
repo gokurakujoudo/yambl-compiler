@@ -322,6 +322,58 @@ INVALID.extend(
 
 
 class DecoratorTests(unittest.TestCase):
+    def test_variadic_decorator_parameters(self):
+        declaration = '@targets(DecoratorTargets.Entity) decorator @labels(prefix: integer, ...values: string) '
+        for call in ("@labels(1)", "@labels(1, 'a', 'b')", "@labels(1, 'a', description='notes')"):
+            with self.subTest(call=call):
+                self.assertEqual(check([document(declaration + call + ' entity A {}')]), [])
+        for call in ("@labels(1, 2)", "@labels(1, values='a')"):
+            with self.subTest(call=call):
+                self.assertTrue(check([document(declaration + call + ' entity A {}')]))
+        for formals in (
+            '...values: string, next: integer',
+            '*pair: string, ...values: string',
+            '...values?: string',
+            "...values: string = 'x'",
+        ):
+            with self.subTest(formals=formals):
+                self.assertTrue(
+                    check(
+                        [
+                            document(
+                                '@targets(DecoratorTargets.Entity) decorator @labels('
+                                + formals
+                                + ')'
+                            )
+                        ]
+                    )
+                )
+
+    def test_unique_by_field_rules(self):
+        valid = "@unique_by(self.market, self.symbol) @unique_by(self.symbol) entity A { id id: string attr market: string static attr symbol: exact<'x'> }"
+        self.assertEqual(check([document(valid)]), [])
+        inherited = "entity A { attr x: string } @unique_by(self.x) entity B inherits A {}"
+        self.assertEqual(check([document(inherited)]), [])
+        reverse = """@unique_by(self.primary)
+entity Issuer { id id: string @reverse_relationship(Security.lead) attr primary: Security }
+entity Security { id id: string @relationship(one, maybe) attr lead: Issuer }
+"""
+        self.assertEqual(check([document(reverse)]), [])
+        for source, message in (
+            ('@unique_by() entity A {}', 'at least one field'),
+            ('@unique_by(self.x, self.x) entity A { attr x: string }', 'repeats a logical field'),
+            ('@unique_by(self.id) entity A { id id: string }', 'static scalar'),
+            ('@unique_by(self.x) entity A { config attr x: string }', 'static scalar'),
+            ('@unique_by(self.x) entity A { attr x: values<string> }', 'static scalar'),
+            ('@unique_by(A.x) entity A { attr x: string }', 'direct self fields'),
+            (
+                '@unique_by(self.x) entity A { dimension d { value key: string } @dimension(d) attr x: string }',
+                'static scalar',
+            ),
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(any(message in item.message for item in check([document(source)])))
+
     def test_implicit_description_and_input_constraints(self):
         valid = [
             "@title('Title', 'Notes') entity E {}",
