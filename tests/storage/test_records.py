@@ -116,6 +116,10 @@ entity Holder {
                             self.assertEqual(
                                 reader.read_all(foreign, 'Holder.target').status, Status.ERROR
                             )
+                        owner = reader.get_holder('base').value
+                    self.assertEqual(
+                        reader.read_best(owner, 'Holder.target', {}).status, Status.ERROR
+                    )
 
     async def test_temporal_and_dimensional_records(self):
         self.write('yambl-root.lclcfg', "prefix: ''\n")

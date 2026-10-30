@@ -112,6 +112,11 @@ entity Leaf inherits Child { @override attr choice: exact<3> }
     def test_finite_value_cycles_and_evaluation_failures_are_diagnostic(self):
         for source, expected in (
             ('const X: exact<X> = 1', 'constant dependency cycle'),
+            ('type a = exact<A> const A: a = 1', 'finite type dependency cycle'),
+            (
+                'const N: integer = 1 entity A { attr n: one_of[N.x, 1] }',
+                'member access requires a scalar entity reference',
+            ),
             ('entity A { attr n: one_of[1 // 0, 2] }', 'finite value evaluation failed'),
             (
                 'entity A { attr n: one_of[[1], [2]] }',
