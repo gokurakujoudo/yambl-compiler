@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from tests.support import load_generated
 from tests.transactions.test_binding import CatalogCase
+from yambl_compiler.ir import compile_repository
 from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
@@ -60,6 +61,36 @@ class DataCliTests(CatalogCase):
                     reader = data.read()
                     self.assertEqual(reader.get_a('a').status, Status.NO_ENTRY)
                     reader.close()
+
+    def test_apply_reports_constraint_failure_without_writing(self):
+        self.write('constraint/yambl-root.lclcfg', "prefix: ''\n")
+        self.write(
+            'constraint/model.yambl',
+            'entity E { id id: string attr amount: integer constraint positive { assert self.amount::value() > 0 } }',
+        )
+        output = self.root / 'constraint-generated'
+        generate(compile_repository(self.root / 'constraint'), output, 'sample_model')
+        self.api = load_generated(output / 'sample_model', 'sample_model')
+        plan = self.write(
+            'invalid.yaplan',
+            dumps(
+                Plan(
+                    'invalid',
+                    None,
+                    (Group('g', (Operation('insert', 'E', ('id', 'amount'), (('e', -1),)),)),),
+                )
+            ),
+        )
+        config = self.config('sqlite')
+        self.assertEqual(self.invoke('create', config)[0], 0)
+        code, reports, output_text = self.invoke('apply', config, '-o', 'source', str(plan))
+        self.assertNotEqual(code, 0, output_text)
+        self.assertFalse(reports[0]['valid'])
+        self.assertEqual(reports[0]['issues'][0]['constraint'], 'E::constraint.positive')
+        self.assertEqual(reports[0]['issues'][0]['status'], 'false')
+        with asyncio.run(self.api.SampleData.open(config)) as data:
+            with contextlib.closing(data.read()) as reader:
+                self.assertEqual(reader.get_e('e').status, Status.NO_ENTRY)
 
     def test_dryrun_does_not_create_mutate_or_recover_files(self):
         config = self.config('files')

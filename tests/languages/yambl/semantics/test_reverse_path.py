@@ -42,6 +42,21 @@ entity C { id id: string @reverse_relationship(A.b.c) attr a: A }'''
                 messages = [d.message for d in analyze([document(edited)]).diagnostics]
                 self.assertTrue(any(expected in message for message in messages), messages)
 
+    def test_missing_start_and_scalar_intermediate_are_rejected(self):
+        for source, diagnostic in (
+            (
+                'entity C { @reverse_relationship(Missing.x.y) attr a: C }',
+                'requires an entity field reference',
+            ),
+            (
+                'entity A { attr b: string } entity C { @reverse_relationship(A.b.c) attr a: A }',
+                'hop 2 c is not a visible field',
+            ),
+        ):
+            with self.subTest(source=source):
+                messages = [d.message for d in analyze([document(source)]).diagnostics]
+                self.assertTrue(any(diagnostic in message for message in messages), messages)
+
     def test_each_hop_requires_the_same_dimension_identity(self):
         source = '''dimension shared { value source: string }
 dimension other { value source: string }

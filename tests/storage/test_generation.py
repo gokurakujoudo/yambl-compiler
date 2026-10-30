@@ -658,6 +658,13 @@ class GenerationTests(FilesystemCase):
         with self.assertRaisesRegex(ValueError, "public-name collision"):
             python_package(replace(layout, fields=fields), "sample_model")
 
+    def test_best_available_method_collision_is_reported(self):
+        model = self.compile(
+            'entity A { id id: string attr x: string attr x_best_available: string }'
+        )
+        with self.assertRaisesRegex(ValueError, 'generated method collision read_x_best_available'):
+            generate(model, self.root / 'collision', 'sample_model')
+
     def test_real_cli_generation_commands(self):
         import contextlib
         import io

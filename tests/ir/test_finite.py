@@ -226,6 +226,25 @@ entity A {
         )
         self.assertEqual({v.text for v in fields['ratio'].type.allowed_values}, {'0.5', '1.5'})
 
+    def test_nested_and_dictionary_local_annotations_round_trip(self):
+        self.write(
+            'model.yambl',
+            """
+const N: integer = 1
+decodes D {}
+@flags decodes F { - 1 A: 'a' }
+entity X {
+    id id: string
+    computed attr value: Decodes { let x: exact<D> = D return x }
+    computed attr choice: code<F> { let x: exact<F.A> = F.A return x }
+    constraint nested { let xs: values<one_of[N, 2]> = [1] assert true }
+}
+""",
+        )
+        model = compile_repository(self.root)
+        self.write('model.yambl', 'unavailable')
+        self.assertEqual(validate_ir(loads(dumps(model))), ())
+
     def test_constraint_local_annotation_round_trip(self):
         self.write(
             'model.yambl',

@@ -11,6 +11,7 @@ from yambl_compiler.ir import compile_repository, validate_ir
 from yambl_compiler.ir.codec import dumps, loads
 from yambl_compiler.storage.backends import repository_contents
 from yambl_compiler.storage.computing import literal_mapping
+from yambl_compiler.storage.entity_validation import value_key
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import EntityRef, Status
 from yambl_compiler.storage.value_types import generate_values
@@ -85,6 +86,22 @@ class LiteralRuntimeTests(FilesystemCase):
             self.assertEqual(
                 thing.read_amount().value, module.amount(quantity=Decimal('1.25'), label='Other')
             )
+            amount_type = next(
+                field.type
+                for d in model.definitions
+                if d.identity == 'Thing'
+                for field in d.fields
+                if field.name == 'amount'
+            )
+            first = value_key(thing.read_amount().value, amount_type, reader)
+            same = value_key(
+                module.amount(quantity=Decimal('1.250'), label='Other'), amount_type, reader
+            )
+            different = value_key(
+                module.amount(quantity=Decimal('1.25'), label='Different'), amount_type, reader
+            )
+            self.assertEqual(first, same)
+            self.assertNotEqual(first, different)
             self.assertEqual(thing.read_numbers().value, frozenset((1, 2)))
             self.assertEqual(
                 thing.read_amounts().value,

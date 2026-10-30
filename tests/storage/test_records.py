@@ -96,6 +96,26 @@ entity Holder {
                             reader.get_holder('base').value.read_labels_ok().status,
                             Status.NOT_DEFINED,
                         )
+                        self.assertEqual(
+                            reader._physical_records(
+                                EntityRef('Base', 'base'), 'Base.label'
+                            ).status,
+                            Status.NOT_DEFINED,
+                        )
+                        self.assertEqual(
+                            reader._physical_records(
+                                EntityRef('Missing', 'x'), 'Base.label'
+                            ).status,
+                            Status.ERROR,
+                        )
+                        with closing(store.read()) as other:
+                            foreign = other.get_holder('base').value
+                            self.assertEqual(
+                                reader.read_best(foreign, 'Holder.target', {}).status, Status.ERROR
+                            )
+                            self.assertEqual(
+                                reader.read_all(foreign, 'Holder.target').status, Status.ERROR
+                            )
 
     async def test_temporal_and_dimensional_records(self):
         self.write('yambl-root.lclcfg', "prefix: ''\n")
