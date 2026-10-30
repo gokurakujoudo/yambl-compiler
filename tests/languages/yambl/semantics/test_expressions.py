@@ -117,6 +117,10 @@ entity Leaf inherits Child { @override attr choice: exact<3> }
                 'entity A { attr n: one_of[[1], [2]] }',
                 'finite values must be non-collection values',
             ),
+            (
+                "@flags decodes D { - 1 A: 'a' } entity X { attr n: exact<D.A + 'bad'> }",
+                'arithmetic requires integer, decimal or float operands',
+            ),
         ):
             with self.subTest(source=source):
                 self.assertTrue(any(expected in item.message for item in check([document(source)])))

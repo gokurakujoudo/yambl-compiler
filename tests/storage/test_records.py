@@ -130,6 +130,7 @@ entity A {
     @temporal(day: date) scd attr balance: integer
     computed attr prices_ok: bool { return self.price::records().all(r -> r.source == 'p' and r.venue == 'v' and r.day == parse_date('2026-01-01') and r.value.recover(case EMPTY -> 5) > 0) }
     computed attr periods_ok: bool { return self.balance::records().all(r -> r.valid_from < r.valid_to and r.value > 0) }
+    computed attr missing_record: bool { return self.price::records().all(r -> (if false then r else NO_ENTRY).value > 0) }
     computed attr chosen_source: string { return self.price::best_available(venue='v').dimensions.source }
 }
 """,
@@ -181,6 +182,7 @@ entity A {
                         entity = reader.get_a('a').value
                         self.assertEqual(entity.read_prices_ok(), Success(True, 'computation'))
                         self.assertEqual(entity.read_periods_ok(), Success(True, 'computation'))
+                        self.assertEqual(entity.read_missing_record().status, Status.NO_ENTRY)
                         self.assertEqual(
                             reader.get_a('b').value.read_prices_ok(), Success(True, 'computation')
                         )

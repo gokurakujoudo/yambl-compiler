@@ -361,6 +361,7 @@ entity Security { id id: string @relationship(one, maybe) attr lead: Issuer }
         self.assertEqual(check([document(reverse)]), [])
         for source, message in (
             ('@unique_by() entity A {}', 'at least one field'),
+            ('@unique_by(self.missing) entity A { id id: string }', 'unknown field: missing'),
             ('@unique_by(self.x, self.x) entity A { attr x: string }', 'repeats a logical field'),
             ('@unique_by(self.id) entity A { id id: string }', 'static scalar'),
             ('@unique_by(self.x) entity A { config attr x: string }', 'static scalar'),
