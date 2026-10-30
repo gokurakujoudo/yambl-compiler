@@ -252,10 +252,20 @@ def python_package(layout: Layout, package: str) -> str:
         if s.root in names
         and (s.dimensions or s.field.category in ("snapshot", "scd") or key in accessed_records)
     }
+    selections = {
+        key: names[s.root] + ''.join(p.capitalize() for p in s.field.name.split('_')) + 'Selection'
+        for key, s in layout.fields.items()
+        if s.root in names and layout.entities[s.root].source.origin != 'builtin'
+    }
+    dimension_types = {
+        key: name.removesuffix('Selection') + 'Dimensions' for key, name in selections.items()
+    }
     public_names = [
         *names.values(),
         *codes.values(),
         *records.values(),
+        *selections.values(),
+        *dimension_types.values(),
         *requests.values(),
         *value_names.values(),
         *(name + suffix for name in lookup_names.values() for suffix in ('Key', 'Matcher')),
@@ -460,6 +470,54 @@ def python_package(layout: Layout, package: str) -> str:
         )
         lines.extend(f"    {k}: {t}" for k, t in coordinates)
         lines.append(f"    value: ReadResult[{python_type(f.type)}]")
+    for identity, name in selections.items():
+        stored = layout.fields[identity]
+        dimensions_name = dimension_types[identity]
+        lines.extend(
+            [
+                '',
+                '',
+                '@dataclass(frozen=True)',
+                f'class {dimensions_name}:',
+                *docstring(
+                    [
+                        f'Selected dimensions of {identity}.',
+                        '',
+                        *(
+                            f':param {dimension.key}: Selected dimension value.'
+                            for dimension in stored.dimensions
+                        ),
+                    ],
+                    4,
+                ),
+            ]
+        )
+        if stored.dimensions:
+            lines.extend(
+                f'    {dimension.key}: {python_type(dimension.type)}'
+                for dimension in stored.dimensions
+            )
+        else:
+            lines.append('    pass')
+        lines.extend(
+            [
+                '',
+                '',
+                '@dataclass(frozen=True)',
+                f'class {name}:',
+                *docstring(
+                    [
+                        f'Selected value and dimensions of {identity}.',
+                        '',
+                        ':param value: Selected field value.',
+                        ':param dimensions: Actual dimensions of the selected record.',
+                    ],
+                    4,
+                ),
+                f'    value: {python_type(stored.field.type)}',
+                f'    dimensions: {dimensions_name}',
+            ]
+        )
     for identity, name in requests.items():
         field = computed[identity]
         assert field.calculation is not None
@@ -572,7 +630,7 @@ def python_package(layout: Layout, package: str) -> str:
             point_arg = f", {time_key}: date" if temporal else ""
             when = f", {time_key}" if temporal else ""
             property_type = (
-                f"tuple[{records[f.identity]}, ...]" if f.identity in records else output
+                f"tuple[{records[f.identity]}, ...]" if temporal or stored.dimensions else output
             )
             lines.extend(
                 [
@@ -583,6 +641,79 @@ def python_package(layout: Layout, package: str) -> str:
                     f"        return cast(ReadResult[{property_type}], self.reader.read_all(self, {f.identity!r}))",
                 ]
             )
+            if f.identity in selections:
+                declarations = {
+                    d.identity: d
+                    for definition in layout.model.definitions
+                    for d in definition.dimensions
+                }
+                selection_dimensions = [
+                    declarations[c.dimension_identity]
+                    for c in f.decorators
+                    if c.target == 'builtins.dimension'
+                ]
+                best_parameters = []
+                if temporal:
+                    best_parameters.append((time_key, 'date', False))
+                for dimension in selection_dimensions:
+                    best_parameters.append(
+                        (
+                            dimension.value_name,
+                            python_type(dimension.type),
+                            bool(dimension.hierarchy_name),
+                        )
+                    )
+                    if dimension.hierarchy_name:
+                        best_parameters.append(
+                            (
+                                dimension.hierarchy_name,
+                                'str | EntityRef[object] | HierarchyView',
+                                True,
+                            )
+                        )
+                for dimension in selection_dimensions:
+                    for dependency in dimension.hierarchy_inputs:
+                        if dependency.name not in {item[0] for item in best_parameters}:
+                            annotation = python_type(dependency.type)
+                            if dependency.type.kind == 'reference':
+                                annotation += ' | str'
+                            best_parameters.append((dependency.name, annotation, True))
+                args = ', '.join(
+                    name + ': ' + annotation + (' | Omitted = UNSET' if optional else '')
+                    for name, annotation, optional in best_parameters
+                )
+                values = (
+                    '{'
+                    + ', '.join(repr(name) + ': ' + name for name, _, _ in best_parameters)
+                    + '}'
+                )
+                best_method = method + '_best_available'
+                if best_method in methods or best_method in method_names:
+                    raise ValueError(f'{key}: generated method collision {best_method}')
+                methods.add(best_method)
+                best_result = f'ReadResult[{selections[f.identity]}]'
+                lines.extend(
+                    [
+                        '',
+                        f'    def {best_method}(self'
+                        + (', *, ' + args if args else '')
+                        + f') -> {best_result}:',
+                        *docstring(
+                            [
+                                f'Select {f.identity} and return its value and actual dimensions.',
+                                '',
+                                *(
+                                    f':param {name}: Selection input ({annotation}).'
+                                    for name, annotation, _ in best_parameters
+                                ),
+                                ':returns: Selected value and dimensions, or a non-normal result.',
+                                f':rtype: {best_result}',
+                            ],
+                            8,
+                        ),
+                        f'        return cast({best_result}, self.reader.read_best(self, {f.identity!r}, {values}))',
+                    ]
+                )
             lines.extend(
                 [
                     "",
@@ -618,6 +749,9 @@ def python_package(layout: Layout, package: str) -> str:
             "    model_path = Path(__file__).with_name('runtime-contract.json')",
             f'    contract_digest = {hashlib.sha256(contract_json(layout).encode("utf-8")).hexdigest()!r}',
             "    record_types = {" + ", ".join(f"{k!r}: {v}" for k, v in records.items()) + "}",
+            "    selection_types = {"
+            + ", ".join(f"{k!r}: ({v}, {dimension_types[k]})" for k, v in selections.items())
+            + "}",
             "    entity_types = {" + ", ".join(f"{k!r}: {v}" for k, v in names.items()) + "}",
             "    code_types = {" + ", ".join(f"{k!r}: {v}" for k, v in codes.items()) + "}",
             "    calculation_programs = PROGRAMS",

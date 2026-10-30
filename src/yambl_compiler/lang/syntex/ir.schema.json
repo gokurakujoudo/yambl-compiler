@@ -7,7 +7,7 @@
             "properties": {
                 "format_revision": {
                     "type": "integer",
-                    "const": 14
+                    "const": 15
                 },
                 "compiler_version": {
                     "type": "string"
@@ -1318,6 +1318,12 @@
                     "items": {
                         "$ref": "#/$defs/Text"
                     }
+                },
+                "hierarchy_inputs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/CalculationInput"
+                    }
                 }
             },
             "required": [
@@ -1330,7 +1336,8 @@
                 "fallback",
                 "source",
                 "identity",
-                "references"
+                "references",
+                "hierarchy_inputs"
             ],
             "additionalProperties": false
         },

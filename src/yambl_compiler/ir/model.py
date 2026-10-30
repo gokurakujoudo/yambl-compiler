@@ -335,6 +335,7 @@ class Dimension(Record):
     :param source: Original declaration location.
     :param identity: Qualified dimension declaration identity.
     :param references: Lexical names used in selection expressions.
+    :param hierarchy_inputs: Inputs inferred from the hierarchy default expression.
     """
 
     name: str
@@ -347,6 +348,7 @@ class Dimension(Record):
     source: Source
     identity: str = ''
     references: tuple[Text, ...] = ()
+    hierarchy_inputs: tuple[CalculationInput, ...] = ()
 
 
 @dataclass(frozen=True)

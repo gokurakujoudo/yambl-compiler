@@ -57,7 +57,7 @@ entity Holding {
     id key: string
     static attr security: Security
     static attr quantity: decimal
-    computed attr amount: decimal { return self.quantity::value() * self.security.price::best_available() }
+    computed attr amount: decimal { return self.quantity::value() * self.security.price::best_available().value }
 }
 entity Bond inherits Security {}
 entity Fund {
@@ -71,7 +71,7 @@ entity Fund {
 }
 extend Security {
     @extra_input_param(day: date = '2026-01-10', 'Requested date')
-    computed attr declared_price: decimal { return self.price::best_available(as_of_date=input.day ?? input.unused_day) }
+    computed attr declared_price: decimal { return self.price::best_available(as_of_date=input.day ?? input.unused_day).value }
     @extra_input_param(count: integer)
     computed attr input_value: integer { return input.count ?? 7 }
     computed attr identity_text: string { return self.key::value() }
@@ -226,7 +226,8 @@ class ProgramTests(FilesystemCase):
                 EntityRef('Security', 's'), 'Security.price', (), date(2026, 1, 10)
             )
             result = available.read([BestRequest(point, (('hierarchy', view),), 3)])[0]
-            self.assertEqual(result, Success(Decimal('3')))
+            self.assertEqual(result.value.value, Decimal('3'))
+            self.assertEqual(result.value.dimensions.source, 'Y')
 
     def test_generated_batch_dates_defaults_and_repeated_contributions(self):
         for reader in self.readers():
@@ -404,6 +405,30 @@ class ProgramTests(FilesystemCase):
             self.assertIsInstance(result, Success, result)
             self.assertEqual(result.value, Decimal(6))
 
+    def test_generated_selection_keeps_winner_dimensions_and_cached_values(self):
+        for reader in self.readers():
+            security = reader.get_security('s').value
+            selected = security.read_price_best_available(as_of_date=date(2026, 1, 10))
+            self.assertEqual(selected.value.value, Decimal('3'))
+            self.assertIsInstance(selected.value.dimensions.source, self.module.SourcesCode)
+            self.assertEqual(selected.value.dimensions.source, 'Y')
+            explicit = security.read_price_best_available(
+                as_of_date=date(2026, 1, 10), source=self.module.SourcesCode('X')
+            )
+            self.assertEqual(explicit.value.value, Decimal('2.5'))
+            self.assertEqual(explicit.value.dimensions.source, 'X')
+            with self.assertRaises(AttributeError):
+                selected.value.dimensions.source = self.module.SourcesCode('X')
+            self.assertEqual(
+                security.read_price(date(2026, 1, 10), source=self.module.SourcesCode('Y')).value,
+                Decimal('3'),
+            )
+            reader.close()
+            self.assertEqual(
+                security.read_price_best_available(as_of_date=date(2026, 1, 10)).value,
+                selected.value,
+            )
+
     def test_selection_windows_states_priority_and_corruption(self):
         price = self.layout.fields["Security.price"]
         self.put("Security.price", "bad", id="s", dim_source="X", date="2026-01-08")
@@ -411,11 +436,11 @@ class ProgramTests(FilesystemCase):
         reader = next(self.readers())
         available = reader._computing.available
         point = FieldRequest(EntityRef("Security", "s"), "Security.price", (), date(2026, 1, 10))
-        self.assertEqual(available.read([BestRequest(point, (), 3)])[0].value, Decimal(3))
+        self.assertEqual(available.read([BestRequest(point, (), 3)])[0].value.value, Decimal(3))
         source = reader.code_types["Sources"]("X")
         explicit = replace(point, dimensions=(("source", source),))
         self.assertEqual(
-            available.read([BestRequest(explicit, (("hierarchy", "Absent"),), 3)])[0].value,
+            available.read([BestRequest(explicit, (("hierarchy", "Absent"),), 3)])[0].value.value,
             Decimal("2.5"),
         )
         self.assertEqual(available.read([BestRequest(point, (), -1)])[0].status, Status.ERROR)
@@ -460,7 +485,7 @@ class ProgramTests(FilesystemCase):
             (("industry_type", self.module.IndustriesCode.Primary),),
             date(2026, 1, 11),
         )
-        self.assertEqual(available.read([BestRequest(industry)])[0].value, "Technology")
+        self.assertEqual(available.read([BestRequest(industry)])[0].value.value, "Technology")
         self.assertEqual(
             available.read([BestRequest(replace(industry, dimensions=()))])[0].status,
             Status.ERROR,
@@ -720,7 +745,7 @@ class ProgramTests(FilesystemCase):
         )
         self.assertEqual(batch.read([industry])[0].value, "Technology")
         self.assertEqual(
-            reader._computing.available.read([BestRequest(industry)])[0].value,
+            reader._computing.available.read([BestRequest(industry)])[0].value.value,
             "Technology",
         )
         security = reader.get_security("s").value
@@ -731,7 +756,7 @@ class ProgramTests(FilesystemCase):
             when=date(2026, 1, 9),
         )
         self.assertEqual(
-            reader._computing.available.read([BestRequest(explicit)])[0].value,
+            reader._computing.available.read([BestRequest(explicit)])[0].value.value,
             Decimal("2.5"),
         )
         self.assertEqual(
@@ -743,7 +768,7 @@ class ProgramTests(FilesystemCase):
         self.assertEqual(
             reader._computing.available.read(
                 [BestRequest(FieldRequest(EntityRef("Security", "s"), "Security.issuer"))]
-            )[0].value.id,
+            )[0].value.value.id,
             "i",
         )
         self.assertEqual(
@@ -759,7 +784,7 @@ class ProgramTests(FilesystemCase):
                             )
                         )
                     ]
-                )[0].value
+                )[0].value.value
             ),
             2,
         )
@@ -773,7 +798,7 @@ class ProgramTests(FilesystemCase):
                 "Issuer.industry",
                 "best_available",
                 {"industry_type": {lane: Success(self.module.IndustriesCode.Primary)}},
-            )[lane].value,
+            )[lane].value.value,
             "Technology",
         )
         self.assertEqual(files._backend.rows_many("tb_security", []), [])

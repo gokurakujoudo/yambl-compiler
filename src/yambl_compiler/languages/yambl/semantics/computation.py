@@ -1236,10 +1236,10 @@ class Checker:
                     Resolver(self.unit, self.computations.diagnostics, {}).evaluate(syntax).type
                 )
             parent = self.read(self.infer(receiver, environment), receiver, navigation=True)
-            if parent.type.name == 'record':
+            if parent.type.name in ('record', 'selection', 'dimensions'):
                 names = [name for name, _ in parent.type.params]
                 if node.value not in names:
-                    self.issue(node, f'unknown record member: {node.value}')
+                    self.issue(node, f'unknown {parent.type.name} member: {node.value}')
                     return Value(UNKNOWN)
                 self.literal_hints[node.span] = self.hint(parent.type, node.span)
                 return Value(parent.type.args[names.index(node.value)])
@@ -1630,6 +1630,24 @@ class Checker:
                     ):
                         assert value.owner is not None
                         self.dimension_inputs(dimension, value.owner, node, explicit, environment)
+            if method == 'best_available':
+                dimensions = []
+                for call in annotations(value.site.declaration, 'dimension'):
+                    dimension = field_dimension(value.site.unit, value.site.declaration, call, [])
+                    if dimension is not None:
+                        dimensions.append((dimension.value_name, dimension.value_type))
+                dimension_type = Resolved(
+                    'dimensions',
+                    args=tuple(type_ for _, type_ in dimensions),
+                    params=tuple((name, '') for name, _ in dimensions),
+                )
+                return Value(
+                    Resolved(
+                        'selection',
+                        args=(value.type, dimension_type),
+                        params=(('value', ''), ('dimensions', '')),
+                    )
+                )
             return Value(value.type)
         value = self.read(
             self.infer(receiver, environment, expected if method == 'recover' else None), receiver

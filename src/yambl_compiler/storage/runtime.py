@@ -127,6 +127,7 @@ class Reader:
     model_path: ClassVar[Path]
     contract_digest: ClassVar[str]
     record_types: ClassVar[dict[str, Callable[..., object]]] = {}
+    selection_types: ClassVar[dict[str, tuple[Callable[..., object], Callable[..., object]]]] = {}
     entity_types: ClassVar[dict[str, type[EntityHandle]]] = {}
     code_types: ClassVar[dict[str, type[str]]] = {}
     calculation_programs: ClassVar[dict[str, Program]] = {}
@@ -169,12 +170,24 @@ class Reader:
             self._value,
             self._scalar_rule,
             self._physical_records,
+            self._selection,
         )
         self._batch = Batch(self._session)
         self._configuration = Configuration(self._batch)
         self._computing = Computing(
             self._session, self._batch, self._configuration, self.calculation_programs
         )
+
+    def _selection(self, identity: str, value: object, dimensions: dict[str, object]) -> object:
+        """Construct the generated selection for an already decoded result.
+
+        :param identity: Logical field identity.
+        :param value: Decoded field value.
+        :param dimensions: Decoded coordinates from the selected row.
+        :returns: Field-specific immutable selection.
+        """
+        selection, dimension_type = self.selection_types[identity]
+        return selection(value=value, dimensions=dimension_type(**dimensions))
 
     def calculate(
         self,
@@ -197,6 +210,29 @@ class Reader:
             handle.entity_type, identity, ((handle.id, parameters, best_effort),)
         )
         return result.value[0] if isinstance(result, Success) else cast(ReadResult[object], result)
+
+    def read_best(
+        self, handle: EntityHandle, identity: str, parameters: Mapping[str, object]
+    ) -> ReadResult[object]:
+        """Select a field using the calculation engine's parameter and fallback rules.
+
+        :param handle: Owner entity in this session.
+        :param identity: Logical field identity.
+        :param parameters: Explicit date, dimensions, and selector inputs.
+        :returns: Field-specific selection or a non-normal result.
+        """
+        if handle.reader is not self:
+            return NonNormalResult(Status.ERROR, 'handle belongs to a different reader')
+        try:
+            lane = (0,)
+            source: Vector = {lane: Success(EntityRef(handle.entity_type, handle.id))}
+            inputs: dict[str, Vector] = {
+                name: {lane: Success(value)} for name, value in parameters.items()
+            }
+            frame = Frame((lane,), source, inputs, (False,))
+            return self._computing.field(frame, source, identity, 'best_available', {})[lane]
+        except (ValueError, TypeError, KeyError, OSError, sqlite3.Error, InvalidOperation) as error:
+            return NonNormalResult(Status.ERROR, str(error))
 
     def calculate_many(
         self,

@@ -10,6 +10,28 @@ from yambl_compiler.languages.yambl.semantics.validation import analyze
 
 
 class ComputationTests(unittest.TestCase):
+    def test_best_available_requires_explicit_value_and_checks_dimensions(self):
+        prefix = '''decodes Sources { - 1 Feed: 'Feed' }
+        entity E { dimension feed { value source: code<Sources> hierarchy order: Hierarchy }
+            @dimension(feed) attr price: integer
+        '''
+        valid = prefix + '''computed attr source: code<Sources> {
+            let selected = self.price::best_available()
+            return selected.dimensions.source
+        } }'''
+        self.assertEqual(self.errors(valid), [])
+        invalid = (
+            prefix + 'computed attr amount: integer { return self.price::best_available() * 2 } }'
+        )
+        self.assertTrue(self.errors(invalid))
+        missing = (
+            prefix
+            + 'computed attr source: string { return self.price::best_available().dimensions.missing } }'
+        )
+        self.assertTrue(
+            any('unknown dimensions member: missing' in e for e in self.errors(missing))
+        )
+
     def test_abstract_computed_contract_is_inferred_from_implementations(self):
         source = """
         abstract entity Root {
@@ -249,13 +271,13 @@ class ComputationTests(unittest.TestCase):
         self.assertEqual(checker.computations.diagnostics, [])
 
     def test_named_dimension_selection_conflicts(self):
-        source = "entity E { dimension a { value av: string hierarchy ah: Hierarchy } dimension b { value bv: string hierarchy bh: Hierarchy } @dimension(a) @dimension(b) static attr x: integer computed attr y: integer { return self.x::best_available() } }"
+        source = "entity E { dimension a { value av: string hierarchy ah: Hierarchy } dimension b { value bv: string hierarchy bh: Hierarchy } @dimension(a) @dimension(b) static attr x: integer computed attr y: integer { return self.x::best_available().value } }"
         self.assertTrue(any("one automatic Hierarchy" in e for e in self.errors(source)))
         self.assertEqual(
             self.errors(source.replace("best_available()", "best_available(av='fixed')")),
             [],
         )
-        invalid = "entity E { @dimension(missing) snapshot attr x: integer computed attr y: integer { return self.x::best_available() } }"
+        invalid = "entity E { @dimension(missing) snapshot attr x: integer computed attr y: integer { return self.x::best_available().value } }"
         self.assertTrue(any("unknown dimension" in e for e in self.errors(invalid)))
 
     def analyze(self, source):
@@ -275,7 +297,7 @@ class ComputationTests(unittest.TestCase):
             entity Holding {
                 static attr security: Security
                 static attr quantity: decimal
-                computed attr amount: decimal { return self.quantity::value() * self.security.price::best_available() }
+                computed attr amount: decimal { return self.quantity::value() * self.security.price::best_available().value }
             }
             entity Fund {
                 @temporal(as_of_date: date) snapshot attr holdings: collection<Holding>
@@ -437,7 +459,7 @@ class ComputationTests(unittest.TestCase):
                 "incompatible binding",
             ),
             (
-                "entity E { computed attr x: integer { return 1 } computed attr y: integer { return self.x::best_available() } }",
+                "entity E { computed attr x: integer { return 1 } computed attr y: integer { return self.x::best_available().value } }",
                 "computed fields support",
             ),
             (
@@ -479,7 +501,7 @@ class ComputationTests(unittest.TestCase):
         )
         self.assertEqual(
             self.errors(
-                "entity E { dimension d { value source: string hierarchy h: Hierarchy } @dimension(d) snapshot attr x: integer computed attr y: integer { return self.x::best_available(h='Fixed') } }"
+                "entity E { dimension d { value source: string hierarchy h: Hierarchy } @dimension(d) snapshot attr x: integer computed attr y: integer { return self.x::best_available(h='Fixed').value } }"
             ),
             [],
         )

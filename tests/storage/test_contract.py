@@ -23,7 +23,7 @@ class ContractTests(FilesystemCase):
         digest = hashlib.sha256(path.read_bytes()).hexdigest()
         self.assertEqual(load_contract(path, digest), layout)
         wire = json.loads(dumps(layout))
-        self.assertEqual(wire['runtime_revision'], 16)
+        self.assertEqual(wire['runtime_revision'], 17)
         self.assertEqual(LAYOUT_REVISION, 9)
         wire['runtime_revision'] = 11
         path.write_text(json.dumps(wire), encoding='utf-8')

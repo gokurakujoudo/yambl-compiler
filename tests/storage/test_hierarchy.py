@@ -31,6 +31,7 @@ entity E {
     attr dictionary: Decodes
     @sparse('extra') attr sparse_dictionary: Decodes
     attr preferred_source: string
+    config attr limit: integer = 5
     @temporal(day: date) scd attr dictionary_history: Decodes
     dimension local {
         value source: string
@@ -55,21 +56,22 @@ entity E {
     @dimension(historical) attr static_price: decimal
     @dimension(computed_source) attr computed_price: decimal
     @dimension(with_argument) attr argument_price: decimal
-    computed attr best: decimal { return self.price::best_available(day=input.day) }
-    computed attr shared_best: decimal { return self.shared_price::best_available(day=input.day) }
-    computed attr historical_best: decimal { return self.historical_price::best_available(day=input.as_of) }
+    computed attr best: decimal { return self.price::best_available(day=input.day).value }
+    computed attr shared_best: decimal { return self.shared_price::best_available(day=input.day).value }
+    computed attr historical_best: decimal { return self.historical_price::best_available(day=input.as_of).value }
     computed attr static_view: Hierarchy { return Sources::hierarchy() }
-    computed attr from_static: decimal { return self.price::best_available(day=input.day, order=Sources::hierarchy()) }
-    computed attr static_best: decimal { return self.static_price::best_available() }
-    computed attr computed_best: decimal { return self.computed_price::best_available() }
-    computed attr argument_best: decimal { return self.argument_price::best_available() }
-    computed attr explicit_source: decimal { return self.price::best_available(day=input.day, source=self.preferred_source::value()) }
+    computed attr from_static: decimal { return self.price::best_available(day=input.day, order=Sources::hierarchy()).value }
+    computed attr static_best: decimal { return self.static_price::best_available().value }
+    computed attr computed_best: decimal { return self.computed_price::best_available().value }
+    computed attr argument_best: decimal { return self.argument_price::best_available().value }
+    computed attr explicit_source: decimal { return self.price::best_available(day=input.day, source=self.preferred_source::value()).value }
+    computed attr chosen_source: string { return self.price::best_available(day=input.day).dimensions.source }
 }
 entity Holder {
     id id: string
     attr target: E
-    computed attr best: decimal { return self.target::value().price::best_available(day=input.day) }
-    computed attr historical_best: decimal { return self.target::value().historical_price::best_available(day=input.as_of) }
+    computed attr best: decimal { return self.target::value().price::best_available(day=input.day).value }
+    computed attr historical_best: decimal { return self.target::value().historical_price::best_available(day=input.as_of).value }
 }
 """
 
@@ -162,6 +164,31 @@ class HierarchyRuntimeTests(FilesystemCase):
             self.assertIsInstance(opened, Success)
             reader = opened.value
             self.addCleanup(reader.close)
+            selected = reader.get_e('fallback').value
+            result = selected.read_price_best_available(day=date(2026, 1, 1))
+            self.assertEqual(result.value.value, Decimal('7.5'))
+            self.assertEqual(result.value.dimensions.source, 'Wind')
+            self.assertEqual(selected.read_chosen_source(day=date(2026, 1, 1)).value, 'Wind')
+            explicit = selected.read_price_best_available(day=date(2026, 1, 1), source='Wind')
+            self.assertEqual(explicit.value, result.value)
+            declared = reader.get_e('declared').value
+            self.assertIn(
+                'query', inspect.signature(declared.read_argument_price_best_available).parameters
+            )
+            dependent = declared.read_argument_price_best_available(query=date(2026, 1, 1))
+            self.assertEqual(dependent.value.value, Decimal('7.5'))
+            self.assertEqual(dependent.value.dimensions.source, 'Wind')
+            self.assertEqual(
+                declared.read_argument_price_best_available(source='Wind').value.value,
+                Decimal('7.5'),
+            )
+            config = selected.read_limit_best_available()
+            self.assertEqual(config.value.value, 5)
+            self.assertEqual(config.origin, 'model_default')
+            self.assertEqual(vars(config.value.dimensions), {})
+            self.assertEqual(
+                selected.read_price_best_available(day=date(2025, 1, 1)).status, Status.NO_ENTRY
+            )
             self.assertEqual(
                 reader._computing.available.hierarchy(['core.Empty'])['core.Empty'], Success(())
             )
@@ -468,7 +495,7 @@ for opened in (model.SampleReader.open(Path(sys.argv[2])), model.SampleReader.op
             "namespace {namespace} hierarchy H {{ - 1 '{value}' }} "
             "dimension d {{ value source: string hierarchy h: Hierarchy = H }} "
             "entity {entity} {{ id id: string @dimension(d) attr price: decimal "
-            "computed attr result: decimal {{ return self.price::best_available() }} }}"
+            "computed attr result: decimal {{ return self.price::best_available().value }} }}"
         )
         sources = [
             template.format(namespace='one', value='X', entity='A'),
@@ -520,7 +547,7 @@ entity E {
     attr dictionary: Decodes
     dimension d { value source: code<Sources> hierarchy order: Hierarchy = self.dictionary::value()::hierarchy() }
     @dimension(d) attr price: decimal
-    computed attr best: decimal { return self.price::best_available() }
+    computed attr best: decimal { return self.price::best_available().value }
 }
 ''',
         )

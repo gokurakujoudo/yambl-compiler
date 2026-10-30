@@ -1,16 +1,44 @@
 """Verify shared dimensions and named hierarchies survive independent IR validation."""
 
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from tests.support import document
-from yambl_compiler.ir.codec import dumps, loads
+from yambl_compiler.ir.codec import dumps, loads, seal
 from yambl_compiler.ir.lowering import Lowering
 from yambl_compiler.ir.validation import validate_ir
 from yambl_compiler.languages.yambl.semantics.validation import analyze
 
 
 class HierarchyIRTests(unittest.TestCase):
+    def test_hierarchy_default_inputs_are_reconstructed_and_checked(self):
+        source = '''entity E {
+            @temporal(day: date) scd attr dictionary: Decodes
+            dimension feed { value source: string hierarchy h: Hierarchy = self.dictionary::value(day=input.query)::hierarchy() }
+            @dimension(feed) attr price: integer
+        }'''
+        analysis = analyze([document(source)])
+        self.assertEqual(analysis.diagnostics, ())
+        model = loads(dumps(Lowering(analysis, Path('.'), '', 'test').model()))
+        self.assertEqual(validate_ir(model), ())
+        entity = next(item for item in model.definitions if item.identity == 'E')
+        dimension = entity.dimensions[0]
+        self.assertEqual(
+            [(item.name, item.type.name) for item in dimension.hierarchy_inputs],
+            [('query', 'date')],
+        )
+        altered = replace(entity, dimensions=(replace(dimension, hierarchy_inputs=()),))
+        tampered = seal(
+            replace(
+                model,
+                definitions=tuple(
+                    altered if item is entity else item for item in model.definitions
+                ),
+            )
+        )
+        self.assertTrue(any('hierarchy_inputs' in message for message in validate_ir(tampered)))
+
     def test_local_and_shared_dimension_identities_do_not_collide(self):
         sources = [
             'namespace core.Base dimension feed { value source: string }',
@@ -62,7 +90,7 @@ entity E {
         hierarchy order: Hierarchy = self.dictionary::value()::hierarchy().recover(case NO_ENTRY -> H)
     }
     @dimension(d) attr label: string
-    computed attr answer: string { return self.label::best_available() }
+    computed attr answer: string { return self.label::best_available().value }
 }
 """
         analysis = analyze([document(source)])

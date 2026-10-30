@@ -44,6 +44,8 @@ from yambl_compiler.ir.model import (
 )
 from yambl_compiler.languages.yambl.computation.records import Expression as CalculationExpression
 from yambl_compiler.languages.yambl.computation.records import TypeHint
+from yambl_compiler.languages.yambl.semantics.computation import Checker
+from yambl_compiler.languages.yambl.semantics.computation import Value as CheckedValue
 from yambl_compiler.languages.yambl.semantics.decodes import is_flags
 from yambl_compiler.languages.yambl.semantics.decorators import bind_call, parameters, unique_fields
 from yambl_compiler.languages.yambl.semantics.dimensions import (
@@ -761,6 +763,43 @@ class Lowering:
         for expression in (dimension.hierarchy_default, dimension.fallback):
             if expression:
                 visit(expression)
+        hierarchy_inputs: tuple[CalculationInput, ...] = ()
+        if dimension.hierarchy_default is not None:
+            analyzer = dimension.unit.world.computations
+            assert analyzer is not None
+            checker = Checker(analyzer, dimension.owner, dimension.unit)
+            environment = (
+                {}
+                if dimension.owner == dimension.identity
+                else {
+                    'self': CheckedValue(
+                        Resolved(dimension.owner[1], 'reference', key=dimension.owner)
+                    )
+                }
+            )
+            checker.read(
+                checker.infer(dimension.hierarchy_default, environment), dimension.hierarchy_default
+            )
+            hierarchy_inputs = tuple(
+                CalculationInput(
+                    p.name,
+                    self.type(p.type),
+                    p.required,
+                    p.default,
+                    tuple(
+                        replace(
+                            self.source(scope, scope.document.tree),
+                            line=span.line,
+                            column=span.column,
+                            end_line=span.end_line,
+                            end_column=span.end_column,
+                        )
+                        for scope, span in p.sites
+                    ),
+                    qualified(p.default_dimension) if p.default_dimension else '',
+                )
+                for p in sorted(checker.inputs.values(), key=lambda item: item.name)
+            )
         return Dimension(
             dimension.name,
             dimension.value_name,
@@ -772,6 +811,7 @@ class Lowering:
             self.source(dimension.unit, dimension.node),
             qualified(dimension.identity),
             tuple(Text(name, target) for name, target in sorted(references.items())),
+            hierarchy_inputs,
         )
 
     def definition(self, key: EntityKey, unit: Unit, node: Tree[Token]) -> Definition:
@@ -1059,7 +1099,7 @@ class Lowering:
         )
         return seal(
             Model(
-                14,
+                15,
                 self.version,
                 self.prefix,
                 primitives,

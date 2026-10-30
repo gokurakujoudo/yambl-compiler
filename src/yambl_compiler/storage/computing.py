@@ -715,7 +715,22 @@ class Computing:
             (best_lanes, self.available.read(best)),
         ):
             for lane, result in zip(lanes, values, strict=True):
-                output[lane] = lift(keep_right, [at(owners, lane), result])
+                if (
+                    operation == 'best_available'
+                    and lanes is config_lanes
+                    and isinstance(result, Success)
+                ):
+                    result = replace(
+                        result, value=self.reader.selection(identity, result.value, {})
+                    )
+                owner_result = at(owners, lane)
+                output[lane] = (
+                    result
+                    if operation == 'best_available'
+                    and isinstance(owner_result, Success)
+                    and isinstance(result, Success)
+                    else lift(keep_right, [owner_result, result])
+                )
         for lane, result in tuple(output.items()):
             output[lane] = self.annotated(result, frame, source, lane, identity, arguments)
         return output

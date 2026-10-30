@@ -10,7 +10,7 @@ extend Security {
 
 extend HoldingEntry {
     computed attr market_value: money {
-        return self.quantity::value() * self.security.price::best_available()
+        return self.quantity::value() * self.security.price::best_available().value
     }
 }
 

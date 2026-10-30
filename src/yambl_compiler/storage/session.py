@@ -26,6 +26,7 @@ class Session:
     :param value: Interpret one stored field row.
     :param scalar_rule: Freeze a scalar's input validation without retaining the session.
     :param records: Read physical records for an entity and logical field.
+    :param selection: Construct the field-specific selection and dimensions.
     """
 
     layout: Layout
@@ -39,3 +40,4 @@ class Session:
     value: Callable[[StoredField, Field, Row], ReadResult[object]]
     scalar_rule: Callable[[Type], ScalarRule]
     records: Callable[[EntityRef[object], str], ReadResult[object]]
+    selection: Callable[[str, object, dict[str, object]], object]

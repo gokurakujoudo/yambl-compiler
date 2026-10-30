@@ -1,7 +1,7 @@
 """Select available values using named dimensions and bounded temporal windows."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import cast
 
@@ -343,9 +343,25 @@ class Available:
             ]
         )
         for request, row in winners:
-            results[request] = reader.value(
+            stored = reader.layout.fields[request.point.identity]
+            result = reader.value(
                 reader.layout.fields[request.point.identity], specs[request][0], row
             )
+            if isinstance(result, Success):
+                try:
+                    selected_dimensions = {
+                        dimension.key: reader.decode(dimension.type, row['dim_' + dimension.key])
+                        for dimension in stored.dimensions
+                    }
+                    result = replace(
+                        result,
+                        value=reader.selection(
+                            request.point.identity, result.value, selected_dimensions
+                        ),
+                    )
+                except (ValueError, TypeError, KeyError) as error:
+                    result = NonNormalResult(Status.ERROR, str(error))
+            results[request] = result
         for request, result in results.items():
             if not isinstance(result, NonNormalResult) or result.status != Status.ERROR:
                 self.cache[request] = result

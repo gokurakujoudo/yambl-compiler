@@ -32,7 +32,7 @@ class HierarchyTests(unittest.TestCase):
                 @dimension(feed) static attr shared: string
                 dimension local { value channel: string }
                 @dimension(local) static attr own: string
-                computed attr selected: string { return self.shared::best_available(priority=Preferred) }
+                computed attr selected: string { return self.shared::best_available(priority=Preferred).value }
             }
         """,
             'core.yambl',
@@ -165,10 +165,10 @@ class HierarchyTests(unittest.TestCase):
                 static attr dictionary: Decodes
                 dimension d { value source: string hierarchy h: Hierarchy = self.dictionary::value()::hierarchy() }
                 @dimension(d) static attr value: string
-                computed attr good: string { return self.value::best_available(h=Sources::hierarchy()) }
-                computed attr named: string { return self.value::best_available(h=Preferred) }
-                computed attr bad: string { return self.value::best_available(h=Flags::hierarchy()) }
-                computed attr wrong: string { return self.value::best_available(h='x'::hierarchy()) }
+                computed attr good: string { return self.value::best_available(h=Sources::hierarchy()).value }
+                computed attr named: string { return self.value::best_available(h=Preferred).value }
+                computed attr bad: string { return self.value::best_available(h=Flags::hierarchy()).value }
+                computed attr wrong: string { return self.value::best_available(h='x'::hierarchy()).value }
             }
         """
         messages = [d.message for d in analyze([document(source)]).diagnostics]
@@ -185,19 +185,19 @@ class HierarchyTests(unittest.TestCase):
                 dimension d { value source: string hierarchy h: Hierarchy = self.dictionary::value()::hierarchy() }
                 @dimension(d) @temporal(day: date) snapshot attr label: string
                 @dimension(d) static attr static_label: string
-                computed attr plain: string { return self.label::best_available() }
-                computed attr renamed: string { return self.label::best_available(day=input.query) }
-                computed attr fixed: string { return self.label::best_available(day=parse_date('2026-10-29'), h=Preferred) }
-                computed attr direct: string { return self.label::best_available(source='Feed') }
-                computed attr fallback: string { return self.label::best_available(h=input.choice ?? Preferred) }
+                computed attr plain: string { return self.label::best_available().value }
+                computed attr renamed: string { return self.label::best_available(day=input.query).value }
+                computed attr fixed: string { return self.label::best_available(day=parse_date('2026-10-29'), h=Preferred).value }
+                computed attr direct: string { return self.label::best_available(source='Feed').value }
+                computed attr fallback: string { return self.label::best_available(h=input.choice ?? Preferred).value }
                 @extra_input_param(h: Hierarchy = 'Preferred')
-                computed attr declared: string { return self.label::best_available() }
-                computed attr static_direct: string { return self.static_label::best_available(source='Feed') }
-                computed attr static_fixed: string { return self.static_label::best_available(h=Preferred) }
-                computed attr static_default: string { return self.static_label::best_available() }
-                computed attr aliased: string { return self.static_label::best_available(h=input.choice) }
+                computed attr declared: string { return self.label::best_available().value }
+                computed attr static_direct: string { return self.static_label::best_available(source='Feed').value }
+                computed attr static_fixed: string { return self.static_label::best_available(h=Preferred).value }
+                computed attr static_default: string { return self.static_label::best_available().value }
+                computed attr aliased: string { return self.static_label::best_available(h=input.choice).value }
                 @extra_input_param(choice: Hierarchy = 'Preferred')
-                computed attr alias_declared: string { return self.static_label::best_available(h=input.choice) }
+                computed attr alias_declared: string { return self.static_label::best_available(h=input.choice).value }
                 computed attr nested: string { return self.plain::value(day=input.nested_day) }
             }
         """
@@ -233,7 +233,7 @@ class HierarchyTests(unittest.TestCase):
                 @temporal(day: date) scd attr dictionary: Decodes
                 dimension d { value source: string hierarchy h: Hierarchy = self.dictionary::value(day=input.history_day)::hierarchy() }
                 @dimension(d) static attr label: string
-                computed attr result: string { return self.label::best_available() }
+                computed attr result: string { return self.label::best_available().value }
             }
         """
         analysis = analyze([document(source)])
@@ -246,7 +246,7 @@ class HierarchyTests(unittest.TestCase):
     def test_same_input_defaults_compare_their_lexical_declarations(self):
         one = "namespace one hierarchy H { - 1 'A' } dimension d_one { value source:string hierarchy h:Hierarchy=H }"
         two = "namespace two hierarchy H { - 1 'B' } dimension d_two { value source:string hierarchy h:Hierarchy=H }"
-        use = "namespace use from one import d_one from two import d_two entity E { id id:string @dimension(d_one) attr x:string @dimension(d_two) attr y:string computed attr z:bool { return self.x::best_available() == self.y::best_available() } }"
+        use = "namespace use from one import d_one from two import d_two entity E { id id:string @dimension(d_one) attr x:string @dimension(d_two) attr y:string computed attr z:bool { return self.x::best_available().value == self.y::best_available().value } }"
         result = analyze([document(one, 'one'), document(two, 'two'), document(use, 'use')])
         self.assertIn(
             'conflicting inferred parameter: h', [item.message for item in result.diagnostics]
@@ -273,7 +273,7 @@ class HierarchyTests(unittest.TestCase):
                 dimension b { value source: string hierarchy h: Hierarchy = self.dictionary::value(day=input.query)::hierarchy().recover(case NO_ENTRY -> H) }
                 @dimension(a) attr x: string
                 @dimension(b) attr y: string
-                computed attr z: bool { return self.x::best_available() == self.y::best_available() }
+                computed attr z: bool { return self.x::best_available().value == self.y::best_available().value }
             }
         """
         result = analyze([document(source)])
@@ -286,7 +286,7 @@ class HierarchyTests(unittest.TestCase):
             namespace core
             entity A { id id: string attr dictionary: Decodes dimension a { value source: string hierarchy h: Hierarchy = self.dictionary::value()::hierarchy() } @dimension(a) attr x: string }
             entity B { id id: string attr dictionary: Decodes dimension b { value source: string hierarchy h: Hierarchy = self.dictionary::value()::hierarchy() } @dimension(b) attr x: string }
-            entity T { id id: string attr a: A attr b: B computed attr z: bool { return self.a::value().x::best_available() == self.b::value().x::best_available() } }
+            entity T { id id: string attr a: A attr b: B computed attr z: bool { return self.a::value().x::best_available().value == self.b::value().x::best_available().value } }
         """
         result = analyze([document(separate)])
         self.assertIn(

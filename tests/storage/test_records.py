@@ -5,6 +5,7 @@ import subprocess
 import sys
 import unittest
 from contextlib import closing
+from datetime import date
 
 from tests.support import FilesystemCase, load_generated
 from yambl_compiler.ir import compile_repository
@@ -100,7 +101,8 @@ entity Holder {
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write(
             'model.yambl',
-            """dimension source { value source: string }
+            """hierarchy Preferred { - 1 'p' }
+dimension source { value source: string hierarchy priority: Hierarchy = Preferred }
 dimension venue { value venue: string }
 entity A {
     id id: string
@@ -108,6 +110,7 @@ entity A {
     @temporal(day: date) scd attr balance: integer
     computed attr prices_ok: bool { return self.price::records().all(r -> r.source == 'p' and r.venue == 'v' and r.day == parse_date('2026-01-01') and r.value.recover(case EMPTY -> 5) > 0) }
     computed attr periods_ok: bool { return self.balance::records().all(r -> r.valid_from < r.valid_to and r.value > 0) }
+    computed attr chosen_source: string { return self.price::best_available(venue='v').dimensions.source }
 }
 """,
         )
@@ -136,6 +139,13 @@ entity A {
                             (('2026-01-01', '2026-02-01', 2),),
                             (Condition('id', 'a'),),
                         ),
+                        Operation(
+                            'replace',
+                            'A.price',
+                            ('source', 'venue', 'day', 'value'),
+                            (('p', 'v', '2026-01-01', 8),),
+                            (Condition('id', 'b'),),
+                        ),
                     ),
                 ),
             ),
@@ -154,6 +164,17 @@ entity A {
                         self.assertEqual(
                             reader.get_a('b').value.read_prices_ok(), Success(True, 'computation')
                         )
+                        other = reader.get_a('b').value
+                        selected = other.read_price_best_available(day=date(2026, 1, 1), venue='v')
+                        self.assertEqual(
+                            (
+                                selected.value.value,
+                                selected.value.dimensions.source,
+                                selected.value.dimensions.venue,
+                            ),
+                            (8, 'p', 'v'),
+                        )
+                        self.assertEqual(other.read_chosen_source(day=date(2026, 1, 1)).value, 'p')
                     stored = store.layout.fields['A.price']
                     snapshot = store.snapshot().tables
                     price = next(row for row in snapshot[stored.table] if row['id'] == 'a')
