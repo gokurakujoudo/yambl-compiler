@@ -215,6 +215,17 @@ def validate_data(
         )
     )
     tables = {t.name: t for t in layout.tables}
+    for root in set(layout.roots.values()):
+        for row in data[table_name(root)]:
+            actual_entity = actual_type(layout, root, row)
+            if actual_entity in layout.entities and layout.entities[actual_entity].abstract:
+                issues.append(
+                    ValidationIssue(
+                        table_name(root),
+                        f'abstract entity instance: {actual_entity}',
+                        (str(row['id']),),
+                    )
+                )
     for table in layout.tables:
         for row in data[table.name]:
             try:

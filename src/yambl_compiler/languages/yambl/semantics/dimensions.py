@@ -21,6 +21,7 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     annotations,
     children,
     diagnostic,
+    field_mode,
     tokens,
 )
 
@@ -273,7 +274,7 @@ def check_dimensions(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
                     found = field_dimension(unit, field, call, diagnostics)
                     if found is None:
                         continue
-                    mode = str(tokens(children(field, "field_body")[0])[0])
+                    mode = field_mode(children(field, "field_body")[0])
                     if found.fallback is not None and mode != "snapshot":
                         diagnostics.append(
                             diagnostic(

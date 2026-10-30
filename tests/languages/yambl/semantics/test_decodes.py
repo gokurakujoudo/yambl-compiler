@@ -134,6 +134,49 @@ SYNTAX_ERRORS = [
 
 
 class DecodesTests(unittest.TestCase):
+    def test_abstract_inheritance_cycle_reports_error_without_subtypes(self):
+        analysis = analyze(
+            [document('abstract entity A inherits B {} abstract entity B inherits A {}')]
+        )
+        self.assertEqual(
+            [item.message for item in analysis.diagnostics],
+            ['inheritance cycle', 'inheritance cycle'],
+        )
+        self.assertEqual(analysis.units[0].world.subtypes[('', 'A::subtypes')], ())
+        self.assertEqual(analysis.units[0].world.subtypes[('', 'B::subtypes')], ())
+
+    def test_subtypes_promote_abstract_nodes_before_sorting_and_ranking(self):
+        analysis = analyze([document('''
+entity Root {}
+abstract entity Group inherits Root {}
+entity Zeta inherits Group {}
+@decodes_rank(3, 'First') entity Alpha inherits Group {}
+entity Middle inherits Root {}
+abstract entity Nested inherits Middle {}
+@decodes_rank(7, 'Leaf') entity Leaf inherits Nested {}
+''')])
+        self.assertEqual(list(analysis.diagnostics), [])
+        entries = analysis.units[0].world.subtypes[('', 'Root::subtypes')]
+        self.assertEqual(
+            [(e.code, e.decode, e.ordering) for e in entries],
+            [
+                ('Alpha', 'First', 3),
+                ('Middle', 'Middle', 200),
+                ('Leaf', 'Leaf', 207),
+                ('Zeta', 'Zeta', 400),
+            ],
+        )
+        entries = analysis.units[0].world.subtypes[('', 'Group::subtypes')]
+        self.assertEqual([(e.code, e.ordering) for e in entries], [('Alpha', 3), ('Zeta', 200)])
+        diagnostics = check(
+            [
+                document(
+                    "entity Root {} @decodes_rank(1, 'x') abstract entity Group inherits Root {}"
+                )
+            ]
+        )
+        self.assertIn('abstract entity cannot have decodes_rank', [d.message for d in diagnostics])
+
     def test_subtype_dictionaries_are_independent_and_ranked_depth_first(self):
         sources = [
             document('namespace core entity Security {}'),

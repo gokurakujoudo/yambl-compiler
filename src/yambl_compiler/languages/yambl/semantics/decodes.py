@@ -26,7 +26,7 @@ def is_flags(declaration: Tree[Token]) -> bool:
 
 
 def collect_subtypes(units: list[Unit], diagnostics: list[Diagnostic]) -> None:
-    """Derive independent depth-first dictionaries for every concrete entity.
+    """Derive independent depth-first dictionaries for every entity.
 
     :param units: Resolved source units sharing an inheritance index.
     :param diagnostics: Destination for duplicate codes and rank placement errors.
@@ -38,6 +38,9 @@ def collect_subtypes(units: list[Unit], diagnostics: list[Diagnostic]) -> None:
 
     world = units[0].world
     entities = {k: v for k, v in world.declarations.items() if v[1].data == 'entity'}
+    abstract = {
+        key for key, (_, node) in entities.items() if tokens(header(node))[0].type == 'ABSTRACT'
+    }
     children_by_parent: dict[EntityKey, list[EntityKey]] = {}
     ranks: dict[EntityKey, tuple[int, str]] = {}
     for key, (unit, node) in entities.items():
@@ -46,6 +49,10 @@ def collect_subtypes(units: list[Unit], diagnostics: list[Diagnostic]) -> None:
             children_by_parent.setdefault(ancestors[0], []).append(key)
         calls = annotations(node, 'decodes_rank')
         if calls:
+            if key in abstract:
+                diagnostics.append(
+                    diagnostic(unit.document, calls[0], 'abstract entity cannot have decodes_rank')
+                )
             if not children(header(node), 'inheritance'):
                 diagnostics.append(
                     diagnostic(unit.document, calls[0], 'decodes_rank requires an explicit parent')
@@ -62,8 +69,6 @@ def collect_subtypes(units: list[Unit], diagnostics: list[Diagnostic]) -> None:
                 and decode.exact is not None
             ):
                 ranks[key] = (int(k.exact), decode.exact)
-    for siblings in children_by_parent.values():
-        siblings.sort(key=lambda key: (key[1], key[0]))
     world.subtypes.clear()
     for owner in entities:
         entries: list[SubtypeEntry] = []
@@ -71,13 +76,30 @@ def collect_subtypes(units: list[Unit], diagnostics: list[Diagnostic]) -> None:
         codes: set[str] = set()
         orderings: dict[EntityKey, int] = {}
 
+        def promoted(parent: EntityKey, path: set[EntityKey]) -> list[EntityKey]:
+            """Promote abstract descendants into the effective sibling list.
+
+            :param parent: Actual parent to inspect.
+            :param path: Nodes already visited along this inheritance path.
+            :returns: Concrete children in effective sibling order.
+            """
+            result: list[EntityKey] = []
+            for key in children_by_parent.get(parent, []):
+                if key in path:
+                    continue
+                if key in abstract:
+                    result.extend(promoted(key, path | {key}))
+                else:
+                    result.append(key)
+            return sorted(result, key=lambda key: (key[1], key[0]))
+
         def visit(parent: EntityKey) -> None:
             """Visit direct descendants before moving to the next sibling.
 
             :param parent: Current dictionary member or owner.
             :returns: None; appends descendant entries.
             """
-            for key in children_by_parent.get(parent, []):
+            for key in promoted(parent, {parent}):
                 if key in seen:
                     continue
                 seen.add(key)

@@ -32,9 +32,9 @@ plan example {
             'FUND00000006', 'Benchmark fund 6', 'Fund 6'
         }
         replace core.Fund.holdings scope (portfolio_id='FUND00000001') columns (as_of_date, value) {
-            '2026-01-02', [1, 2]
+            '2026-01-02', ['FUND00000001_20260102_BOND00000001', 'FUND00000001_20260102_MISS00000001']
             '2026-01-03', []
-            '2026-01-06', [1, 3, 4, 5, 6]
+            '2026-01-06', ['FUND00000001_20260106_BOND00000001', 'FUND00000001_20260106_BOND00000002', 'FUND00000001_20260106_SECU00000003', 'FUND00000001_20260106_SECU00000004', 'FUND00000001_20260106_SECU00000005']
         }
         replace core.Fund.net_asset scope (portfolio_id='FUND00000001') columns (as_of_date, value) {
             '2026-01-02', 1234567890123.125
@@ -51,7 +51,7 @@ plan example {
         }
     }
     group core_Security {
-        insert core.Security (security_id, currency, price_fallback_days, issuer) {
+        insert core.Bond (security_id, currency, price_fallback_days, issuer) {
             'SECU00000001', 'USD', 5, NO_ENTRY
             'SECU00000003', 'CNY', 2, 'ISSR00000002'
             'SECU00000004', 'CNY', 0, NO_ENTRY
@@ -113,12 +113,13 @@ plan example {
     }
     group core_HoldingEntry {
         insert core.HoldingEntry (holdings_entry_id, quantity, security) {
-            1, 100.5, 'BOND00000001'
-            2, 1.0, 'MISS00000001'
-            3, 2.0, 'BOND00000002'
-            4, 3.0, 'SECU00000003'
-            5, 4.0, 'SECU00000004'
-            6, 1.25, 'SECU00000005'
+            'FUND00000001_20260102_BOND00000001', 100.5, 'BOND00000001'
+            'FUND00000001_20260102_MISS00000001', 1.0, 'MISS00000001'
+            'FUND00000001_20260106_BOND00000001', 100.5, 'BOND00000001'
+            'FUND00000001_20260106_BOND00000002', 2.0, 'BOND00000002'
+            'FUND00000001_20260106_SECU00000003', 3.0, 'SECU00000003'
+            'FUND00000001_20260106_SECU00000004', 4.0, 'SECU00000004'
+            'FUND00000001_20260106_SECU00000005', 1.25, 'SECU00000005'
         }
     }
     group core_Issuer {
@@ -154,7 +155,7 @@ plan example {
     }
     group builtins_ConfigGroup {
         insert builtins.ConfigGroup (config_group_id, target_entity_type, priority, then_set, when) {
-            'technology_price_window', core.Security, 1000000000000000000000000000000, { core.Security.price_fallback_days: 1 }, { core.Security.issuer: 'ISSR00000003', core.Security.entity_type: core.Security, core.Security.root_entity_type: core.Security }
+            'technology_price_window', core.Security, 1000000000000000000000000000000, { core.Security.price_fallback_days: 1 }, { core.Security.issuer: 'ISSR00000003', core.Security.entity_type: core.Bond, core.Security.root_entity_type: core.Security }
         }
     }
 }

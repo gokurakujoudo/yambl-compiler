@@ -108,6 +108,38 @@ class ExpressionTests(unittest.TestCase):
         self.assertEqual(resolved['aliases'].kind, 'collection')
         self.assertEqual(resolver.diagnostics, [])
 
+    def test_string_format_references_use_definition_scope(self):
+        sources = [
+            "namespace formats type id = string['A|B'] type nested = string[regex: '${id}X']",
+            "namespace business from formats import nested type id = string['wrong'] "
+            "type combined = string['${nested}_${later}'] type later = string['[0-9]{8}'] "
+            "entity Selection { attr result: combined attr escaped: string['\\${id}'] }",
+        ]
+        units = resolve_scopes([document(source, str(i)) for i, source in enumerate(sources)], [])
+        diagnostics = []
+        index = check_entities(units, diagnostics)
+        fields = index.field_types(units[1].scope['Selection'].key)
+        resolver = Resolver(units[1], diagnostics, fields)
+        self.assertEqual(
+            resolver.resolve(fields['result'][1]).params,
+            (('regex', '(?:(?:A|B)X)_(?:[0-9]{8})'),),
+        )
+        self.assertEqual(resolver.resolve(fields['escaped'][1]).params, (('regex', r'\${id}'),))
+        self.assertEqual(diagnostics, [])
+        self.assertEqual(check([document(source, str(i)) for i, source in enumerate(sources)]), [])
+
+    def test_string_format_reference_errors(self):
+        for source, expected in [
+            ("type bad = string['${missing}']", 'unknown string format type: missing'),
+            ("type id = integer type bad = string['${id}']", 'requires a constrained string'),
+            ("type id = string type bad = string['${id}']", 'requires a constrained string'),
+            ("type a = string['${b}'] type b = string['${a}']", 'type dependency cycle'),
+        ]:
+            with self.subTest(source=source):
+                diagnostics = check([document(source)])
+                self.assertTrue(any(expected in item.message for item in diagnostics), diagnostics)
+                self.assertTrue(all(item.line > 0 and item.column > 0 for item in diagnostics))
+
     def test_expression_errors_are_located(self):
         for source, expected in INVALID:
             with self.subTest(source=source):

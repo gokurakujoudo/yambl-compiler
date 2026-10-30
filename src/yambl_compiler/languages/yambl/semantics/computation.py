@@ -28,7 +28,13 @@ from yambl_compiler.languages.yambl.syntax.computation import (
 from yambl_compiler.languages.yambl.syntax.computation import (
     expression as calculation_expression,
 )
-from yambl_compiler.languages.yambl.syntax.parser import Diagnostic, annotations, children, tokens
+from yambl_compiler.languages.yambl.syntax.parser import (
+    Diagnostic,
+    annotations,
+    children,
+    field_mode,
+    tokens,
+)
 from yambl_compiler.storage.conversions import RETURNS, SIGNATURES
 
 NUMBERS = ("integer", "decimal", "float")
@@ -660,7 +666,7 @@ class Checker:
             operation = "value"
         site = value.site
         body = children(site.declaration, "field_body")[0]
-        mode = str(tokens(body)[0])
+        mode = field_mode(body)
         declared = field_owner(site.unit, children(body, "type_expr")[0])
         owner = declared.key if declared else value.owner
         self.accesses.append(Access(node.span, owner, value.name, operation))
@@ -668,8 +674,20 @@ class Checker:
             if operation != "value":
                 self.issue(node, "computed fields support ::value, not stored-field operations")
             self.dependencies.add((owner, value.name))
-            calculation = self.computations.analyze(owner, value.name, site)
-            return list(calculation.inputs) if calculation else []
+            if children(body, "computation"):
+                calculation = self.computations.analyze(owner, value.name, site)
+                return list(calculation.inputs) if calculation else []
+            logical = self.computations.entities.identities.get(
+                (owner, value.name), (owner, value.name)
+            )
+            implementations = [
+                self.computations.analyze(key, name, implementation)
+                for key, fields in self.computations.entities.fields.items()
+                for name, implementation in fields.items()
+                if self.computations.entities.identities.get((key, name), (key, name)) == logical
+                and children(children(implementation.declaration, "field_body")[0], "computation")
+            ]
+            return list(next((c.inputs for c in implementations if c is not None), ()))
         if operation not in ("value", "best_available"):
             self.issue(node, "stored fields support ::value or ::best_available")
         result: list[Input] = []
@@ -1467,17 +1485,21 @@ def check_computations(
         for name, site in fields.items():
             if children(children(site.declaration, "field_body")[0], "computation"):
                 analyzer.analyze(owner, name, site)
-    contracts: dict[tuple[EntityKey, str], tuple[object, ...]] = {}
+    contracts: dict[tuple[EntityKey, str], tuple[tuple[object, ...], FieldSite]] = {}
     for key, calculation in analyzer.calculations.items():
         logical = entities.identities.get(key, key)
         contract = tuple(
-            (p.name, p.type, p.required, structural(p.default)) for p in calculation.inputs
+            (p.name, p.type, p.required, structural(p.default), p.default_dimension)
+            for p in calculation.inputs
         )
-        if logical in contracts and contracts[logical] != contract:
-            site = entities.fields[key[0]][key[1]]
+        site = entities.fields[key[0]][key[1]]
+        if logical in contracts and contracts[logical][0] != contract:
+            previous = contracts[logical][1]
+            location = tokens(children(previous.declaration, 'field_body')[0])[0]
             Checker(analyzer, key[0], site.unit).issue(
                 calculation.body.result,
-                f"computed parameter signature mismatch: {key[1]}",
+                f"computed parameter signature mismatch: {key[1]}; "
+                f"conflicts with {previous.unit.document.path}:{location.line}:{location.column}",
             )
-        contracts[logical] = contract
+        contracts[logical] = (contract, site)
     return analyzer.calculations

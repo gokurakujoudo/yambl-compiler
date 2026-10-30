@@ -4,6 +4,7 @@ namespace core
 entity Bond inherits Security {
     static attr coupon: decimal
 
+    @override
     computed attr security_family: code<Security::subtypes> {
         return Security::subtypes.Bond
     }

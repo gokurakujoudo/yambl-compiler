@@ -14,7 +14,7 @@ from tests.languages.yambl.semantics.test_expressions import VALID as EXPRESSION
 from tests.support import FilesystemCase
 from yambl_compiler.application.cli import main, run_ir
 from yambl_compiler.ir.application import compile_repository, load_ir, write_ir
-from yambl_compiler.ir.codec import dumps, loads
+from yambl_compiler.ir.codec import dumps, loads, seal
 from yambl_compiler.ir.validation import validate_ir
 
 
@@ -39,6 +39,48 @@ class ArtifactTests(FilesystemCase):
         entity = next(item for item in restored.definitions if item.identity == 'E')
         self.assertEqual([rule.name for rule in entity.lookups], ['by_key'])
         self.assertEqual(entity.lookups[0].keys[0].steps[0].access.identity, 'E.key')
+
+    def test_string_format_references_round_trip(self):
+        root = self.repository(
+            [
+                "namespace formats type fragment = string['A|B'] type other = string['C']",
+                "namespace business from formats import fragment "
+                "type combined = string['${fragment}_X'] "
+                "type escaped = string['\\${fragment}'] entity E { id key: combined }",
+            ]
+        )
+        model = compile_repository(root)
+        restored = loads(dumps(model))
+        self.assertEqual(validate_ir(restored), ())
+        combined = next(item for item in restored.definitions if item.name == 'business.combined')
+        self.assertEqual(combined.expression.parameters[0].value, '${fragment}_X')
+        entity = next(item for item in restored.definitions if item.name == 'business.E')
+        key = next(field for field in entity.fields if field.name == 'key')
+        self.assertEqual(key.type.parameters[0].value, '(?:A|B)_X')
+        escaped = next(item for item in restored.definitions if item.name == 'business.escaped')
+        self.assertEqual(escaped.expression.references, ())
+        expression = combined.expression
+        for references, message in [
+            ((), 'invalid string format bindings'),
+            (
+                (replace(expression.references[0], value='formats.missing'),),
+                'missing string format',
+            ),
+            (
+                (replace(expression.references[0], value='formats.other'),),
+                'invalid format reference',
+            ),
+        ]:
+            changed = replace(combined, expression=replace(expression, references=references))
+            damaged = seal(
+                replace(
+                    restored,
+                    definitions=tuple(
+                        changed if d == combined else d for d in restored.definitions
+                    ),
+                )
+            )
+            self.assertIn(message, '\n'.join(validate_ir(damaged)))
 
     def test_lookup_multiple_dimensions_survive_annotation_reordering(self):
         source = '''entity E {

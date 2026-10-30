@@ -23,6 +23,7 @@ from yambl_compiler.languages.yambl.computation.records import (
     CalculationExpression,
     CalculationSpan,
 )
+from yambl_compiler.languages.yambl.semantics.expressions import REGEX_REFERENCE
 from yambl_compiler.languages.yambl.syntax.parser import Diagnostic
 
 REQUIRED = {
@@ -192,7 +193,13 @@ def structural(model: Model) -> list[str]:
             if item.fixed_kind == 'code' and not item.fixed_target:
                 issues.append(path + '.fixed_target: code requires a dictionary target')
         elif isinstance(item, Field):
-            if (item.category == "computed") != (item.calculation is not None):
+            if item.abstract and (item.category != 'computed' or item.calculation is not None):
+                issues.append(
+                    path + '.abstract: abstract fields require computed category and no body'
+                )
+            if not item.abstract and (item.category == "computed") != (
+                item.calculation is not None
+            ):
                 issues.append(
                     path + ".calculation: only computed fields require a calculation body"
                 )
@@ -218,6 +225,8 @@ def structural(model: Model) -> list[str]:
             if item.origin == 'builtin' and item.namespace != 'builtins':
                 issues.append(path + ': builtins require namespace builtins')
         elif isinstance(item, Definition):
+            if item.abstract and (item.kind != 'entity' or item.final):
+                issues.append(path + '.abstract: only non-final entities may be abstract')
             if item.derived and item.kind != 'decodes':
                 issues.append(path + '.derived: only Decodes may be derived')
             identity = (
@@ -245,6 +254,19 @@ def structural(model: Model) -> list[str]:
                 if not re.fullmatch(r'-?(?:0|[1-9][0-9]*)', entry.ordering):
                     issues.append(f"{path}.entries[{i}].ordering: invalid integer")
         elif isinstance(item, Expression):
+            names = {
+                match.group(2)
+                for parameter in item.parameters
+                if item.kind == 'primitive' and item.name == 'string' and parameter.name == 'regex'
+                for match in REGEX_REFERENCE.finditer(parameter.value)
+                if not len(match.group(1)) % 2
+            }
+            if names != {reference.name for reference in item.references} or len(names) != len(
+                item.references
+            ):
+                issues.append(path + '.references: invalid string format bindings')
+            if any(reference.value not in identifiers for reference in item.references):
+                issues.append(path + '.references: missing string format declaration')
             if (item.kind == 'literal') != (item.literal is not None):
                 issues.append(path + '.literal: invalid literal discriminator')
             if item.literal and item.literal.kind not in (
@@ -320,7 +342,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
     """
     try:
         decode(encode(model), Model)
-        if model.format_revision != 10:
+        if model.format_revision != 11:
             return ('$.format_revision: unsupported IR revision; recompile the model repository',)
         issues = structural(model)
         if issues:

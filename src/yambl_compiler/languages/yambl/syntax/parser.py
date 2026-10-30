@@ -101,6 +101,17 @@ def children(node: Tree[Token], rule: str) -> list[Tree[Token]]:
     return [child for child in node.children if isinstance(child, Tree) and child.data == rule]
 
 
+def field_mode(body: Tree[Token]) -> str:
+    """Read the normalized category of a field body.
+
+    :param body: Parsed field body, including its modifiers.
+    :returns: Category with the ordinary attr shorthand normalized to static.
+    """
+    modifiers = tokens(body)
+    first = str(modifiers[1] if modifiers[0].type == 'ABSTRACT' else modifiers[0])
+    return 'static' if first == 'attr' else first
+
+
 def annotations(node: Tree[Token], *names: str) -> list[Tree[Token]]:
     """Select decorator calls, optionally filtered by name.
 

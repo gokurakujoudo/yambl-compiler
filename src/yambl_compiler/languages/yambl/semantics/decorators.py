@@ -20,6 +20,7 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     annotations,
     children,
     diagnostic,
+    field_mode,
     tokens,
 )
 
@@ -451,7 +452,7 @@ def check_target(
     if errors:
         return
     body = children(node, 'field_body')
-    mode = str(tokens(body[0])[0]).replace('attr', 'static') if body else ''
+    mode = field_mode(body[0]) if body else ''
     kind = {
         'entity': 'Entity',
         'value': 'Value',

@@ -93,13 +93,22 @@ def python_package(layout: Layout, package: str) -> str:
             python_type(dim.type)
     computed: dict[str, Field] = {}
     roots: dict[str, str] = {}
+    abstract_owners: dict[str, str] = {}
+    contracts = {field.identity: field.inputs for field in layout.model.fields}
     for entity in layout.entities.values():
         for field in entity.fields:
+            if field.abstract:
+                owner = field.implementation.rsplit('.', 1)[0]
+                current = abstract_owners.get(field.identity)
+                if current is None or len(_ancestors(layout, owner)) < len(
+                    _ancestors(layout, current)
+                ):
+                    abstract_owners[field.identity] = owner
             if field.calculation is not None:
                 computed.setdefault(field.identity, field)
                 roots[field.identity] = layout.roots[entity.identity]
                 python_type(field.type)
-                for parameter in field.calculation.inputs:
+                for parameter in contracts[field.identity]:
                     python_type(parameter.type)
     lookups = {
         (key, rule.name): rule for key, entity in layout.entities.items() for rule in entity.lookups
@@ -128,7 +137,7 @@ def python_package(layout: Layout, package: str) -> str:
                     f'{rule.source.path}:{rule.source.line}:{rule.source.column}: invalid Python lookup parameter name: {input_item.name}'
                 )
     requests = {
-        key: names[f.implementation.rsplit(".", 1)[0]]
+        key: names[abstract_owners.get(key, f.implementation.rsplit(".", 1)[0])]
         + "".join(p.capitalize() for p in f.name.split("_"))
         + "Request"
         for key, f in computed.items()
@@ -153,13 +162,12 @@ def python_package(layout: Layout, package: str) -> str:
         :param field: Checked computed declaration.
         :returns: Annotated arguments with omission defaults.
         """
-        assert field.calculation is not None
         return [
             p.name
             + ": "
             + parameter_type(p)
             + (" = UNSET" if not p.required or p.default is not None else "")
-            for p in field.calculation.inputs
+            for p in contracts[field.identity]
         ]
 
     def input_descriptions(calls: tuple[Call, ...], name: str) -> list[str]:
@@ -185,7 +193,6 @@ def python_package(layout: Layout, package: str) -> str:
         :param field: Checked computed declaration.
         :returns: Method documentation prose.
         """
-        assert field.calculation is not None
         owners = sorted(
             {
                 f.implementation.rsplit(".", 1)[0]
@@ -203,7 +210,7 @@ def python_package(layout: Layout, package: str) -> str:
             "",
             ":param best_effort: Keep successful contributions with PARTIAL when non-error rows fail; defaults to false.",
         ]
-        for p in field.calculation.inputs:
+        for p in contracts[field.identity]:
             descriptions = input_descriptions(field.decorators, p.name)
             if descriptions:
                 text.append('')
@@ -450,8 +457,7 @@ def python_package(layout: Layout, package: str) -> str:
         assert field.calculation is not None
         reserved_parameters = {"self", "id_value", "best_effort"}
         if any(
-            keyword.iskeyword(p.name) or p.name in reserved_parameters
-            for p in field.calculation.inputs
+            keyword.iskeyword(p.name) or p.name in reserved_parameters for p in contracts[identity]
         ):
             raise ValueError(f"{identity}: generated calculation parameter collision")
         lines.extend(
@@ -522,9 +528,7 @@ def python_package(layout: Layout, package: str) -> str:
                 raise ValueError(f"{identity}: generated calculation method collision")
             methods.add(method)
             args = ", ".join([*parameters(field), "best_effort: bool = False"])
-            values = (
-                "{" + ", ".join(f"{p.name!r}: {p.name}" for p in field.calculation.inputs) + "}"
-            )
+            values = "{" + ", ".join(f"{p.name!r}: {p.name}" for p in contracts[identity]) + "}"
             output = python_type(field.type)
             lines.extend(
                 [
@@ -661,12 +665,10 @@ def python_package(layout: Layout, package: str) -> str:
     for identity, name in requests.items():
         field = computed[identity]
         assert field.calculation is not None
-        owner = field.implementation.rsplit(".", 1)[0]
+        owner = abstract_owners.get(identity, field.implementation.rsplit(".", 1)[0])
         method = "read_" + snake(names[owner]) + "_" + field.name + "_many"
         result = f"ReadResult[tuple[ReadResult[{python_type(field.type)}], ...]]"
-        values = (
-            "{" + ", ".join(f"{p.name!r}: request.{p.name}" for p in field.calculation.inputs) + "}"
-        )
+        values = "{" + ", ".join(f"{p.name!r}: request.{p.name}" for p in contracts[identity]) + "}"
         lines.extend(
             [
                 "",

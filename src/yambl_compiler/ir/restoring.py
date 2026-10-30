@@ -92,6 +92,10 @@ class Restoring:
         :returns: Checker expression with resolved lexical bindings.
         """
         source = expression.source
+        for reference in expression.references:
+            if reference.name != reference.value.removeprefix('model::').rpartition('.')[2]:
+                raise ValueError(f"{source.path}:{source.line}: invalid format reference")
+            self.reference(reference.value, source)
         if expression.kind == 'reference':
             first = self.reference(expression.target, source)
         elif expression.kind == 'external':
@@ -206,9 +210,10 @@ class Restoring:
         :param field: Field record.
         :returns: Checker field declaration.
         """
-        parts: list[Token | Tree[Token]] = [
-            token(field.category, field.category.upper(), field.source)
-        ]
+        parts: list[Token | Tree[Token]] = []
+        if field.abstract:
+            parts.append(token('abstract', 'ABSTRACT', field.source))
+        parts.append(token(field.category, field.category.upper(), field.source))
         if field.category not in ('id', 'attr'):
             parts.append(token('attr', 'ATTR', field.source))
         parts.extend(
@@ -261,6 +266,8 @@ class Restoring:
         header_parts: list[Token | Tree[Token]] = []
         if definition.final and kind == 'entity':
             header_parts.append(token('final', 'FINAL', source))
+        if definition.abstract and kind == 'entity':
+            header_parts.append(token('abstract', 'ABSTRACT', source))
         header_parts.extend(
             [
                 token(keyword, keyword.upper(), source),

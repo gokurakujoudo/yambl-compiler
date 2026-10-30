@@ -1,6 +1,10 @@
 namespace core
 
 entity Index inherits Security {
+    @override
+    computed attr security_family: code<Security::subtypes> {
+        return Security::subtypes.Index
+    }
 
     @temporal(as_of_date: date)
     snapshot attr index_level: decimal

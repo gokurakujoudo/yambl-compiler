@@ -7,6 +7,12 @@ from yambl_compiler.languages.yambl.formatting.formatter import format_document
 
 
 class FormattingTests(unittest.TestCase):
+    def test_abstract_formatting_is_idempotent(self):
+        source = 'abstract entity A{abstract computed attr label:string}'
+        expected = 'abstract entity A {\n    abstract computed attr label: string\n}\n'
+        self.assertEqual(format_document(document(source)), expected)
+        self.assertEqual(format_document(document(expected)), expected)
+
     def test_lookup_decorator_formatting_is_idempotent(self):
         source = "entity E { @extra_input_param(day:date='2026-01-01') lookup by_name { name=self.name::value() } attr name:string }"
         expected = """entity E {

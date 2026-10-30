@@ -15,6 +15,7 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     annotations,
     children,
     diagnostic,
+    field_mode,
     tokens,
 )
 
@@ -86,7 +87,7 @@ def check_relationships(
                 if not forward and not reverse:
                     continue
                 body = children(field, 'field_body')[0]
-                mode = str(tokens(body)[0]).replace('attr', 'static')
+                mode = field_mode(body)
 
                 def issue(node: Tree[Token], message: str) -> None:
                     """Report a relationship error at its source.
@@ -185,7 +186,7 @@ def check_relationships(
                 ):
                     issue(reverse[0], 'reverse relationship type does not match source cardinality')
                 source_body = children(forward_site.declaration, 'field_body')[0]
-                source_mode = str(tokens(source_body)[0]).replace('attr', 'static')
+                source_mode = field_mode(source_body)
                 if mode != source_mode or temporal(site) != temporal(forward_site):
                     issue(reverse[0], 'relationship categories and temporal parameters must match')
                 if dimensions(site) != dimensions(forward_site):

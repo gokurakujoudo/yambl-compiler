@@ -5,7 +5,7 @@ from dataclasses import replace
 
 from tests.support import FilesystemCase
 from yambl_compiler.ir import compile_repository, validate_ir
-from yambl_compiler.ir.codec import dumps, loads
+from yambl_compiler.ir.codec import dumps, loads, seal
 from yambl_compiler.ir.restoring import restore
 from yambl_compiler.ir.validation import structural
 from yambl_compiler.languages.yambl.computation.records import Argument, Case
@@ -76,6 +76,90 @@ class ComputationIRTests(FilesystemCase):
         )
         self.assertEqual([p.name for p in field.calculation.inputs], ['day'])
         self.assertEqual(field.decorators[0].arguments[0].default.literal.text, '2026-01-01')
+
+    def test_abstract_contract_round_trip_and_tampering(self):
+        self.write(
+            'a.yambl',
+            '''abstract entity Root {
+                id key: string
+                @temporal(day: date) snapshot attr amount: integer
+                abstract computed attr value: integer
+                computed attr total: integer { return self.value::value() }
+            }
+            entity First inherits Root {
+                @override computed attr value: integer { return self.amount::value(day=input.day) }
+            }
+            entity Second inherits Root {
+                @override computed attr value: integer { return self.amount::value(day=input.day) }
+            }''',
+        )
+        model = compile_repository(self.root)
+        self.write('a.yambl', 'source unavailable')
+        restored = loads(dumps(model))
+        self.assertEqual(validate_ir(restored), ())
+        root = next(d for d in restored.definitions if d.identity == 'Root')
+        value = next(f for f in root.fields if f.name == 'value')
+        logical = next(f for f in restored.fields if f.identity == value.identity)
+        self.assertTrue(root.abstract)
+        self.assertTrue(value.abstract)
+        self.assertIsNone(value.calculation)
+        self.assertEqual(
+            [(p.name, p.type.name, p.required) for p in logical.inputs], [('day', 'date', True)]
+        )
+        corrupted = replace(logical, inputs=())
+        damaged = seal(
+            replace(
+                restored, fields=tuple(corrupted if f == logical else f for f in restored.fields)
+            )
+        )
+        self.assertIn('inconsistent semantic value', '\n'.join(validate_ir(damaged)))
+        concrete_root = replace(root, abstract=False)
+        damaged = seal(
+            replace(
+                restored,
+                definitions=tuple(concrete_root if d == root else d for d in restored.definitions),
+            )
+        )
+        self.assertTrue(validate_ir(damaged))
+        without_abstract = replace(value, abstract=False)
+        invalid_root = replace(
+            root, fields=tuple(without_abstract if f == value else f for f in root.fields)
+        )
+        damaged = seal(
+            replace(
+                restored,
+                definitions=tuple(invalid_root if d == root else d for d in restored.definitions),
+            )
+        )
+        self.assertIn(
+            'only computed fields require a calculation body', '\n'.join(validate_ir(damaged))
+        )
+        static_abstract = replace(value, category='static')
+        invalid_root = replace(
+            root, fields=tuple(static_abstract if f == value else f for f in root.fields)
+        )
+        damaged = seal(
+            replace(
+                restored,
+                definitions=tuple(invalid_root if d == root else d for d in restored.definitions),
+            )
+        )
+        self.assertIn('abstract fields require computed category', '\n'.join(validate_ir(damaged)))
+        final_root = replace(root, final=True)
+        damaged = seal(
+            replace(
+                restored,
+                definitions=tuple(final_root if d == root else d for d in restored.definitions),
+            )
+        )
+        self.assertIn('only non-final entities may be abstract', '\n'.join(validate_ir(damaged)))
+        wire = json.loads(dumps(restored))
+        wire['format_revision'] = 10
+        with self.assertRaisesRegex(ValueError, 'unsupported IR revision'):
+            loads(json.dumps(wire))
+        self.assertIn(
+            'unsupported IR revision', '\n'.join(validate_ir(replace(restored, format_revision=10)))
+        )
 
     def test_dimension_extension_preserves_lexical_scope_and_source(self):
         self.write(

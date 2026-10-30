@@ -10,6 +10,77 @@ from yambl_compiler.ir import compile_repository
 from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import Status, Success
+from yambl_compiler.transactions.validation import PlanValidator
+
+
+class AbstractEntityTests(FilesystemCase):
+    def test_abstract_contract_and_creation_boundary(self):
+        self.write('yambl-root.lclcfg', "prefix: ''\n")
+        self.write(
+            'model.yambl',
+            '''abstract entity Root {
+    id id: string
+    abstract computed attr number: integer
+    computed attr doubled: integer { return self.number::value() * 2 }
+}
+entity One inherits Root {
+    @override computed attr number: integer { return 1 }
+}
+entity Two inherits Root {
+    @override computed attr number: integer { return 2 }
+}
+''',
+        )
+        output = self.root / 'generated'
+        layout = generate(compile_repository(self.root), output, 'abstract_model')
+        model = load_generated(output / 'abstract_model', 'abstract_model')
+        invalid = Plan(
+            'invalid', None, (Group('g', (Operation('insert', 'Root', ('id',), (('r',),)),)),)
+        )
+        with self.assertRaisesRegex(ValueError, 'abstract entity'):
+            PlanValidator(layout).validate(invalid)
+        valid = Plan(
+            'valid',
+            None,
+            (
+                Group(
+                    'g',
+                    (
+                        Operation('insert', 'One', ('id',), (('one',),)),
+                        Operation('insert', 'Two', ('id',), (('two',),)),
+                    ),
+                ),
+            ),
+        )
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                config = self.write(
+                    backend + '.lclcfg', f"backend: '{backend}'\npath: '{backend}.data'\n"
+                )
+                with asyncio.run(model.AbstractData.create(config)) as data:
+                    with self.assertRaisesRegex(ValueError, 'abstract entity'):
+                        data.apply(invalid)
+                    with data.read() as reader:
+                        self.assertEqual(reader.get_root('r').status, Status.NO_ENTRY)
+                    self.assertEqual(data.apply(valid).status, 'committed')
+                    with data.read() as reader:
+                        self.assertEqual(
+                            reader.get_root('one').value.read_doubled(), Success(2, 'computation')
+                        )
+                        self.assertEqual(
+                            reader.get_root('two').value.read_doubled(), Success(4, 'computation')
+                        )
+                        self.assertTrue(reader.validate().value.valid)
+                if backend == 'sqlite':
+                    with closing(sqlite3.connect(self.root / 'sqlite.data')) as db, db:
+                        db.execute("UPDATE tb_root SET entity_type = 'Root' WHERE id = 'one'")
+                    reader = model.AbstractReader.open_sqlite(self.root / 'sqlite.data').value
+                    try:
+                        self.assertIn(
+                            'abstract entity instance: Root', str(reader.validate().value.issues)
+                        )
+                    finally:
+                        reader.close()
 
 
 class DiscriminatorTests(FilesystemCase):

@@ -52,7 +52,12 @@ from yambl_compiler.languages.yambl.semantics.dimensions import (
     field_dimension,
     resolve_dimension,
 )
-from yambl_compiler.languages.yambl.semantics.expressions import Resolver, Term, integer_text
+from yambl_compiler.languages.yambl.semantics.expressions import (
+    REGEX_REFERENCE,
+    Resolver,
+    Term,
+    integer_text,
+)
 from yambl_compiler.languages.yambl.semantics.fields import field_name
 from yambl_compiler.languages.yambl.semantics.hierarchies import hierarchy_entries
 from yambl_compiler.languages.yambl.semantics.symbols import (
@@ -65,7 +70,13 @@ from yambl_compiler.languages.yambl.semantics.symbols import (
 )
 from yambl_compiler.languages.yambl.semantics.types import Resolved, common_type
 from yambl_compiler.languages.yambl.semantics.validation import Analysis
-from yambl_compiler.languages.yambl.syntax.parser import annotations, children, string_value, tokens
+from yambl_compiler.languages.yambl.syntax.parser import (
+    annotations,
+    children,
+    field_mode,
+    string_value,
+    tokens,
+)
 
 
 def qualified(key: EntityKey) -> str:
@@ -340,7 +351,14 @@ class Lowering:
                 )
             prefix.append(child)
         params = children(node, 'parameters')
-        normalized = resolver.parameters(node, name) if params else ()
+        normalized = resolver.parameters(node, name, expand_regex=False) if params else ()
+        references: dict[str, str] = {}
+        if name == 'string':
+            for _, pattern in normalized:
+                for match in REGEX_REFERENCE.finditer(pattern):
+                    slashes, local = match.groups()
+                    if not len(slashes) % 2:
+                        references[local] = qualified(unit.scope[local].key)
         bind = children(node, 'binding')
         result = Expression(
             kind,
@@ -359,6 +377,7 @@ class Lowering:
             ),
             str(tokens(bind[0])[-1]) if bind else '',
             self.source(unit, node),
+            tuple(Text(local, target) for local, target in sorted(references.items())),
         )
         if (
             symbol
@@ -750,7 +769,7 @@ class Lowering:
             resolved = field_resolver.resolve(syntax)
             self.resolved_fields[qualified(key) + '.' + name] = resolved
             defaults = children(body, 'default_value')
-            mode = str(tokens(body)[0]).replace('attr', 'static')
+            mode = field_mode(body)
             if node.data == 'value':
                 mode = 'static'
             fields.append(
@@ -768,6 +787,7 @@ class Lowering:
                     self.source(scope, body),
                     self.calculation(key, name, scope),
                     builtin,
+                    tokens(body)[0].type == 'ABSTRACT',
                 )
             )
         effective: list[Effective] = []
@@ -863,6 +883,7 @@ class Lowering:
                 if node.data == 'hierarchy'
                 else ()
             ),
+            abstract=node.data == 'entity' and tokens(header(node))[0].type == 'ABSTRACT',
         )
 
     def model(self) -> Model:
@@ -944,6 +965,7 @@ class Lowering:
                 ),
                 tuple(sorted(f.implementation for f in group)),
                 tuple(sorted(applicable[identity])),
+                next((f.calculation.inputs for f in group if f.calculation is not None), ()),
             )
             for identity, group in sorted(groups.items())
         )
@@ -960,7 +982,7 @@ class Lowering:
         )
         return seal(
             Model(
-                10,
+                11,
                 self.version,
                 self.prefix,
                 primitives,

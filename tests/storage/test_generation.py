@@ -1,6 +1,7 @@
 """Verify generated schema, documentation, imports and publication failures."""
 
 import ast
+import inspect
 import json
 import sqlite3
 from contextlib import closing
@@ -27,6 +28,47 @@ class GenerationTests(FilesystemCase):
         self.write("yambl-root.lclcfg", "prefix: ''\n")
         self.write("main.yambl", SOURCE)
         self.model = compile_repository(self.root)
+
+    def test_abstract_computation_public_contract_is_stable(self):
+        source = '''abstract entity Root {
+            id key: string
+            @temporal(day: date) snapshot attr amount: integer
+            abstract computed attr value: integer
+            computed attr ordinary: integer { return 1 }
+        }
+        entity First inherits Root {
+            @override computed attr value: integer { return self.amount::value(day=input.day) }
+        }'''
+        extra = '''entity Alpha inherits Root {
+            @override computed attr value: integer { return self.amount::value(day=input.day) }
+        }'''
+        intermediate = '''abstract entity Middle inherits Root {
+            @override abstract computed attr value: integer
+        }'''
+        nested = source.replace('First inherits Root', 'First inherits Middle') + intermediate
+        later_intermediate = intermediate.replace('Middle', 'ZMiddle')
+        later_nested = (
+            source.replace('First inherits Root', 'First inherits ZMiddle') + later_intermediate
+        )
+        for suffix, text in [
+            ('before', source),
+            ('after', source + extra),
+            ('nested', nested),
+            ('later_nested', later_nested),
+        ]:
+            with self.subTest(suffix=suffix):
+                model = self.compile(text)
+                output = self.root / suffix
+                generate(model, output, 'sample_model')
+                package = load_generated(output / 'sample_model', 'sample_model')
+                request = package.RootValueRequest
+                self.assertEqual(
+                    list(inspect.signature(request).parameters), ['id_value', 'day', 'best_effort']
+                )
+                self.assertTrue(hasattr(package.SampleReader, 'read_root_value_many'))
+                self.assertFalse(hasattr(package, 'FirstValueRequest'))
+                self.assertFalse(hasattr(package, 'AlphaValueRequest'))
+                self.assertTrue(hasattr(package, 'RootOrdinaryRequest'))
 
     def test_subtype_dictionary_python_names_and_empty_enum(self):
         model = self.compile(
@@ -583,7 +625,7 @@ class GenerationTests(FilesystemCase):
             json.loads(schema_path.read_text(encoding="utf-8"))["$defs"]["Model"]["properties"][
                 "format_revision"
             ]["const"],
-            10,
+            11,
         )
         self.assertFalse(run_generation(replace(schema_args, output=""), False).ok)
         self.assertFalse(run_generation(replace(schema_args, output="schema.txt"), False).ok)

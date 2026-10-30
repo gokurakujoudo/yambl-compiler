@@ -24,6 +24,7 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     annotations,
     children,
     diagnostic,
+    field_mode,
     tokens,
 )
 from yambl_compiler.storage.conversions import SIGNATURES
@@ -197,7 +198,7 @@ class LookupChecker(Checker):
         """
         assert value.site is not None
         body = children(value.site.declaration, 'field_body')[0]
-        mode = str(tokens(body)[0])
+        mode = field_mode(body)
         if mode not in ('id', 'attr', 'static', 'scd'):
             self.issue(node, f'lookup does not support {mode} fields')
         parameters = super().field_parameters(value, operation, node)

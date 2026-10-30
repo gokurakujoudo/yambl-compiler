@@ -119,6 +119,7 @@ class Expression(Record):
     :param operations: Symbolic flags operations in evaluation order.
     :param binding: Locally introduced mapping binding.
     :param source: Original expression location.
+    :param references: Lexical bindings used by string format references.
     """
 
     kind: Literal['primitive', 'generic', 'reference', 'parameter', 'self', 'literal', 'external']
@@ -131,6 +132,7 @@ class Expression(Record):
     operations: tuple[Operation, ...]
     binding: str
     source: Source
+    references: tuple[Text, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -262,6 +264,7 @@ class Field(Record):
     :param source: Original declaration location.
     :param calculation: Checked computation, absent for stored fields.
     :param builtin: Whether the field is derived from the language definition.
+    :param abstract: Whether this computed field declares a contract without a body.
     """
 
     name: str
@@ -277,6 +280,7 @@ class Field(Record):
     source: Source
     calculation: Calculation | None = None
     builtin: bool = False
+    abstract: bool = False
 
 
 @dataclass(frozen=True)
@@ -488,6 +492,7 @@ class Definition(Record):
     :param lookups: Rules declared directly on this entity, including extensions.
     :param effective_lookups: Visible rule names and declaring entity identities.
     :param hierarchy_entries: Named Hierarchy's declared ordering and values.
+    :param abstract: Whether the entity cannot be instantiated directly.
     """
 
     kind: Literal[
@@ -518,6 +523,7 @@ class Definition(Record):
     lookups: tuple[Lookup, ...] = ()
     effective_lookups: tuple[Text, ...] = ()
     hierarchy_entries: tuple[HierarchyEntry, ...] = ()
+    abstract: bool = False
 
 
 @dataclass(frozen=True)
@@ -528,12 +534,14 @@ class LogicalField(Record):
     :param type: Common checked contract, including overload reconciliation.
     :param implementations: Every declaring implementation identity.
     :param applicable: Entity or value identities where the field is defined.
+    :param inputs: Unified inputs for a computed field.
     """
 
     identity: str
     type: Type
     implementations: tuple[str, ...]
     applicable: tuple[str, ...]
+    inputs: tuple[CalculationInput, ...] = ()
 
 
 @dataclass(frozen=True)

@@ -11,6 +11,64 @@ from yambl_compiler.languages.yambl.syntax.parser import children, tokens
 
 
 class EntityTests(unittest.TestCase):
+    def test_abstract_override_inputs_are_compared_by_calculation_contract(self):
+        source = document('''
+abstract entity Root { abstract computed attr label: string }
+entity Child inherits Root {
+    @override @extra_input_param(day: date = '2026-01-01')
+    computed attr label: string { return 'ok' }
+}
+''')
+        diagnostics = []
+        check_entities(resolve_scopes([source], diagnostics), diagnostics)
+        self.assertEqual(diagnostics, [])
+        mismatched = document('''
+abstract entity Root { @title('Root') abstract computed attr label: string }
+entity Child inherits Root {
+    @override @title('Different') @extra_input_param(day: date)
+    computed attr label: string { return 'ok' }
+}
+''')
+        diagnostics = []
+        check_entities(resolve_scopes([mismatched], diagnostics), diagnostics)
+        self.assertIn('override signature mismatch: label', [d.message for d in diagnostics])
+
+    def test_abstract_implementation_completeness(self):
+        source = document('''
+abstract entity Root { abstract computed attr label: string }
+abstract entity Intermediate inherits Root {}
+entity Child inherits Intermediate { @override computed attr label: string { return 'ok' } }
+entity Grandchild inherits Child {}
+''')
+        diagnostics = []
+        check_entities(resolve_scopes([source], diagnostics), diagnostics)
+        self.assertEqual(diagnostics, [])
+        for text, expected in (
+            (
+                'abstract entity Root { abstract computed attr label: string }',
+                'has no implementation',
+            ),
+            ('entity Root { abstract computed attr label: string }', 'requires an abstract entity'),
+            (
+                '''abstract entity Root { abstract computed attr label: string }
+entity Good inherits Root { @override computed attr label: string { return 'ok' } }
+entity Missing inherits Root {}''',
+                'concrete entity lacks implementation',
+            ),
+            (
+                '''abstract entity Root {} extend Root { abstract computed attr label: string }
+entity Child inherits Root { @override computed attr label: string { return 'ok' } }''',
+                '',
+            ),
+        ):
+            with self.subTest(source=text):
+                diagnostics = []
+                check_entities(resolve_scopes([document(text)], diagnostics), diagnostics)
+                if expected:
+                    self.assertTrue(any(expected in d.message for d in diagnostics), diagnostics)
+                else:
+                    self.assertEqual(diagnostics, [])
+
     def test_final_and_marker_errors(self):
         cases = [
             (

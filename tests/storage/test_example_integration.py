@@ -161,6 +161,10 @@ print('independent example reads and validation passed')
             )
             self.assertEqual(
                 reader.get_security("SECU00000001").value.read_coupon().status,
+                Status.NO_ENTRY,
+            )
+            self.assertEqual(
+                reader.get_security("INDX00000001").value.read_coupon().status,
                 Status.NOT_DEFINED,
             )
             fund = reader.get_fund("FUND00000001").value
@@ -170,7 +174,11 @@ print('independent example reads and validation passed')
             )
             self.assertEqual(fund.read_holdings(date(2026, 1, 3)), Success(frozenset()))
             self.assertEqual(fund.read_full_name().status, Status.EMPTY)
-            ref = reader.get_holding_entry(2).value.read_security().value
+            ref = (
+                reader.get_holding_entry('FUND00000001_20260102_MISS00000001')
+                .value.read_security()
+                .value
+            )
             self.assertEqual(reader.resolve(ref).status, Status.ENTITY_NOT_FOUND)
             events = bond.read_notional_value_range(date(2026, 1, 1), date(2026, 1, 8)).value
             self.assertEqual([day.day for day, _ in events], [1, 3, 5, 7])

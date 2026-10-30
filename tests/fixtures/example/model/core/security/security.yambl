@@ -4,8 +4,10 @@ from decodes import Currencies
 
 type security_id = string['[a-zA-Z0-9]{12}']
 
-entity Security {
+abstract entity Security {
     id security_id: security_id
+
+    abstract computed attr security_family: code<Security::subtypes>
 
     static attr security_name: string
     static attr security_full_name: string

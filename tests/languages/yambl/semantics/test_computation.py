@@ -10,6 +10,83 @@ from yambl_compiler.languages.yambl.semantics.validation import analyze
 
 
 class ComputationTests(unittest.TestCase):
+    def test_abstract_computed_contract_is_inferred_from_implementations(self):
+        source = """
+        abstract entity Root {
+            snapshot attr amount: integer
+            abstract computed attr value: integer
+            computed attr total: integer { return self.value::value() }
+        }
+        entity First inherits Root {
+            @override computed attr value: integer { return self.amount::value() }
+        }
+        entity Second inherits Root {
+            @override computed attr value: integer { return self.amount::value() }
+        }
+        """
+        result = self.analyze(source)
+        self.assertEqual([d for d in result.diagnostics if d.severity == 'error'], [])
+        self.assertEqual(
+            [p.name for p in result.calculations[(("", "Root"), "total")].inputs],
+            ['as_of_date'],
+        )
+        mismatch = source.replace(
+            'return self.amount::value() }\n        }\n        entity Second',
+            'return 1 }\n        }\n        entity Second',
+        )
+        self.assertTrue(any('signature mismatch' in message for message in self.errors(mismatch)))
+
+    def test_abstract_contract_order_defaults_and_cycles(self):
+        root = '''abstract entity Root {
+            @temporal(day: date) snapshot attr amount: integer
+            abstract computed attr value: integer
+            computed attr total: integer { return self.value::value() }
+        }'''
+        first = '''entity First inherits Root {
+            @override computed attr value: integer { return self.amount::value(day=input.day) }
+        }'''
+        second = first.replace('First', 'Second')
+        for source in (root + first + second, root + second + first, first + second + root):
+            with self.subTest(source=source):
+                result = self.analyze(source)
+                self.assertEqual(
+                    [d.message for d in result.diagnostics if d.severity == 'error'], []
+                )
+                self.assertEqual(
+                    [p.name for p in result.calculations[(('', 'Root'), 'total')].inputs], ['day']
+                )
+        default_first = first.replace('day=input.day', 'day=input.day ?? input.fallback')
+        default_second = second.replace('day=input.day', 'day=input.day ?? input.other')
+        for source in (
+            root + default_first + default_second,
+            root + default_second + default_first,
+        ):
+            with self.subTest(source=source):
+                result = self.analyze(source)
+                conflicts = [
+                    d for d in result.diagnostics if 'parameter signature mismatch' in d.message
+                ]
+                self.assertTrue(conflicts)
+                self.assertTrue(
+                    all('conflicts with' in d.message and d.line > 0 for d in conflicts)
+                )
+        cyclic = first.replace('self.amount::value(day=input.day)', 'self.total::value()')
+        self.assertTrue(any('dependency cycle' in e for e in self.errors(root + cyclic + second)))
+
+    def test_abstract_contract_accepts_extra_input_from_implementations(self):
+        source = '''abstract entity Root { abstract computed attr value: integer }
+        entity First inherits Root {
+            @override @extra_input_param(n: integer = 2)
+            computed attr value: integer { return input.n }
+        }
+        entity Second inherits Root {
+            @override @extra_input_param(n: integer = 2)
+            computed attr value: integer { return input.n }
+        }'''
+        self.assertEqual(self.errors(source), [])
+        changed = source.replace('n: integer = 2', 'n: integer = 3', 1)
+        self.assertTrue(any('parameter signature mismatch' in e for e in self.errors(changed)))
+
     def test_explicit_retrieval_and_removed_at(self):
         prefix = "entity E { id key: string static attr n: integer static attr child: E static attr items: collection<E> "
         for body in (

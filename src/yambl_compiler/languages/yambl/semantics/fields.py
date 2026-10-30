@@ -12,6 +12,7 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     annotations,
     children,
     diagnostic,
+    field_mode,
     string_value,
     tokens,
 )
@@ -43,7 +44,7 @@ def check_field(
     :returns: None; appends errors and unresolved Decodes warnings.
     """
     body = children(field, 'field_body')[0]
-    mode = str(tokens(body)[0])
+    mode = field_mode(body)
     name = field_name(body)
     if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', name):
         diagnostics.append(diagnostic(unit.document, body, 'field names must use snake_case'))

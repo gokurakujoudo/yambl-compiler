@@ -27,9 +27,12 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     Diagnostic,
     children,
     diagnostic,
+    field_mode,
     string_value,
     tokens,
 )
+
+REGEX_REFERENCE = re.compile(r'(\\*)\$\{([a-zA-Z_][a-zA-Z_0-9]*)\}')
 
 
 @dataclass(frozen=True)
@@ -258,11 +261,14 @@ class Resolver:
             exact = '+'.join(sorted(first | second if operator == '+' else first - second))
         return Term(replace(left.type, exact=exact), 'value', left.path + operator + right.path)
 
-    def parameters(self, node: Tree[Token], name: str) -> tuple[tuple[str, str], ...]:
+    def parameters(
+        self, node: Tree[Token], name: str, expand_regex: bool = True
+    ) -> tuple[tuple[str, str], ...]:
         """Validate string and decimal descriptor parameters.
 
         :param node: Type expression.
         :param name: Primitive name.
+        :param expand_regex: Whether to resolve embedded string format references.
         :returns: Canonical parameter pairs.
         """
         groups = children(node, 'parameters')
@@ -295,12 +301,46 @@ class Resolver:
             self.issue(
                 node, f'invalid parameters for {name}; do not mix positional and named parameters'
             )
-        return tuple(
-            sorted(
-                (key, string_value(value) if value.type == 'STRING' else integer_text(str(value)))
-                for key, value in pairs
-            )
-        )
+        result: list[tuple[str, str]] = []
+        for key, value in pairs:
+            text = string_value(value) if value.type == 'STRING' else integer_text(str(value))
+            if valid and name == 'string' and expand_regex:
+                text = self.regex_references(node, text)
+            result.append((key, text))
+        return tuple(sorted(result))
+
+    def regex_references(self, node: Tree[Token], pattern: str) -> str:
+        """Expand string format references in the lexical scope of their declaration.
+
+        :param node: String type expression used to locate diagnostics.
+        :param pattern: Decoded regex text.
+        :returns: Regex with referenced formats grouped and expanded.
+        """
+
+        def substitute(match: re.Match[str]) -> str:
+            """Expand an unescaped reference, preserving regex backslashes.
+
+            :param match: Placeholder and preceding backslashes.
+            :returns: Expanded fragment or its original spelling after an error.
+            """
+            prefix, name = match.groups()
+            if len(prefix) % 2:
+                return match.group()
+            symbol = self.unit.scope.get(name)
+            if symbol is None or symbol.kind != 'type_alias':
+                self.issue(node, f'unknown string format type: {name}')
+                return match.group()
+            resolved = self.expand(node, symbol.key, [], False).type
+            if resolved.kind == 'unknown':
+                return match.group()
+            if resolved.name != 'string' or not resolved.params:
+                self.issue(
+                    node, f'string format reference requires a constrained string type: {name}'
+                )
+                return match.group()
+            return prefix + '(?:' + dict(resolved.params)['regex'] + ')'
+
+        return REGEX_REFERENCE.sub(substitute, pattern)
 
     def expand(
         self, node: Tree[Token], key: tuple[str, str], args: list[Tree[Token]], parameters: bool
@@ -540,7 +580,7 @@ class Resolver:
                 continue
             for field_name, (scope, field) in fields.items():
                 body = children(field, 'field_body')[0]
-                mode = str(tokens(body)[0]).replace('attr', 'static')
+                mode = field_mode(body).replace('attr', 'static')
                 if mode == 'id' or (
                     category.type.exact is not None
                     and mode.capitalize() not in category.type.exact.split('+')

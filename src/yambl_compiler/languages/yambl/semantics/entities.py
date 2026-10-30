@@ -27,6 +27,7 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     annotations,
     children,
     diagnostic,
+    field_mode,
     parse,
     tokens,
 )
@@ -91,8 +92,8 @@ class EntityIndex:
             for name, site in fields.items():
                 syntax = children(children(site.declaration, 'field_body')[0], 'type_expr')[0]
                 resolved = Resolver(site.unit, [], self.field_types(target), True).resolve(syntax)
-                if str(tokens(children(site.declaration, 'field_body')[0])[0]).replace(
-                    'attr', 'static'
+                if field_mode(
+                    children(site.declaration, 'field_body')[0]
                 ) == mode and resolved.kind not in ('collection', 'unknown'):
                     implementations = result.setdefault(name, [])
                     if site not in implementations:
@@ -228,12 +229,15 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
             )
             root = ancestors[key][-1] if ancestors[key] else key
             identity = (root, name)
-            signature = field_signature(site.declaration, site.unit, index.field_types(key), False)
             actual = Resolver(site.unit, [], index.field_types(key), True).resolve(
                 children(body, 'type_expr')[0]
             )
             if inherited is not None:
                 prior = fields[inherited][name]
+                abstract_contract = (
+                    tokens(body)[0].type == 'ABSTRACT'
+                    or tokens(children(prior.declaration, 'field_body')[0])[0].type == 'ABSTRACT'
+                )
                 if marker(site) != 'override':
                     diagnostics.append(
                         diagnostic(
@@ -242,9 +246,17 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
                             f'duplicate inherited field: {name}; use @override',
                         )
                     )
-                elif signature != field_signature(
-                    prior.declaration, prior.unit, index.field_types(inherited), False
-                ) or not override_type(actual, prior, index.field_types(inherited)):
+                elif field_signature(
+                    site.declaration, site.unit, index.field_types(key), False, abstract_contract
+                ) != field_signature(
+                    prior.declaration,
+                    prior.unit,
+                    index.field_types(inherited),
+                    False,
+                    abstract_contract,
+                ) or not override_type(
+                    actual, prior, index.field_types(inherited)
+                ):
                     diagnostics.append(
                         diagnostic(site.unit.document, body, f'override signature mismatch: {name}')
                     )
@@ -301,6 +313,47 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
                 )
     for field_key, identity in index.identities.items():
         index.identities[field_key] = replacements.get(identity, identity)
+    abstract_entities = {
+        key for key, (_, node) in locations.items() if tokens(node)[0].type == 'ABSTRACT'
+    }
+    for key, local in fields.items():
+        for name, site in local.items():
+            body = children(site.declaration, 'field_body')[0]
+            if tokens(body)[0].type != 'ABSTRACT':
+                continue
+            if key not in abstract_entities:
+                diagnostics.append(
+                    diagnostic(
+                        site.unit.document,
+                        body,
+                        'abstract computed field requires an abstract entity',
+                    )
+                )
+            if not any(
+                key in ancestors[descendant]
+                and name in members
+                and tokens(children(members[name].declaration, 'field_body')[0])[0].type
+                != 'ABSTRACT'
+                and marker(members[name]) == 'override'
+                for descendant, members in fields.items()
+            ):
+                diagnostics.append(
+                    diagnostic(
+                        site.unit.document,
+                        body,
+                        f'abstract computed field has no implementation: {name}',
+                    )
+                )
+    for key, effective_fields in effective.items():
+        if key in abstract_entities or key not in locations:
+            continue
+        unit, node = locations[key]
+        for name, site in effective_fields.items():
+            body = children(site.declaration, 'field_body')[0]
+            if tokens(body)[0].type == 'ABSTRACT':
+                diagnostics.append(
+                    diagnostic(unit.document, node, f'concrete entity lacks implementation: {name}')
+                )
     declarations = units[0].world.declarations if units else {}
     for key, (unit, declaration) in declarations.items():
         if declaration.data != 'entity':

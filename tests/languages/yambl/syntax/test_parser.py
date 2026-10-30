@@ -14,6 +14,23 @@ from yambl_compiler.languages.yambl.syntax.parser import (
 
 
 class SyntaxTests(unittest.TestCase):
+    def test_abstract_entity_and_computed_declarations(self):
+        doc = document('abstract entity Base { abstract computed attr label: string }')
+        entity = children(doc.tree, 'entity')[0]
+        self.assertEqual(tokens(children(entity, 'entity_header')[0])[0].type, 'ABSTRACT')
+        body = children(children(entity, 'field')[0], 'field_body')[0]
+        self.assertEqual([t.type for t in tokens(body)[:3]], ['ABSTRACT', 'COMPUTED', 'ATTR'])
+        self.assertEqual(children(body, 'computation'), [])
+        for source in (
+            'abstract final entity A {}',
+            'final abstract entity A {}',
+            'entity A { abstract attr x: string }',
+            'entity A { abstract computed attr x: string { return \'x\' } }',
+            'entity A { computed attr x: string }',
+        ):
+            with self.subTest(source=source):
+                self.assertIsInstance(parse(source), Diagnostic)
+
     def test_lookup_structure_and_context(self):
         source = '''entity Security {
     lookup by_name {

@@ -107,6 +107,10 @@ class PlanValidator:
         """
         entity, field, stored = self.catalog.target(operation.target)
         if field is None or stored is None:
+            if operation.kind == 'insert' and entity.definition.abstract:
+                raise ValueError(
+                    f'cannot instantiate abstract entity: {entity.definition.identity}'
+                )
             if operation.scope or operation.kind == 'replace':
                 raise ValueError('scope operation requires a field target')
             if entity.id.name not in operation.columns:

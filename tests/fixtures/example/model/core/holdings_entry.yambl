@@ -1,7 +1,10 @@
 namespace core
 
+type holdings_date = string['[0-9]{8}']
+type holdings_id = string['${portfolio_id}_${holdings_date}_${security_id}']
+
 entity HoldingEntry {
-    id holdings_entry_id: snowflake_id
+    id holdings_entry_id: holdings_id
 
     static attr security: Security
     static attr quantity: decimal
