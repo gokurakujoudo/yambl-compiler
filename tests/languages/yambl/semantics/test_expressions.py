@@ -121,6 +121,21 @@ entity Leaf inherits Child { @override attr choice: exact<3> }
             with self.subTest(source=source):
                 self.assertTrue(any(expected in item.message for item in check([document(source)])))
 
+    def test_finite_resolution_without_index_reports_an_error(self):
+        for expression, expected in (
+            ('one_of[1,2]', 'finite type requires an indexed model'),
+            ('exact<1>', 'exact type requires an indexed model'),
+        ):
+            with self.subTest(expression=expression):
+                doc = document(f'entity A {{ attr x: {expression} }}')
+                unit = resolve_scopes([doc], [])[0]
+                field = children(children(doc.tree, 'entity')[0], 'field')[0]
+                body = children(field, 'field_body')[0]
+                syntax = children(body, 'type_expr')[0]
+                diagnostics = []
+                self.assertEqual(Resolver(unit, diagnostics, {}).resolve(syntax), UNKNOWN)
+                self.assertTrue(any(expected in issue.message for issue in diagnostics))
+
     def test_finite_config_default_must_be_a_member(self):
         source = 'entity A { config attr choice: one_of[1, 2] = 2 }'
         self.assertEqual(check([document(source)]), [])

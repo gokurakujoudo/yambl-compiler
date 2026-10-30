@@ -45,6 +45,7 @@ class SyntaxTests(unittest.TestCase):
             'type x = one_of<1, 2>',
             'type x = decimal[1 + 2]',
             'entity A { attr a: exact<1<string>> }',
+            'entity A { attr a: exact<1 >= }',
         ):
             with self.subTest(source=source):
                 self.assertIsInstance(parse(source), Diagnostic)

@@ -231,13 +231,15 @@ entity A {
             'model.yambl',
             """
 const N: integer = 1
+type count = integer
 decodes D {}
 @flags decodes F { - 1 A: 'a' }
 entity X {
     id id: string
     computed attr value: Decodes { let x: exact<D> = D return x }
     computed attr choice: code<F> { let x: exact<F.A> = F.A return x }
-    constraint nested { let xs: values<one_of[N, 2]> = [1] assert true }
+    computed attr numbers: values<count> { let x: values<count> = [1] return x }
+    constraint nested { let xs: values<one_of[N, 2]> = [1] let n: count = 1 assert n > 0 }
 }
 """,
         )
