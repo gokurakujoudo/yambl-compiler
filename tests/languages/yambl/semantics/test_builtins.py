@@ -2,8 +2,9 @@
 
 from pathlib import Path
 
-from tests.support import FilesystemCase, document
+from tests.support import FilesystemCase, document, load_generated
 from yambl_compiler.application.project import run
+from yambl_compiler.ir import compile_repository
 from yambl_compiler.languages.yambl.semantics.builtins import (
     AUTHOR_ROOT,
     DOCUMENTS,
@@ -13,6 +14,7 @@ from yambl_compiler.languages.yambl.semantics.builtins import (
 )
 from yambl_compiler.languages.yambl.semantics.symbols import namespace
 from yambl_compiler.languages.yambl.semantics.validation import check
+from yambl_compiler.storage.generation import generate
 
 
 class BuiltinTests(FilesystemCase):
@@ -84,6 +86,7 @@ class BuiltinTests(FilesystemCase):
                 'field_mapping.yambl',
                 'decorators.yambl',
                 'decorator_targets.yambl',
+                'time_zones.yambl',
             },
         )
         self.assertEqual((MODEL_ROOT / 'yambl-root.lclcfg').read_text(), "prefix: ''\n")
@@ -96,6 +99,34 @@ class BuiltinTests(FilesystemCase):
                     file.read_bytes(),
                     (AUTHOR_ROOT / file.relative_to(MODEL_ROOT)).read_bytes(),
                 )
+
+    def test_time_zones_are_visible_and_fixed(self):
+        self.write('yambl-root.lclcfg', "prefix: ''\n")
+        self.write(
+            'model.yambl', 'entity Event { id id: string static attr zone: code<TimeZones> }'
+        )
+        model = compile_repository(self.root)
+        zones = next(item for item in model.definitions if item.identity == 'builtins.TimeZones')
+        self.assertEqual(len(zones.entries), 39)
+        codes = {entry.code: int(entry.ordering) for entry in zones.entries}
+        self.assertEqual(len(codes), 39)
+        self.assertEqual(len(set(codes.values())), 39)
+        self.assertEqual(
+            {
+                name: codes[name]
+                for name in ('UTC', 'AsiaShanghai', 'AsiaHongKong', 'AsiaSingapore')
+            },
+            {'UTC': 0, 'AsiaShanghai': 801, 'AsiaHongKong': 803, 'AsiaSingapore': 804},
+        )
+        self.assertNotIn('AsiaBeijing', codes)
+        output = self.root / 'generated'
+        layout = generate(model, output, 'sample_model')
+        package = load_generated(output / 'sample_model', 'sample_model')
+        self.assertEqual(package.TimeZonesCode.AsiaShanghai.value, 'AsiaShanghai')
+        table = next(table for table in layout.tables if table.name == 'tb_decodes_entries')
+        rows = [row for row in table.rows if row[0] == 'builtins.TimeZones']
+        self.assertEqual(len(rows), 39)
+        self.assertIn(('builtins.TimeZones', 'AsiaShanghai', 'Asia/Shanghai', '801'), rows)
 
     def test_invalid_resource_is_not_silently_accepted(self):
         file = self.write('a.yambl', 'bad syntax')
