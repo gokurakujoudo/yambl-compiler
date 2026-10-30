@@ -8,7 +8,7 @@ from yambl_compiler.languages.yambl.semantics.decorators import bind_call
 from yambl_compiler.languages.yambl.semantics.dimensions import field_dimension
 from yambl_compiler.languages.yambl.semantics.entities import EntityIndex, FieldSite
 from yambl_compiler.languages.yambl.semantics.expressions import Resolver
-from yambl_compiler.languages.yambl.semantics.symbols import Unit, declaration_name
+from yambl_compiler.languages.yambl.semantics.symbols import EntityKey, Unit, declaration_name
 from yambl_compiler.languages.yambl.semantics.types import Resolved
 from yambl_compiler.languages.yambl.syntax.parser import (
     Diagnostic,
@@ -59,6 +59,41 @@ def temporal(site: FieldSite) -> tuple[tuple[str, str], ...]:
         bind_call(call, site.declaration, site.unit, [], bound_arguments=bound)
         result.extend((key, repr(value)) for name, key, value in bound if name == 'time')
     return tuple(result)
+
+
+def reverse_path(
+    unit: Unit, syntax: Tree[Token], index: EntityIndex
+) -> tuple[EntityKey | None, list[tuple[EntityKey, str, FieldSite]]]:
+    """Resolve an ordered reverse path in its declaration scope.
+
+    :param unit: Invocation scope.
+    :param syntax: Source path expression.
+    :param index: Effective entity fields.
+    :returns: Starting entity and every resolvable forward step.
+    """
+    items = tokens(syntax)
+    if (
+        len(items) < 3
+        or len(items) % 2 == 0
+        or any(str(items[i]) != '.' for i in range(1, len(items), 2))
+    ):
+        return None, []
+    symbol = unit.scope.get(str(items[0]))
+    if symbol is None or symbol.kind != 'entity':
+        return None, []
+    current = symbol.key
+    steps: list[tuple[EntityKey, str, FieldSite]] = []
+    for item in items[2::2]:
+        site = index.effective.get(current, {}).get(str(item))
+        if site is None:
+            break
+        steps.append((current, str(item), site))
+        resolved = field_type(site, index, current)
+        target = resolved.args[0] if resolved.name == 'collection' and resolved.args else resolved
+        if target.kind != 'reference' or target.key is None:
+            break
+        current = target.key
+    return symbol.key, steps
 
 
 def check_relationships(
@@ -142,52 +177,101 @@ def check_relationships(
                 ]
                 if not args:
                     continue
-                items = tokens(children(args[0], 'type_expr')[0])
-                source = unit.scope.get(str(items[0])) if len(items) == 3 else None
-                source_field = str(items[2]) if source is not None else ''
-                forward_site = (
-                    index.effective.get(source.key, {}).get(source_field)
-                    if source is not None and source.kind == 'entity'
-                    else None
-                )
-                if (
-                    source is None
-                    or forward_site is None
-                    or not annotations(forward_site.declaration, 'relationship')
-                    or annotations(forward_site.declaration, 'reverse_relationship')
-                ):
+                syntax = children(args[0], 'type_expr')[0]
+                items = tokens(syntax)
+                source, steps = reverse_path(unit, syntax, index)
+                if source is None:
                     issue(
                         reverse[0],
                         'reverse relationship target must be a forward relationship field',
                     )
                     continue
-                source_type = field_type(forward_site, index, source.key)
-                source_target = (
-                    source_type.args[0]
-                    if source_type.kind == 'collection' and source_type.args
-                    else source_type
-                )
-                bound = {}
-                bind_call(
-                    annotations(forward_site.declaration, 'relationship')[0],
-                    forward_site.declaration,
-                    forward_site.unit,
-                    [],
-                    values=bound,
-                )
-                x = bound.get('x', Resolved('?')).exact
+                if len(steps) != (len(items) - 1) // 2:
+                    if len(items) > 3:
+                        position = min(2 + len(steps) * 2, len(items) - 1)
+                        missing = items[position]
+                        diagnostics.append(
+                            diagnostic(
+                                unit.document,
+                                Tree('reverse_hop', [missing]),
+                                f'reverse relationship hop {len(steps) + 1} {missing} is not a visible field',
+                            )
+                        )
+                    else:
+                        issue(
+                            reverse[0],
+                            'reverse relationship target must be a forward relationship field',
+                        )
+                    continue
+                source_target = Resolved('?')
+                x = None
+                valid = True
+                for number, (step_owner, step_name, forward_site) in enumerate(steps, 1):
+                    relationships = annotations(forward_site.declaration, 'relationship')
+                    if not relationships or annotations(
+                        forward_site.declaration, 'reverse_relationship'
+                    ):
+                        issue(
+                            reverse[0],
+                            (
+                                f'reverse relationship hop {number} {step_name} must be a forward relationship field'
+                                if len(steps) > 1
+                                else 'reverse relationship target must be a forward relationship field'
+                            ),
+                        )
+                        valid = False
+                        break
+                    source_type = field_type(forward_site, index, step_owner)
+                    source_target = (
+                        source_type.args[0]
+                        if source_type.kind == 'collection' and source_type.args
+                        else source_type
+                    )
+                    step_bound: dict[str, Resolved] = {}
+                    bind_call(
+                        relationships[0],
+                        forward_site.declaration,
+                        forward_site.unit,
+                        [],
+                        values=step_bound,
+                    )
+                    x = step_bound.get('x', Resolved('?')).exact
+                    y = step_bound.get('y', Resolved('?')).exact
+                    if len(steps) > 1 and (
+                        source_type.kind != 'reference' or x != 'one' or y not in ('one', 'maybe')
+                    ):
+                        issue(
+                            reverse[0],
+                            f'reverse relationship hop {number} {step_name} requires a one-to-one reference',
+                        )
+                        valid = False
+                    source_body = children(forward_site.declaration, 'field_body')[0]
+                    if mode != field_mode(source_body) or temporal(site) != temporal(forward_site):
+                        issue(
+                            reverse[0],
+                            (
+                                f'relationship categories and temporal parameters must match at hop {number} {step_name}'
+                                if len(steps) > 1
+                                else 'relationship categories and temporal parameters must match'
+                            ),
+                        )
+                    if dimensions(site) != dimensions(forward_site):
+                        issue(
+                            reverse[0],
+                            (
+                                f'relationship dimensions must match by declaration identity at hop {number} {step_name}'
+                                if len(steps) > 1
+                                else 'relationship dimensions must match by declaration identity'
+                            ),
+                        )
+                if not valid:
+                    continue
                 if source_target.key != owner:
                     issue(reverse[0], 'forward relationship target must match reverse owner')
                 if (
                     target.kind != 'reference'
-                    or target.key != source.key
+                    or target.key != source
                     or (x == 'one' and actual.kind != 'reference')
                     or (x == 'many' and actual.name != 'collection')
                 ):
                     issue(reverse[0], 'reverse relationship type does not match source cardinality')
-                source_body = children(forward_site.declaration, 'field_body')[0]
-                source_mode = field_mode(source_body)
-                if mode != source_mode or temporal(site) != temporal(forward_site):
-                    issue(reverse[0], 'relationship categories and temporal parameters must match')
-                if dimensions(site) != dimensions(forward_site):
-                    issue(reverse[0], 'relationship dimensions must match by declaration identity')

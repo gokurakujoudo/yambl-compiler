@@ -1277,22 +1277,22 @@ class Reader:
         if isinstance(cached, Success):
             return cached
         call = next(c for c in field.decorators if c.target == 'builtins.reverse_relationship')
-        forward_id = next(
-            b.type.exact.text for b in call.bound if b.name == 'target' and b.type.exact
-        )
-        forward = self._layout.fields[forward_id]
         self._ready()
-        rows = self._backend.rows(forward.table, dict(forward.key_values))
         groups: dict[tuple[object, ...], set[date]] = {}
-        for row in rows:
-            dimensions = tuple(self._decode(d.type, row['dim_' + d.key]) for d in stored.dimensions)
-            points = groups.setdefault(dimensions, set())
-            if field.category == 'snapshot':
-                points.add(date.fromisoformat(str(row['date'])))
-            elif field.category == 'scd':
-                points.update(
-                    date.fromisoformat(str(row[key])) for key in ('valid_from', 'valid_to')
+        for step in call.reverse_path:
+            forward = self._layout.fields[step.field]
+            rows = self._backend.rows(forward.table, dict(forward.key_values))
+            for row in rows:
+                dimensions = tuple(
+                    self._decode(d.type, row['dim_' + d.key]) for d in stored.dimensions
                 )
+                points = groups.setdefault(dimensions, set())
+                if field.category == 'snapshot':
+                    points.add(date.fromisoformat(str(row['date'])))
+                elif field.category == 'scd':
+                    points.update(
+                        date.fromisoformat(str(row[key])) for key in ('valid_from', 'valid_to')
+                    )
         requests: list[FieldRequest] = []
         coordinates: list[tuple[tuple[object, ...], date | None, date | None]] = []
         for dimensions, points in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):

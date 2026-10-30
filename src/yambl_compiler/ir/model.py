@@ -175,6 +175,18 @@ class Bound(Record):
 
 
 @dataclass(frozen=True)
+class ReverseStep(Record):
+    """Identify one checked forward step of a reverse relationship.
+
+    :param entity: Statically selected source entity type.
+    :param field: Logical identity of the forward relationship.
+    """
+
+    entity: str
+    field: str
+
+
+@dataclass(frozen=True)
 class Call(Record):
     """Preserve one decorator application, including identical repeated calls.
 
@@ -183,6 +195,8 @@ class Call(Record):
     :param bound: Bound parameters in formal order.
     :param source: Application location.
     :param dimension_identity: Resolved dimension declaration, if applicable.
+    :param reverse_source: Declared start type for a reverse relationship.
+    :param reverse_path: Ordered checked forward relationship steps.
     """
 
     target: str
@@ -190,6 +204,8 @@ class Call(Record):
     bound: tuple[Bound, ...]
     source: Source
     dimension_identity: str = ''
+    reverse_source: str = ''
+    reverse_path: tuple[ReverseStep, ...] = ()
 
 
 @dataclass(frozen=True)

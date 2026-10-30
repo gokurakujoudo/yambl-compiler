@@ -1,7 +1,7 @@
 """Batch identity and field reads while retaining per-contribution outcomes."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import cast
 
@@ -250,18 +250,54 @@ class Batch:
     def reverse(
         self, requests: Sequence[tuple[int, FieldRequest, Field]]
     ) -> tuple[ReadResult[object], ...]:
-        """Resolve reverse relationships from the pinned forward records.
+        """Walk checked forward paths backwards in batches, one hop at a time.
 
         :param requests: Reverse point requests and effective declarations.
         :returns: One source reference or set of references per request.
         """
+        paths = [
+            next(
+                c for c in field.decorators if c.target == 'builtins.reverse_relationship'
+            ).reverse_path
+            for _, _, field in requests
+        ]
+        results: list[ReadResult[object]] = [Success(request.owner) for _, request, _ in requests]
+        for offset in range(max((len(path) for path in paths), default=0)):
+            entries = []
+            positions = []
+            for position, ((index, request, field), path, prior) in enumerate(
+                zip(requests, paths, results, strict=True)
+            ):
+                if offset >= len(path) or isinstance(prior, NonNormalResult):
+                    continue
+                step = path[-offset - 1]
+                entries.append(
+                    (
+                        index,
+                        replace(request, owner=cast(EntityRef[object], prior.value)),
+                        field,
+                        step.field,
+                        step.entity,
+                        len(path) == 1 and field.type.name == 'collection',
+                    )
+                )
+                positions.append(position)
+            if entries:
+                for position, result in zip(positions, self._reverse_step(entries), strict=True):
+                    results[position] = result
+        return tuple(results)
+
+    def _reverse_step(
+        self, requests: Sequence[tuple[int, FieldRequest, Field, str, str, bool]]
+    ) -> tuple[ReadResult[object], ...]:
+        """Resolve one checked forward step against a batch of target instances.
+
+        :param requests: Target, reverse contract, logical field, source type and result shape.
+        :returns: Per-request source identities or native failures.
+        """
         reader = self.reader
-        groups: dict[str, list[tuple[FieldRequest, Field, StoredField, Selection]]] = {}
-        for _, request, field in requests:
-            call = next(c for c in field.decorators if c.target == 'builtins.reverse_relationship')
-            target = next(
-                b.type.exact.text for b in call.bound if b.name == 'target' and b.type.exact
-            )
+        groups: dict[str, list[tuple[FieldRequest, Field, StoredField, Selection, str, bool]]] = {}
+        for _, request, field, target, source_type, collection in requests:
             stored = reader.layout.fields[target]
             dimensions = dict(request.dimensions)
             keys = (
@@ -276,18 +312,15 @@ class Batch:
                 selection = Selection(keys, field.category, when, when)
             else:
                 selection = Selection(keys)
-            groups.setdefault(stored.table, []).append((request, field, stored, selection))
+            groups.setdefault(stored.table, []).append(
+                (request, field, stored, selection, source_type, collection)
+            )
         resolved: dict[FieldRequest, ReadResult[object]] = {}
         reader.ready()
         for table, entries in groups.items():
             matches = reader.backend.rows_many(table, [entry[3] for entry in entries])
             references: list[EntityRef[object]] = []
-            for (_, field, stored, _), rows in zip(entries, matches, strict=True):
-                source_type = (
-                    field.type.arguments[0].target
-                    if field.type.name == 'collection'
-                    else field.type.target
-                )
+            for (_, _, stored, _, source_type, _), rows in zip(entries, matches, strict=True):
                 references.extend(
                     EntityRef(
                         source_type,
@@ -299,27 +332,38 @@ class Batch:
                 )
             owners = iter(self.entities(references))
             applicable: list[list[tuple[EntityRef[object], Field, Row]]] = []
-            for (_, _, stored, _), rows in zip(entries, matches, strict=True):
+            failures: list[NonNormalResult | None] = []
+            for (_, _, stored, _, _, _), rows in zip(entries, matches, strict=True):
                 selected: list[tuple[EntityRef[object], Field, Row]] = []
+                failure: NonNormalResult | None = None
                 for row in rows:
                     owner_result = next(owners)
                     if isinstance(owner_result, NonNormalResult):
+                        if owner_result.status == Status.ERROR:
+                            failure = owner_result
                         continue
-                    implementation = cast(
-                        Field, self.implementation(owner_result.value.target, stored.field.identity)
+                    implementation = self.implementation(
+                        owner_result.value.target, stored.field.identity
                     )
+                    if implementation is None:
+                        continue
                     selected.append((owner_result.value, implementation, row))
                 applicable.append(selected)
+                failures.append(failure)
             self.collections(
                 [
                     (stored, forward_field, physical)
-                    for (_, _, stored, _), source_rows in zip(entries, applicable, strict=True)
+                    for (_, _, stored, _, _, _), source_rows in zip(
+                        entries, applicable, strict=True
+                    )
                     for _, forward_field, physical in source_rows
                 ]
             )
-            for (request, field, stored, _), source_rows in zip(entries, applicable, strict=True):
+            for (request, field, stored, _, _, collection), source_rows, prior_failure in zip(
+                entries, applicable, failures, strict=True
+            ):
                 found: set[EntityRef[object]] = set()
-                failure: NonNormalResult | None = None
+                failure = prior_failure
                 for source_owner, forward_field, physical in source_rows:
                     value = reader.value(stored, forward_field, physical)
                     if isinstance(value, NonNormalResult):
@@ -340,7 +384,7 @@ class Batch:
                         found.add(source_owner)
                 if failure is not None:
                     resolved[request] = failure
-                elif field.type.name == 'collection':
+                elif collection:
                     resolved[request] = Success(frozenset(found))
                 elif len(found) > 1:
                     resolved[request] = NonNormalResult(
@@ -350,7 +394,7 @@ class Batch:
                     resolved[request] = Success(next(iter(found)))
                 else:
                     resolved[request] = NonNormalResult(Status.NO_ENTRY)
-        return tuple(resolved[request] for _, request, _ in requests)
+        return tuple(resolved[request] for _, request, _, _, _, _ in requests)
 
     def collections(self, records: Sequence[tuple[StoredField, Field, Row]]) -> None:
         """Prefetch collection members once per table rather than once per row.

@@ -186,17 +186,23 @@ def relationship_argument(resolver: Resolver, syntax: Tree[Token], formal: str) 
         resolver.issue(syntax, f'invalid relationship cardinality: {formal}')
         return UNKNOWN
     if (
-        len(items) == 3
+        len(items) >= 3
+        and len(items) % 2 == 1
         and items[0].type == 'NAME'
-        and str(items[1]) == '.'
-        and items[2].type == 'NAME'
+        and all(
+            str(items[i]) == '.' and items[i + 1].type == 'NAME' for i in range(1, len(items), 2)
+        )
         and (symbol := resolver.unit.scope.get(str(items[0]))) is not None
         and symbol.kind == 'entity'
     ):
         root = resolver.unit.world.parents.get(symbol.key, [])
         identity = root[-1] if root else symbol.key
         namespace = identity[0].split('\0')[-1]
-        target = '.'.join(filter(None, (namespace, identity[1], str(items[2]))))
+        target = '.'.join(
+            filter(
+                None, (namespace, identity[1], *(str(items[i]) for i in range(2, len(items), 2)))
+            )
+        )
         return Resolved('string', 'string', exact=target)
     resolver.issue(syntax, 'reverse relationship requires an entity field reference')
     return UNKNOWN

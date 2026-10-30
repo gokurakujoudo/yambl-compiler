@@ -38,6 +38,7 @@ from yambl_compiler.ir.model import (
     LookupStep,
     Model,
     Operation,
+    ReverseStep,
     Source,
     Text,
     Type,
@@ -66,6 +67,7 @@ from yambl_compiler.languages.yambl.semantics.expressions import (
 )
 from yambl_compiler.languages.yambl.semantics.fields import field_name
 from yambl_compiler.languages.yambl.semantics.hierarchies import hierarchy_entries
+from yambl_compiler.languages.yambl.semantics.relationships import reverse_path
 from yambl_compiler.languages.yambl.semantics.symbols import (
     GENERICS,
     VALUES,
@@ -498,6 +500,21 @@ class Lowering:
                 if target == 'builtins.dimension' and node.data == 'field'
                 else None
             )
+            reverse_source = ''
+            reverse_steps: tuple[ReverseStep, ...] = ()
+            if target == 'builtins.reverse_relationship' and arguments:
+                syntax = children(
+                    next(part for part in call.children if isinstance(part, Tree)), 'type_expr'
+                )[0]
+                source, path = reverse_path(unit, syntax, self.analysis.entities)
+                if source is not None:
+                    reverse_source = qualified(source)
+                    reverse_steps = tuple(
+                        ReverseStep(
+                            qualified(owner), self.identity(*self.owners[id(site.declaration)])
+                        )
+                        for owner, _, site in path
+                    )
             result.append(
                 Call(
                     target,
@@ -505,6 +522,8 @@ class Lowering:
                     tuple(Bound(n, k, self.type(t)) for n, k, t in bound),
                     self.source(unit, call),
                     qualified(dimension.identity) if dimension else '',
+                    reverse_source,
+                    reverse_steps,
                 )
             )
         return tuple(
@@ -1185,7 +1204,7 @@ class Lowering:
         )
         return seal(
             Model(
-                16,
+                17,
                 self.version,
                 self.prefix,
                 primitives,
