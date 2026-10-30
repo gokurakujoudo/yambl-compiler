@@ -69,6 +69,50 @@ entity C {
                     )
                     self.assertEqual(store.snapshot().tables, before)
 
+    async def test_reverse_chain_ignores_rows_from_other_subtypes(self):
+        self.write('yambl-root.lclcfg', "prefix: ''\n")
+        self.write(
+            'model.yambl',
+            """
+entity Base { id id: string }
+entity A inherits Base { @relationship(one, maybe) attr b: B }
+entity Other inherits Base {}
+entity B { id id: string @relationship(one, maybe) attr c: C }
+entity C { id id: string @reverse_relationship(A.b.c) attr a: A }
+""",
+        )
+        output = self.root / 'generated'
+        generate(compile_repository(self.root), output, 'sample_model')
+        module = load_generated(output / 'sample_model', 'sample_model')
+        initial = Plan(
+            'reverse',
+            None,
+            (
+                Group(
+                    'g',
+                    (
+                        Operation('insert', 'C', ('id',), (('c',),)),
+                        Operation('insert', 'B', ('id', 'c'), (('b', 'c'),)),
+                        Operation('insert', 'A', ('id', 'b'), (('a', 'b'),)),
+                        Operation('insert', 'Other', ('id',), (('other',),)),
+                    ),
+                ),
+            ),
+        )
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                config = self.write(
+                    f'{backend}.lclcfg', f"backend: '{backend}'\npath: '{backend}.data'\n"
+                )
+                with await module.SampleData.create(config) as store:
+                    self.assertEqual(store.apply(initial).status, 'committed')
+                    tables = store.snapshot().tables
+                    row = next(item for item in tables['tb_base'] if item['id'] == 'other')
+                    stored = store.layout.fields['Base.b']
+                    row[stored.state], row[stored.value] = 0, 'b'
+                    with module.SampleReader(SnapshotBackend(tables), store.layout) as reader:
+                        self.assertEqual(reader.get_c('c').value.read_a().value.id, 'a')
+
     async def test_temporal_and_dimensional_hops_share_the_requested_coordinate(self):
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write(
@@ -220,6 +264,12 @@ entity D { id id: string @reverse_relationship(A.b.c.d) attr a: A }
                     with closing(store.read()) as reader:
                         self.assertEqual(reader.get_d('d').value.read_a().status, Status.NO_ENTRY)
 
+                    duplicate = store.snapshot().tables
+                    duplicate['tb_b'].append(
+                        dict(next(row for row in duplicate['tb_b'] if row['id'] == 'b'))
+                    )
+                    with module.SampleReader(SnapshotBackend(duplicate), store.layout) as reader:
+                        self.assertEqual(reader.get_d('d').value.read_a().status, Status.ERROR)
                     tables = store.snapshot().tables
                     b2 = next(row for row in tables['tb_b'] if row['id'] == 'b2')
                     b2['c__state'], b2['c'] = 0, 'c'
