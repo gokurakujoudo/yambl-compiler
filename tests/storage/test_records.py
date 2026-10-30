@@ -23,6 +23,10 @@ class RecordsTests(FilesystemCase, unittest.IsolatedAsyncioTestCase):
 
         cases = (
             (
+                'entity A { @dimension(missing) snapshot attr price: integer computed attr ok: bool { return self.price::records().all(r -> true) } }',
+                'unknown dimension: missing',
+            ),
+            (
                 'entity A { computed attr x: integer { return 1 } computed attr y: bool { return self.x::records().all(r -> true) } }',
                 'computed fields support',
             ),

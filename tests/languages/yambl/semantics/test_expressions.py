@@ -114,6 +114,10 @@ entity Leaf inherits Child { @override attr choice: exact<3> }
             ('const X: exact<X> = 1', 'constant dependency cycle'),
             ('type a = exact<A> const A: a = 1', 'finite type dependency cycle'),
             (
+                "@flags decodes D { - 1 A: 'a' } entity X { attr n: one_of[D.Missing, D.A] }",
+                'unknown Decodes code: D.Missing',
+            ),
+            (
                 'const N: integer = 1 entity A { attr n: one_of[N.x, 1] }',
                 'member access requires a scalar entity reference',
             ),
