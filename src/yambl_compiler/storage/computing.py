@@ -1011,7 +1011,8 @@ class Computing:
             payload = result.value
             values = (
                 sorted(
-                    payload, key=lambda v: (str(getattr(v, 'target', '')), str(getattr(v, 'id', v)))
+                    cast(frozenset[object], payload),
+                    key=lambda v: (str(getattr(v, 'target', '')), str(getattr(v, 'id', v))),
                 )
                 if isinstance(payload, frozenset)
                 else payload

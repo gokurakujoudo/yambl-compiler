@@ -37,6 +37,25 @@ class ConstraintTests(unittest.TestCase):
         self.assertTrue(any('duplicate constraint' in item for item in messages))
         self.assertTrue(any('duplicate inherited constraint' in item for item in messages))
 
+    def test_invalid_constraint_and_local_binding_names_and_types(self):
+        result = analyze([document("""
+entity A {
+    constraint BadName {
+        let value: string = 1
+        let value = 2
+        assert true
+    }
+}
+""")])
+        messages = [d.message for d in result.diagnostics]
+        self.assertTrue(
+            any('constraint names must use snake_case' in message for message in messages)
+        )
+        self.assertTrue(any('incompatible local binding' in message for message in messages))
+        self.assertTrue(
+            any('duplicate or invalid local binding' in message for message in messages)
+        )
+
     def test_return_is_not_a_constraint_statement(self):
         from yambl_compiler.languages.yambl.syntax.parser import Diagnostic, parse
 

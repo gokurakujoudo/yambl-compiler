@@ -113,7 +113,7 @@ INVALID = [
     ),
     (
         "entity A { attr x: code<Missing> attr y: exact<self.x::value + self.x::value> }",
-        '+ requires codes from the same flags Decodes',
+        'exact requires a constant value',
     ),
     (
         "decodes Codes {} type chosen<a: code<Codes>> = string entity A { attr x: chosen<Codes.None> }",

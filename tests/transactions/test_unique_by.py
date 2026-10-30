@@ -11,6 +11,19 @@ from yambl_compiler.storage.results import Success
 
 
 class UniqueByTransactionTests(FilesystemCase, unittest.IsolatedAsyncioTestCase):
+    def test_unique_structured_field_reports_unsupported_storage(self):
+        self.write('yambl-root.lclcfg', "prefix: ''\n")
+        self.write(
+            'model.yambl',
+            """
+value point { attr x: integer attr y: string }
+@unique_by(self.location)
+entity A { id id: string attr location: point }
+""",
+        )
+        with self.assertRaisesRegex(ValueError, 'unsupported storage type point'):
+            generate(compile_repository(self.root), self.root / 'generated', 'sample_model')
+
     async def test_unique_key_spans_subtypes_and_checks_final_candidate(self):
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write(

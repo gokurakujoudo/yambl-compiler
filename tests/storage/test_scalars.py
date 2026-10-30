@@ -8,10 +8,11 @@ from pathlib import Path
 
 from tests.support import document
 from yambl_compiler.ir.lowering import Lowering
-from yambl_compiler.ir.model import Text, Type
+from yambl_compiler.ir.model import Text, Type, Value
+from yambl_compiler.languages.yambl.computation.records import ValueField
 from yambl_compiler.languages.yambl.semantics.validation import analyze
 from yambl_compiler.storage.results import EntityRef
-from yambl_compiler.storage.scalars import ScalarRule, decode_scalar, encode_input
+from yambl_compiler.storage.scalars import ScalarRule, decode_scalar, encode_input, finite_matches
 
 
 class Code(StrEnum):
@@ -27,6 +28,28 @@ def scalar(name, *, kind='value', target='', arguments=(), parameters=()):
 
 
 class ScalarRuleTests(unittest.TestCase):
+    def test_finite_values_compare_typed_payloads(self):
+        from dataclasses import dataclass
+
+        @dataclass(frozen=True)
+        class Point:
+            amount: Decimal
+
+        point = Value(
+            'structured', '', 'Point', fields=(ValueField('amount', Value('decimal', '1.20', '')),)
+        )
+        cases = (
+            (point, Point(Decimal('1.2')), True),
+            (point, Point(Decimal('2')), False),
+            (Value('reference', '5', 'A'), EntityRef[object]('A', 5), True),
+            (Value('float', '1.5', ''), 1.5, True),
+            (Value('date', '2026-01-01', ''), date(2026, 1, 1), True),
+            (Value('date', '2026-01-01', ''), date(2026, 1, 2), False),
+        )
+        for member, value, expected in cases:
+            with self.subTest(member=member, value=value):
+                self.assertEqual(finite_matches(member, value), expected)
+
     def test_datetime_storage(self):
         instant = scalar('datetime')
         utc = datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=timezone.utc)

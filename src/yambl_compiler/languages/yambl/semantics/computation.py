@@ -1631,7 +1631,7 @@ class Checker:
                         assert value.owner is not None
                         self.dimension_inputs(dimension, value.owner, node, explicit, environment)
             if method == 'best_available':
-                dimensions = []
+                dimensions: list[tuple[str, Resolved]] = []
                 for call in annotations(value.site.declaration, 'dimension'):
                     dimension = field_dimension(value.site.unit, value.site.declaration, call, [])
                     if dimension is not None:

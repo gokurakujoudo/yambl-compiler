@@ -23,6 +23,19 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(format_document(document(source)), expected)
         self.assertEqual(format_document(document(expected)), expected)
 
+    def test_constraint_call_preserves_comment_and_format(self):
+        source = "entity E { attr value: integer constraint positive { assert self.value::value( # lookup\n)>0 } }"
+        expected = """entity E {
+    attr value: integer
+    constraint positive {
+        assert self.value::value(  # lookup
+        ) > 0
+    }
+}
+"""
+        self.assertEqual(format_document(document(source)), expected)
+        self.assertEqual(format_document(document(expected)), expected)
+
     def test_abstract_formatting_is_idempotent(self):
         source = 'abstract entity A{abstract computed attr label:string}'
         expected = 'abstract entity A {\n    abstract computed attr label: string\n}\n'

@@ -1090,13 +1090,20 @@ class Lowering:
             ),
             abstract=node.data == 'entity' and tokens(header(node))[0].type == 'ABSTRACT',
             unique_keys=tuple(
-                UniqueKey(
-                    qualified(key), unique_fields(call, node, unit, []), self.source(unit, call)
+                sorted(
+                    (
+                        UniqueKey(
+                            qualified(key),
+                            unique_fields(call, node, unit, []),
+                            self.source(unit, call),
+                        )
+                        for call in annotations(node, 'unique_by')
+                        if node.data == 'entity'
+                        and (symbol := unit.scope.get('unique_by')) is not None
+                        and symbol.key[0].split('\0')[-1] == 'builtins'
+                    ),
+                    key=lambda unique: unique.fields,
                 )
-                for call in annotations(node, 'unique_by')
-                if node.data == 'entity'
-                and (symbol := unit.scope.get('unique_by')) is not None
-                and symbol.key[0].split('\0')[-1] == 'builtins'
             ),
             constraints=self.constraints(key),
             effective_constraints=tuple(

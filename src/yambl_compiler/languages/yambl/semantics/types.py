@@ -82,7 +82,7 @@ def portable_finite_value(member: FiniteValue) -> Value:
             exponent += 1
         text = '0' if payload == 0 else str(Decimal((sign, tuple(remaining), exponent)))
     elif isinstance(payload, float):
-        text = '0.0' if payload == 0 else repr(payload)
+        text = '0.0' if not payload else repr(payload)
     else:
         text = str(payload)
     return Value(

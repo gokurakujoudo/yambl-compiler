@@ -227,7 +227,7 @@ class Reader:
             return NonNormalResult(Status.ERROR, 'handle belongs to a different reader')
         try:
             lane = (0,)
-            source: Vector = {lane: Success(EntityRef(handle.entity_type, handle.id))}
+            source: Vector = {lane: Success(EntityRef[object](handle.entity_type, handle.id))}
             inputs: dict[str, Vector] = {
                 name: {lane: Success(value)} for name, value in parameters.items()
             }

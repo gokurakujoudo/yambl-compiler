@@ -1,5 +1,7 @@
 """Validate entity-level uniqueness against a reader's current snapshot."""
 
+# pyright: reportPrivateUsage=false
+
 from dataclasses import fields, is_dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -21,8 +23,9 @@ def value_key(value: object, type_: 'Type', reader: 'Reader') -> object:
     :param reader: Reader providing structured value declarations.
     :returns: Hashable equality key retaining type and reference identity.
     """
+    reference_value: object = value
     if isinstance(value, EntityRef) or type_.kind == 'reference':
-        return ('reference', type_.target, getattr(value, 'id', value))
+        return ('reference', type_.target, getattr(reference_value, 'id', reference_value))
     if is_dataclass(value) and not isinstance(value, type):
         declaration = next(
             item for item in reader._layout.model.definitions if item.identity == type_.target
@@ -106,7 +109,7 @@ def validate_entities(reader: 'Reader') -> tuple[ValidationIssue, ...]:
                 continue
             identity = cast(str | int, reader._decode(layout.ids[root].type, row['id']))
             lane = (0,)
-            owner_vector: Vector = {lane: Success(EntityRef(actual, identity))}
+            owner_vector: Vector = {lane: Success(EntityRef[object](actual, identity))}
             frame = Frame((lane,), owner_vector, {}, (False,))
             reader._computing.trace_constraints = True
             try:

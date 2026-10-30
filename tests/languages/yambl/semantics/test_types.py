@@ -1,13 +1,43 @@
 """External Decodes are value types with nonfatal, per-use diagnostics."""
 
 import unittest
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 
 from tests.support import document
-from yambl_compiler.languages.yambl.semantics.validation import check
+from yambl_compiler.languages.yambl.semantics.types import FiniteValue, Resolved, accepts, singleton
+from yambl_compiler.languages.yambl.semantics.validation import analyze, check
 
 
 class TypeTests(unittest.TestCase):
+    def test_legacy_singleton_types_preserve_typed_values(self):
+        for name, text, expected in (
+            ('bool', 'true', True),
+            ('decimal', '1.20', Decimal('1.20')),
+            ('float', '1.5', 1.5),
+            ('date', '2026-01-01', date(2026, 1, 1)),
+            ('datetime', '2026-01-01T00:00:00+00:00', datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        ):
+            with self.subTest(name=name):
+                self.assertEqual(
+                    singleton(Resolved(name, exact=text)), FiniteValue(name, None, expected)
+                )
+
+    def test_finite_and_reference_narrowing_keeps_type_identity(self):
+        world = analyze([document('entity A {} entity B {}')]).units[0].world
+        finite = Resolved(
+            'integer',
+            allowed_values=frozenset(
+                (FiniteValue('integer', None, 1), FiniteValue('integer', None, 2))
+            ),
+        )
+        self.assertFalse(accepts(finite, Resolved('string', exact='1'), world))
+        a = Resolved('A', 'reference', key=('', 'A'), exact='a')
+        b = Resolved('A', 'reference', key=('', 'A'), exact='b')
+        self.assertTrue(accepts(a, a, world))
+        self.assertFalse(accepts(a, b, world))
+
     def test_entity_types_and_arbitrary_self_fields(self):
         for mode in (
             'attr',

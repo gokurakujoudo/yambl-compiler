@@ -109,6 +109,18 @@ entity Leaf inherits Child { @override attr choice: exact<3> }
             with self.subTest(expression=expression):
                 self.assertTrue(check([document(f'entity A {{ attr x: {expression} }}')]))
 
+    def test_finite_value_cycles_and_evaluation_failures_are_diagnostic(self):
+        for source, expected in (
+            ('const X: exact<X> = 1', 'constant dependency cycle'),
+            ('entity A { attr n: one_of[1 // 0, 2] }', 'finite value evaluation failed'),
+            (
+                'entity A { attr n: one_of[[1], [2]] }',
+                'finite values must be non-collection values',
+            ),
+        ):
+            with self.subTest(source=source):
+                self.assertTrue(any(expected in item.message for item in check([document(source)])))
+
     def test_finite_config_default_must_be_a_member(self):
         source = 'entity A { config attr choice: one_of[1, 2] = 2 }'
         self.assertEqual(check([document(source)]), [])

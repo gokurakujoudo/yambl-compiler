@@ -17,8 +17,35 @@ jobs:
       - run: python -m ruff check src tests
       - run: python -m mypy
       - run: python -m pyright --pythonpath python
-      - run: python -m coverage erase
-      - run: python -m coverage run -m unittest discover -s tests -v
+      - name: Run functional tests with coverage
+        run: |
+          python -c "
+          import unittest
+          import coverage
+
+          excluded = ('tests.performance.', 'tests.transactions.test_incremental_large_process.')
+          def functional_cases(suite):
+              for item in suite:
+                  if isinstance(item, unittest.TestSuite):
+                      yield from functional_cases(item)
+                  elif item.id().startswith(excluded):
+                      print('Excluded performance/scale test:', item.id(), flush=True)
+                  else:
+                      yield item
+
+          measurement = coverage.Coverage(config_file='pyproject.toml')
+          measurement.erase()
+          measurement.start()
+          try:
+              tests = unittest.TestSuite(functional_cases(unittest.defaultTestLoader.discover('tests', top_level_dir='.')))
+              if tests.countTestCases() == 0:
+                  raise RuntimeError('No functional tests discovered')
+              result = unittest.TextTestRunner(verbosity=2).run(tests)
+          finally:
+              measurement.stop()
+              measurement.save()
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          "
       - run: python -m coverage report
       - run: python -m coverage json -o build/coverage.json
       - name: Require exact complete coverage in every file

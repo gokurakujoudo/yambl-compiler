@@ -665,7 +665,7 @@ def python_package(layout: Layout, package: str) -> str:
                     for c in f.decorators
                     if c.target == 'builtins.dimension'
                 ]
-                best_parameters = []
+                best_parameters: list[tuple[str, str, bool]] = []
                 if temporal:
                     best_parameters.append((time_key, 'date', False))
                 for dimension in selection_dimensions:

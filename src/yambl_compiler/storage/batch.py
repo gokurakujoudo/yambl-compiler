@@ -263,8 +263,8 @@ class Batch:
         ]
         results: list[ReadResult[object]] = [Success(request.owner) for _, request, _ in requests]
         for offset in range(max((len(path) for path in paths), default=0)):
-            entries = []
-            positions = []
+            entries: list[tuple[int, FieldRequest, Field, str, str, bool]] = []
+            positions: list[int] = []
             for position, ((index, request, field), path, prior) in enumerate(
                 zip(requests, paths, results, strict=True)
             ):
