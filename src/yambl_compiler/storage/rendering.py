@@ -98,12 +98,12 @@ def reference(layout: Layout) -> str:
         "",
         "Sparse and dense groups use the root table name plus the category suffix. Dense groups have "
         "one payload and state column per field. Sparse groups use (id, field) keys, one state column "
-        "and typed string/bool/int/decimal/date payload columns as needed. VALUE uses exactly one lane; "
+        "and typed string/bool/int/decimal/date/datetime payload columns as needed. VALUE uses exactly one lane; "
         "non-normal states use NULL in every lane. Integer and decimal lanes use exact TEXT. "
         "References use the target ID lane. These groups do not change field identity or reading semantics.",
         "",
         "Configuration uses one long table per root entity, keyed by (id, field), with state and typed "
-        "string/bool/int/decimal/date payload columns as needed. It shares the sparse layout rules: "
+        "string/bool/int/decimal/date/datetime payload columns as needed. It shares the sparse layout rules: "
         "one corresponding lane for VALUE scalars and NULL in all lanes for non-normal states. "
         "Collection headers use NULL scalar lanes and separate member tables. Reader defaults are unchanged.",
         "",

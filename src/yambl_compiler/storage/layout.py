@@ -91,6 +91,7 @@ def supported(type_: Type, entities: dict[str, Definition], model: Model) -> boo
         "snowflake_id",
         "decimal",
         "date",
+        "datetime",
     )
 
 

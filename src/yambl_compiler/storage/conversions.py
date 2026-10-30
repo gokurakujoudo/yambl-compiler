@@ -130,7 +130,10 @@ def convert(name: str, arguments: tuple[object, ...]) -> object:
                 raise ValueError('invalid ISO datetime') from error
         if not isinstance(value, datetime) or value.utcoffset() is None:
             raise ValueError('datetime requires an explicit timezone')
-        utc = value.astimezone(timezone.utc)
+        try:
+            utc = value.astimezone(timezone.utc)
+        except OverflowError as error:
+            raise ValueError('datetime outside the UTC range') from error
         return utc if name == 'parse_datetime' else utc.isoformat().replace('+00:00', 'Z')
     numeric = decimal_value(value)
     if name == 'to_integer':

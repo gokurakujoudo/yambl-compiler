@@ -1,11 +1,12 @@
 """Validate scalar values with contracts detached from repository sessions."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import cast
 
 from yambl_compiler.ir.model import Type
+from yambl_compiler.storage.conversions import convert
 from yambl_compiler.storage.results import EntityRef
 
 
@@ -65,6 +66,10 @@ def decode_scalar(
             result = date.fromisoformat(value)
             if result.isoformat() != value:
                 raise ValueError('noncanonical date')
+        elif type_.name == 'datetime':
+            result = convert('parse_datetime', (value,))
+            if convert('format_datetime', (result,)) != value:
+                raise ValueError('noncanonical datetime')
         elif type_.name == 'code':
             target = type_.arguments[0].target
             if codes is not None and value not in codes:
@@ -102,6 +107,9 @@ def encode_input(type_: Type, value: object, code_type: type[str] | None = None)
     elif type_.name == 'date':
         valid = type(value) is date
         encoded = cast(date, value).isoformat() if valid else ''
+    elif type_.name == 'datetime':
+        valid = isinstance(value, datetime)
+        encoded = cast(str, convert('format_datetime', (value,))) if valid else ''
     elif type_.name == 'code':
         assert code_type is not None
         valid = isinstance(value, code_type)

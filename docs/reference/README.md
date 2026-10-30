@@ -59,7 +59,12 @@ assert load_ir(Path('build/tutorial-demo/api-model.json')) == model
 
 业务实体必须各有且仅有一个有效 ID，类型为 `string`、`integer` 或 `snowflake_id`；继承树中的实例共享根实体的 ID。字段支持 `string`、`bool`、`integer`、`snowflake_id`、`decimal`、`date`、普通字典 `code`、指向业务实体的引用及 `collection<业务实体>`。维度还须满足语言对维度类型的约束。内置实体的专用存储由生成器处理。
 
-业务存储目前不支持 `float`、`datetime`、flags code、业务结构化 value、`values<T>`、`mapping<K, V>` 或依赖类型；能通过静态检查不代表可以生成存储。生成器还检查 Python 实体名、方法和关键字冲突，以及 SQL 表名、列名和存储分组冲突；业务字段 `id`、`entity_type` 等保留名称也不能生成。出错时调整模型或等待后端支持。
+业务存储支持带时区的 `datetime`。Plan 使用 ISO 文本，Python 接口使用带时区的 `datetime.datetime`；输入统一转换为 UTC，存储为以 `Z` 结尾的文本。整秒不带小数，其他时间保留六位小数。业务存储目前不支持 `float`、flags code、业务结构化 value、`values<T>`、`mapping<K, V>` 或依赖类型；能通过静态检查不代表可以生成存储。生成器还检查 Python 实体名、方法和关键字冲突，以及 SQL 表名、列名和存储分组冲突；业务字段 `id`、`entity_type` 等保留名称也不能生成。出错时调整模型或等待后端支持。
+
+例如，模型中的 `static attr instant: datetime` 可在 Plan 中写入
+`'2026-01-01T08:00:00+08:00'`，读取结果为 UTC 的
+`datetime(2026, 1, 1, tzinfo=timezone.utc)`。无时区时间、无效日期和超过六位的
+小数秒会被拒绝。
 
 ## 仓库和读取
 

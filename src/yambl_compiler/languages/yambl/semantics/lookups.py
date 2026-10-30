@@ -422,6 +422,7 @@ def supported(type_: Resolved, unit: Unit) -> bool:
         'snowflake_id',
         'decimal',
         'date',
+        'datetime',
     )
 
 

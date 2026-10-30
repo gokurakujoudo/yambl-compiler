@@ -8,6 +8,7 @@ from typing import cast
 
 from yambl_compiler.ir.model import Definition, Field, Type
 from yambl_compiler.languages.shared.model import ObjectValue, Symbol, Value
+from yambl_compiler.storage.conversions import convert
 from yambl_compiler.storage.records import Layout, StoredField, table_name
 
 
@@ -170,6 +171,9 @@ class Catalog:
             if not isinstance(value, str) or date.fromisoformat(value).isoformat() != value:
                 raise ValueError('expected ISO date string')
             encoded = value
+        elif type_.name == 'datetime':
+            instant = convert('parse_datetime', (value,))
+            encoded = cast(str, convert('format_datetime', (instant,)))
         elif type_.name == 'code':
             dictionary = type_.arguments[0].target
             if isinstance(value, Symbol):
@@ -240,7 +244,9 @@ class Catalog:
                 value = Symbol(payload)
             else:
                 value = payload
-        self.scalar(type_, value, check_code=False)
+        encoded = self.scalar(type_, value, check_code=False)
+        if type_.name == 'datetime' and encoded != payload:
+            raise ValueError('noncanonical datetime payload')
         return value
 
 

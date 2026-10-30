@@ -1,7 +1,7 @@
 """Detached scalar rules use the same input and decoding contracts as readers."""
 
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
@@ -11,7 +11,7 @@ from yambl_compiler.ir.lowering import Lowering
 from yambl_compiler.ir.model import Text, Type
 from yambl_compiler.languages.yambl.semantics.validation import analyze
 from yambl_compiler.storage.results import EntityRef
-from yambl_compiler.storage.scalars import ScalarRule
+from yambl_compiler.storage.scalars import ScalarRule, decode_scalar, encode_input
 
 
 class Code(StrEnum):
@@ -27,6 +27,23 @@ def scalar(name, *, kind='value', target='', arguments=(), parameters=()):
 
 
 class ScalarRuleTests(unittest.TestCase):
+    def test_datetime_storage(self):
+        instant = scalar('datetime')
+        utc = datetime(2026, 1, 1, 0, 0, 0, 123456, tzinfo=timezone.utc)
+        offset = datetime(2025, 12, 31, 19, 0, 0, 123456, tzinfo=timezone(timedelta(hours=-5)))
+        self.assertEqual(encode_input(instant, offset), '2026-01-01T00:00:00.123456Z')
+        self.assertEqual(decode_scalar(instant, '2026-01-01T00:00:00.123456Z'), utc)
+        for value in (datetime(2026, 1, 1), date(2026, 1, 1), '2026-01-01T00:00:00Z'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                encode_input(instant, value)
+        for value in (
+            '2026-01-01T00:00:00+00:00',
+            '2026-01-01T00:00:00.1Z',
+            '2026-02-30T00:00:00Z',
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                decode_scalar(instant, value)
+
     def test_dictionary_singleton_reference_from_real_model(self):
         source = 'decodes D {} entity Base { id id:string attr target:Decodes } entity Child inherits Base { @override attr target:exact<D> }'
         analysis = analyze([document(source)])
