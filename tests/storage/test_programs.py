@@ -406,6 +406,8 @@ class ProgramTests(FilesystemCase):
             self.assertEqual(result.value, Decimal(6))
 
     def test_generated_selection_keeps_winner_dimensions_and_cached_values(self):
+        documentation = (self.output / 'python-schema.md').read_text(encoding='utf-8')
+        self.assertTrue(all(line == line.rstrip() for line in documentation.splitlines()))
         for reader in self.readers():
             security = reader.get_security('s').value
             selected = security.read_price_best_available(as_of_date=date(2026, 1, 10))

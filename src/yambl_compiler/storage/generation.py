@@ -479,16 +479,20 @@ def python_package(layout: Layout, package: str) -> str:
                 '',
                 '@dataclass(frozen=True)',
                 f'class {dimensions_name}:',
-                *docstring(
-                    [
-                        f'Selected dimensions of {identity}.',
-                        '',
-                        *(
-                            f':param {dimension.key}: Selected dimension value.'
-                            for dimension in stored.dimensions
-                        ),
-                    ],
-                    4,
+                *(
+                    docstring(
+                        [
+                            f'Selected dimensions of {identity}.',
+                            '',
+                            *(
+                                f':param {dimension.key}: Selected dimension value.'
+                                for dimension in stored.dimensions
+                            ),
+                        ],
+                        4,
+                    )
+                    if stored.dimensions
+                    else [f'    """Selected dimensions of {identity}."""']
                 ),
             ]
         )
