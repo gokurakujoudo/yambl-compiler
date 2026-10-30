@@ -81,7 +81,7 @@ class Access:
     :param span: Original field expression.
     :param owner: Declaring entity identity.
     :param name: Local field name.
-    :param operation: Unified value retrieval or stored-field best_available selection.
+    :param operation: Field value, physical records, or best-available selection.
     """
 
     span: Span
@@ -961,6 +961,10 @@ class Checker:
                 and children(children(implementation.declaration, "field_body")[0], "computation")
             ]
             return list(next((c.inputs for c in implementations if c is not None), ()))
+        if operation == 'records':
+            if mode == 'id' or annotations(site.declaration, 'reverse_relationship'):
+                self.issue(node, 'records requires a physically stored attribute')
+            return []
         if operation not in ("value", "best_available"):
             self.issue(node, "stored fields support ::value or ::best_available")
         result: list[Input] = []
@@ -1232,6 +1236,13 @@ class Checker:
                     Resolver(self.unit, self.computations.diagnostics, {}).evaluate(syntax).type
                 )
             parent = self.read(self.infer(receiver, environment), receiver, navigation=True)
+            if parent.type.name == 'record':
+                names = [name for name, _ in parent.type.params]
+                if node.value not in names:
+                    self.issue(node, f'unknown record member: {node.value}')
+                    return Value(UNKNOWN)
+                self.literal_hints[node.span] = self.hint(parent.type, node.span)
+                return Value(parent.type.args[names.index(node.value)])
             if parent.type.name == "partial" and node.value in ("value", "issues"):
                 return Value(
                     parent.type.args[0]
@@ -1516,6 +1527,35 @@ class Checker:
                 self.issue(node, "field operation requires a field descriptor")
                 return Value(UNKNOWN)
             parameters = self.field_parameters(value, method, node)
+            if method == 'records':
+                if node.arguments:
+                    self.issue(node, '::records() does not accept arguments')
+                body = children(value.site.declaration, 'field_body')[0]
+                mode = field_mode(body)
+                members: list[tuple[str, Resolved]] = []
+                if mode == 'snapshot':
+                    calls = annotations(value.site.declaration, 'temporal')
+                    name = (
+                        str(tokens(children(calls[0], 'pair_argument')[0])[0])
+                        if calls
+                        else 'as_of_date'
+                    )
+                    members.append((name, Resolved('date')))
+                elif mode == 'scd':
+                    members.extend(
+                        (('valid_from', Resolved('date')), ('valid_to', Resolved('date')))
+                    )
+                for call in annotations(value.site.declaration, 'dimension'):
+                    dimension = field_dimension(value.site.unit, value.site.declaration, call, [])
+                    if dimension is not None:
+                        members.append((dimension.value_name, dimension.value_type))
+                members.append(('value', value.type))
+                record = Resolved(
+                    'record',
+                    args=tuple(type_ for _, type_ in members),
+                    params=tuple((name, '') for name, _ in members),
+                )
+                return Value(Resolved('sequence', 'collection', args=(record,)))
             explicit = {a.name: a.expression for a in node.arguments}
 
             def substituted(expression: Expression) -> Expression:
@@ -1622,7 +1662,7 @@ class Checker:
                 if not self.compatible(value.type.base(), alternative.type):
                     self.issue(case.expression, "incompatible recovery branch result")
             return Value(result_type)
-        if method not in ("map", "filter", "flat_map", "group_by", "sum_by"):
+        if method not in ("map", "filter", "flat_map", "group_by", "sum_by", "all"):
             self.issue(node, f"unknown calculation method: {method}")
             return Value(UNKNOWN)
         if (
@@ -1648,10 +1688,10 @@ class Checker:
         returned = self.read(
             self.infer(function.operands[0], local), function.operands[0]
         ).type.base()
-        if method == "filter":
+        if method in ("filter", "all"):
             if returned.name != "bool" and returned.kind != "unknown":
-                self.issue(function, "filter predicate requires bool")
-            return value
+                self.issue(function, f"{method} predicate requires bool")
+            return Value(Resolved('bool')) if method == 'all' else value
         if method == "flat_map":
             if returned.name not in ("sequence", "collection", "values") or not returned.args:
                 self.issue(function, "flat_map requires a sequence result")

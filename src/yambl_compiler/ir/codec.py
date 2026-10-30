@@ -109,7 +109,7 @@ def loads(text: str) -> Model:
     if (
         not isinstance(data, dict)
         or type(data.get('format_revision')) is not int
-        or data['format_revision'] != 13
+        or data['format_revision'] != 14
     ):
         raise ValueError(
             '$.format_revision: unsupported IR revision; recompile the model repository'

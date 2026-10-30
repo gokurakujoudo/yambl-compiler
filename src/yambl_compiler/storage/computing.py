@@ -515,6 +515,25 @@ class Computing:
             for lane in frame.lanes
         }
 
+    def record_member(self, frame: Frame, source: Vector, member: str) -> Vector:
+        """Read a record coordinate or propagate its stored value result.
+
+        :param frame: Active contribution lanes.
+        :param source: Record values.
+        :param member: Checked coordinate or value name.
+        :returns: Normal coordinates or the record's native value result.
+        """
+        output: Vector = {}
+        for lane in frame.lanes:
+            result = at(source, lane)
+            if isinstance(result, NonNormalResult):
+                output[lane] = result
+                continue
+            payload = getattr(result.value, member)
+            value = cast(ReadResult[object], payload) if member == 'value' else Success(payload)
+            output[lane] = lift(keep_right, [result, value])
+        return output
+
     def _owners(self, frame: Frame, source: Vector) -> Vector:
         """Resolve unique scalar references without constructing entity handles.
 
@@ -555,7 +574,7 @@ class Computing:
         :param frame: Calculation context.
         :param source: Scalar entity references.
         :param identity: Resolved logical field identity.
-        :param operation: value or best_available.
+        :param operation: value, records or best_available.
         :param arguments: Explicit subtree bindings.
         :returns: Aligned field results with contribution locations.
         """
@@ -579,6 +598,11 @@ class Computing:
             field = self.batch.implementation(owner.target, identity)
             if field is None:
                 output[lane] = NonNormalResult(Status.NOT_DEFINED)
+                continue
+            if operation == 'records':
+                output[lane] = lift(
+                    keep_right, [owner_result, self.reader.records(owner, identity)]
+                )
                 continue
             parameters = {**frame.inputs, **arguments}
             dims: list[tuple[str, object]] = []
@@ -838,10 +862,12 @@ class Computing:
 
         :param frame: Parent contributions.
         :param source: Collection or grouped results.
-        :param method: map, filter, flat_map, group_by or sum_by.
+        :param method: map, filter, flat_map, group_by, sum_by or all.
         :param function: Generated lambda accepting all selected element lanes.
         :returns: Immutable collections, grouped intermediates or totals.
         """
+        if method == 'all':
+            return self.sequence_all(frame, source, function)
         elements: Vector = {}
         membership: dict[Lane, list[tuple[Lane, object]]] = {}
         labels: dict[Lane, object] = {}
@@ -945,4 +971,50 @@ class Computing:
             else:
                 payload = tuple(cast(Success[object], result).value for _, _, result in usable)
             output[lane] = Partial(payload, details) if details else Success(payload, "computation")
+        return output
+
+    def sequence_all(self, frame: Frame, source: Vector, function: Lambda) -> Vector:
+        """Evaluate each predicate in order until false or a non-normal result.
+
+        :param frame: Parent contributions.
+        :param source: Collection results.
+        :param function: Generated predicate.
+        :returns: One short-circuited boolean result per parent lane.
+        """
+        output: Vector = {}
+        for lane in frame.lanes:
+            result = at(source, lane)
+            if isinstance(result, NonNormalResult):
+                output[lane] = result
+                continue
+            payload = result.value
+            values = (
+                sorted(
+                    payload, key=lambda v: (str(getattr(v, 'target', '')), str(getattr(v, 'id', v)))
+                )
+                if isinstance(payload, frozenset)
+                else payload
+            )
+            for index, value in enumerate(cast(Sequence[object], values)):
+                child = (*lane, index)
+                predicate = at(function(frame.subset((child,)), {child: Success(value)}), child)
+                if not isinstance(predicate, Success):
+                    output[lane] = predicate
+                    break
+                if type(predicate.value) is not bool:
+                    output[lane] = NonNormalResult(Status.ERROR, 'all predicate requires bool')
+                    break
+                if not predicate.value:
+                    output[lane] = (
+                        Partial(False, result.issues)
+                        if isinstance(result, Partial)
+                        else Success(False, 'computation')
+                    )
+                    break
+            else:
+                output[lane] = (
+                    Partial(True, result.issues)
+                    if isinstance(result, Partial)
+                    else Success(True, 'computation')
+                )
         return output

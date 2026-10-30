@@ -300,7 +300,7 @@ class CalculationAccess(Record):
     span: Span
     identity: str
     implementation: str
-    operation: Literal["best_available", "value"]
+    operation: Literal["best_available", "value", "records"]
 
 
 @dataclass(frozen=True)

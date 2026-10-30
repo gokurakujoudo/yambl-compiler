@@ -239,10 +239,18 @@ def python_package(layout: Layout, package: str) -> str:
         "".join(word.capitalize() for word in package.removesuffix("_model").split("_")) + "Reader"
     )
     data_name = reader_name.removesuffix('Reader') + 'Data'
+    accessed_records = {
+        access.identity
+        for field in computed.values()
+        if field.calculation
+        for access in field.calculation.accesses
+        if access.operation == 'records'
+    }
     records = {
         key: names[s.root] + "".join(p.capitalize() for p in s.field.name.split("_")) + "Record"
         for key, s in layout.fields.items()
-        if s.root in names and (s.dimensions or s.field.category in ("snapshot", "scd"))
+        if s.root in names
+        and (s.dimensions or s.field.category in ("snapshot", "scd") or key in accessed_records)
     }
     public_names = [
         *names.values(),

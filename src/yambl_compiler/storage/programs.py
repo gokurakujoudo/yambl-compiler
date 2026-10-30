@@ -144,6 +144,8 @@ class Emitter:
                 )
             ):
                 return f"engine.code({frame}, {self.references[receiver.value]!r}, {node.value!r})"
+            if node.annotation and node.annotation.name == 'record':
+                return f'engine.record_member({frame}, {emit(receiver)}, {node.value!r})'
             if node.value in ("value", "issues"):
                 return f"engine.partial_member({frame}, {emit(receiver)}, {node.value!r})"
             if node.annotation and any(

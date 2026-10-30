@@ -7,7 +7,7 @@
             "properties": {
                 "format_revision": {
                     "type": "integer",
-                    "const": 13
+                    "const": 14
                 },
                 "compiler_version": {
                     "type": "string"
@@ -1208,7 +1208,8 @@
                     "type": "string",
                     "enum": [
                         "best_available",
-                        "value"
+                        "value",
+                        "records"
                     ]
                 }
             },

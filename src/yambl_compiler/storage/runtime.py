@@ -168,6 +168,7 @@ class Reader:
             self._point,
             self._value,
             self._scalar_rule,
+            self._physical_records,
         )
         self._batch = Batch(self._session)
         self._configuration = Configuration(self._batch)
@@ -486,7 +487,46 @@ class Reader:
                 return self.read(handle, identity, {})
             if not stored.table:
                 return self._reverse_all(handle, identity, field, stored)
-            key = (identity, "all")
+            return self._records(handle, identity, field, stored)
+        except (OSError, sqlite3.Error, ValueError, TypeError, KeyError, InvalidOperation) as error:
+            return NonNormalResult(Status.ERROR, str(error))
+
+    def _physical_records(self, owner: EntityRef[object], identity: str) -> ReadResult[object]:
+        """Read a field's stored records for a checked calculation receiver.
+
+        :param owner: Actual entity identity.
+        :param identity: Logical field identity.
+        :returns: Immutable record sequence or a native failure.
+        """
+        try:
+            key = (owner.target, owner.id)
+            handle = self._handles.setdefault(key, self.entity_types[owner.target](self, *key))
+            field = self._field(handle, identity)
+            if field is None:
+                return NonNormalResult(Status.NOT_DEFINED)
+            stored = self._layout.fields[identity]
+            return self._records(handle, identity, field, stored)
+        except (OSError, sqlite3.Error, ValueError, TypeError, KeyError, InvalidOperation) as error:
+            return NonNormalResult(Status.ERROR, str(error))
+
+    def _records(
+        self, handle: EntityHandle, identity: str, field: Field, stored: StoredField
+    ) -> ReadResult[object]:
+        """Read physical coordinates shared by public snapshots and calculations.
+
+        :param handle: Owner entity.
+        :param identity: Logical field identity.
+        :param field: Actual implementation.
+        :param stored: Physical storage mapping.
+        :returns: Immutable record sequence, including per-record failures.
+        """
+        try:
+            if not stored.table:
+                raise ValueError('records requires a physically stored attribute')
+            key = (
+                identity,
+                'all' if stored.dimensions or field.category in ('snapshot', 'scd') else 'records',
+            )
             if key in self._cache.setdefault(handle, {}):
                 return self._cache.setdefault(handle, {})[key]
             self._ready()
@@ -541,14 +581,22 @@ class Reader:
                 if coordinate in seen:
                     raise ValueError("duplicate property coordinate")
                 seen.add(coordinate)
-                value = self._value(stored, field, row)
+                value = (
+                    NonNormalResult(Status.NO_ENTRY)
+                    if field.category == 'config'
+                    and STATE_NAMES.get(cast(int, row[stored.state])) == 'NO_ENTRY'
+                    else self._value(stored, field, row)
+                )
                 row["_result"] = value
                 records.append(self.record_types[identity](**args, value=value))
             result = Success[object](tuple(records))
             if not has_error(result):
                 self._cache.setdefault(handle, {})[key] = result
-                self._full.setdefault(handle, {})[identity] = tuple(rows)
-                self._batch.full[(EntityRef(handle.entity_type, handle.id), identity)] = tuple(rows)
+                if stored.dimensions or field.category in ('snapshot', 'scd'):
+                    self._full.setdefault(handle, {})[identity] = tuple(rows)
+                    self._batch.full[(EntityRef(handle.entity_type, handle.id), identity)] = tuple(
+                        rows
+                    )
             return result
         except (
             OSError,

@@ -7,7 +7,7 @@ from datetime import date
 from yambl_compiler.ir.model import Field, Type
 from yambl_compiler.storage.backends import Backend, Row
 from yambl_compiler.storage.records import Layout, StoredField
-from yambl_compiler.storage.results import ReadResult
+from yambl_compiler.storage.results import EntityRef, ReadResult
 from yambl_compiler.storage.scalars import ScalarRule
 
 
@@ -25,6 +25,7 @@ class Session:
     :param point: Interpret point records with the common result rules.
     :param value: Interpret one stored field row.
     :param scalar_rule: Freeze a scalar's input validation without retaining the session.
+    :param records: Read physical records for an entity and logical field.
     """
 
     layout: Layout
@@ -37,3 +38,4 @@ class Session:
     point: Callable[[StoredField, Field, list[Row], date | None], ReadResult[object]]
     value: Callable[[StoredField, Field, Row], ReadResult[object]]
     scalar_rule: Callable[[Type], ScalarRule]
+    records: Callable[[EntityRef[object], str], ReadResult[object]]
