@@ -114,6 +114,13 @@ class Resolver:
         if term.sort == 'value' and term.type.name == 'type':
             target = term.type.args[0]
             return replace(target, dependency=term.path) if term.type.exact is None else target
+        if (
+            self.allow_exact
+            and term.sort == 'value'
+            and term.type.name == 'Decodes'
+            and term.type.exact_key is not None
+        ):
+            return term.type
         self.issue(node, 'type position requires a type or an entity type value')
         return UNKNOWN
 
@@ -138,6 +145,20 @@ class Resolver:
         """
         if children(node, 'binding') and not allow_binding:
             self.issue(node, 'as binding is only allowed on a mapping key')
+        finite = children(node, 'one_of_type')
+        if finite:
+            analyzer = self.unit.world.computations
+            if analyzer is None:
+                self.issue(node, 'finite type requires an indexed model')
+                return Term(UNKNOWN)
+            return Term(analyzer.finite_type(self.unit, finite[0]))
+        exact = children(node, 'exact_type')
+        if exact:
+            analyzer = self.unit.world.computations
+            if analyzer is None:
+                self.issue(node, 'exact type requires an indexed model')
+                return Term(UNKNOWN)
+            return Term(analyzer.finite_type(self.unit, exact[0]))
         first = tokens(node)[0]
         name = str(first)
         if first.type == 'NAME' and name in self.unit.world.constants:
@@ -516,8 +537,6 @@ class Resolver:
                 ):
                     self.issue(node, 'alias requires an instance field value')
                 return Term(replace(resolved, dependency=value.path))
-            if not self.allow_exact:
-                self.issue(node, 'exact requires override or overload')
             if resolved.exact is None:
                 self.issue(node, 'exact requires a constant value')
             return Term(resolved)

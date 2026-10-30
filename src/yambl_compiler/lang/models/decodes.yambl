@@ -28,8 +28,8 @@ namespace builtins
 可以同时存在 Currencies、Countries 等多个字典，各自拥有自己的代码查找范围。
 
 `Decodes` 是 final 实体，禁止继承及 extend。`decodes Currencies` 定义的是 `Decodes` 的单例实例，
-不创建名为 `Currencies` 的实体类型或 `Decodes` 子类。因此，`attr x: Currencies`
-与 `attr x: exact<Currencies>` 都表示固定字典引用；此常量约束只用于 override 或 overload。
+不创建名为 `Currencies` 的实体类型或 `Decodes` 子类。`attr x: exact<Currencies>`
+表示固定字典引用；在 override 或 overload 中，`attr x: Currencies` 是它的简写。
 
 ## 代码值与字典引用
 

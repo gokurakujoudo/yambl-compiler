@@ -5,9 +5,57 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import cast
 
-from yambl_compiler.ir.model import Type
+from yambl_compiler.ir.model import Type, Value
 from yambl_compiler.storage.conversions import convert
 from yambl_compiler.storage.results import EntityRef
+
+
+def finite_matches(member: Value, value: object) -> bool:
+    """Compare a validated value with one typed finite-set member.
+
+    :param member: Portable, already validated finite member.
+    :param value: Decoded or canonically encoded scalar, or a structured value.
+    :returns: Whether both values are equal under the declared type.
+    """
+    if member.kind == 'structured':
+        return all(
+            finite_matches(field.value, getattr(value, field.name)) for field in member.fields
+        )
+    if member.kind == 'reference' and isinstance(value, EntityRef):
+        value = value.id
+    if member.kind == 'bool':
+        return bool(value) == (member.text == 'true')
+    if member.kind in ('integer', 'snowflake_id'):
+        return int(cast(str | int, value)) == int(member.text)
+    if member.kind == 'decimal':
+        return Decimal(cast(str | int | Decimal, value)) == Decimal(member.text)
+    if member.kind == 'float':
+        return float(cast(str | int | float | Decimal, value)) == float(member.text)
+    if member.kind == 'date' and isinstance(value, date):
+        return value.isoformat() == member.text
+    if member.kind == 'datetime' and isinstance(value, datetime):
+        return convert('format_datetime', (value,)) == member.text
+    return str(value) == member.text
+
+
+def check_finite(type_: Type, value: object) -> None:
+    """Enforce an already validated finite contract at an input or decode boundary.
+
+    :param type_: Declared value contract.
+    :param value: Type-checked scalar or structured value.
+    :returns: None when the value is a member.
+    :raises ValueError: If the value is outside the allowed set.
+    """
+    if (
+        type_.exact is not None
+        and type_.kind != 'reference'
+        and not finite_matches(type_.exact, value)
+    ):
+        raise ValueError('value violates exact constraint')
+    if type_.allowed_values and not any(
+        finite_matches(member, value) for member in type_.allowed_values
+    ):
+        raise ValueError('value violates one_of constraint')
 
 
 def reference_matches(type_: Type, identity: object) -> bool:
@@ -78,11 +126,7 @@ def decode_scalar(
             result = code_type(value)
         else:
             result = value
-    if (
-        type_.exact is not None
-        and (str(result).lower() if isinstance(result, bool) else str(result)) != type_.exact.text
-    ):
-        raise ValueError('value violates exact constraint')
+    check_finite(type_, result)
     return result
 
 

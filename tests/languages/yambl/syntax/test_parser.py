@@ -3,6 +3,8 @@
 import unittest
 from pathlib import Path
 
+from lark import Tree
+
 from tests.support import document
 from yambl_compiler.languages.yambl.syntax.parser import (
     Diagnostic,
@@ -14,6 +16,39 @@ from yambl_compiler.languages.yambl.syntax.parser import (
 
 
 class SyntaxTests(unittest.TestCase):
+    def test_exact_closer_and_greater_comparisons(self):
+        for source in (
+            'entity A { config attr x: exact<1>=1 }',
+            'entity A { attr x: exact<1 >= 0> }',
+            'entity A { attr x: exact<(1 > 0)> }',
+            'entity A { attr x: exact<1> # explanation\n attr y: string }',
+        ):
+            with self.subTest(source=source):
+                self.assertNotIsInstance(parse(source), Diagnostic)
+
+    def test_one_of_contains_calculation_expressions(self):
+        doc = document("type options = one_of['a', C.VALUE, to_integer('2'), 1 + 2]")
+        alias = children(doc.tree, 'type_alias')[0]
+        finite = children(children(alias, 'type_expr')[0], 'one_of_type')[0]
+        self.assertEqual(
+            [child.data for child in finite.children if isinstance(child, Tree)],
+            [
+                'calculation_literal',
+                'calculation_postfix',
+                'calculation_function',
+                'sum_expression',
+            ],
+        )
+        self.assertNotIsInstance(parse('type options = one_of[]'), Diagnostic)
+        for source in (
+            'type x = one_of[1,]',
+            'type x = one_of<1, 2>',
+            'type x = decimal[1 + 2]',
+            'entity A { attr a: exact<1<string>> }',
+        ):
+            with self.subTest(source=source):
+                self.assertIsInstance(parse(source), Diagnostic)
+
     def test_abstract_entity_and_computed_declarations(self):
         doc = document('abstract entity Base { abstract computed attr label: string }')
         entity = children(doc.tree, 'entity')[0]

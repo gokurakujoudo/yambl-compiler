@@ -77,7 +77,9 @@ decodes: annotation* decodes_header "{" entry* "}"
 decodes_header: DECODES NAME
 entry: "-" (INT | BINARY) NAME ":" STRING
 type_expr: _type_term flag_operation* binding?
-_type_term: (NAME | SELF | STRING | INT | NUMBER | BOOLEAN) (parameters | arguments)? access*
+_type_term: one_of_type | exact_type | (NAME | SELF | STRING | INT | NUMBER | BOOLEAN) (parameters | arguments)? access*
+one_of_type: ONE_OF "[" [calculation ("," calculation)*] "]"
+exact_type: EXACT "<" calculation EXACT_END
 flag_operation: ("+" | "-") flag_operand
 flag_operand: _type_term
 arguments: "<" type_expr ("," type_expr)* ">"
@@ -88,6 +90,8 @@ parameters: "[" parameter ("," parameter)* "]"
 named_parameter: NAME ":" literal
 ?literal: INT | STRING
 CONST.2: /const\b/
+ONE_OF.2: /one_of\b/
+EXACT.2: /exact\b/
 COMPUTED.2: /computed\b/
 LOOKUP.2: /lookup\b/
 DIMENSION.2: /dimension\b/
@@ -103,6 +107,7 @@ AND.2: /and\b/
 OR.2: /or\b/
 NOT.2: /not\b/
 COMPARISON: "==" | "!=" | "<=" | ">=" | "<" | ">"
+EXACT_END.2: />(?!=)(?=(?:\s|#[^\n]*(?:\n|$))*(?:[,{}\])>@=]|$|(?:attr|static|snapshot|scd|config|computed|abstract|id|entity|value|extend|type|const|decorator|lookup|dimension|hierarchy|decodes|final|as)\b))/
 CALC_NUMBER: /[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/
 NAMESPACE.2: /namespace\b/
 FROM.2: /from\b/

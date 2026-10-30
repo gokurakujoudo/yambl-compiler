@@ -1,7 +1,10 @@
 """Validate embedded contracts and compare their derived semantic views."""
 
+import json
+import math
 import re
 from dataclasses import fields
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from typing import cast
@@ -16,12 +19,14 @@ from yambl_compiler.ir.model import (
     Model,
     Record,
     Source,
+    Type,
     Value,
 )
 from yambl_compiler.ir.restoring import restore
 from yambl_compiler.languages.yambl.computation.records import (
     CalculationExpression,
     CalculationSpan,
+    TypeHint,
 )
 from yambl_compiler.languages.yambl.semantics.expressions import REGEX_REFERENCE
 from yambl_compiler.languages.yambl.syntax.parser import Diagnostic
@@ -253,6 +258,21 @@ def structural(model: Model) -> list[str]:
             for i, entry in enumerate(item.entries):
                 if not re.fullmatch(r'-?(?:0|[1-9][0-9]*)', entry.ordering):
                     issues.append(f"{path}.entries[{i}].ordering: invalid integer")
+        elif isinstance(item, TypeHint):
+            if item.name in ('one_of', 'exact') and item.finite_candidates:
+                keys = [
+                    json.dumps(encode(value), sort_keys=True, ensure_ascii=False)
+                    for value in item.finite_values
+                ]
+                minimum = 1 if item.name == 'exact' else 2
+                if (
+                    len(item.finite_candidates) < minimum
+                    or len(keys) < minimum
+                    or keys != sorted(set(keys))
+                ):
+                    issues.append(path + ': invalid finite annotation')
+            elif item.finite_candidates or item.finite_values:
+                issues.append(path + ': finite values require a finite annotation')
         elif isinstance(item, Expression):
             names = {
                 match.group(2)
@@ -261,8 +281,9 @@ def structural(model: Model) -> list[str]:
                 for match in REGEX_REFERENCE.finditer(parameter.value)
                 if not len(match.group(1)) % 2
             }
-            if names != {reference.name for reference in item.references} or len(names) != len(
-                item.references
+            if item.kind != 'finite' and (
+                names != {reference.name for reference in item.references}
+                or len(names) != len(item.references)
             ):
                 issues.append(path + '.references: invalid string format bindings')
             if any(reference.value not in identifiers for reference in item.references):
@@ -287,9 +308,54 @@ def structural(model: Model) -> list[str]:
             ) + '.'.join(filter(None, (item.source.namespace, item.name)))
             if item.kind == 'external' and item.target != external_identity:
                 issues.append(path + '.target: invalid external dictionary identity')
+            if item.kind == 'finite':
+                minimum = 1 if item.name == 'exact' else 2
+                if (
+                    item.name not in ('one_of', 'exact')
+                    or len(item.finite_candidates) < minimum
+                    or len(item.finite_values) < minimum
+                    or len(item.finite_values) > len(item.finite_candidates)
+                    or (item.name == 'exact' and len(item.finite_candidates) != 1)
+                ):
+                    issues.append(path + ': invalid finite expression')
+                keys = [
+                    json.dumps(encode(value), sort_keys=True, ensure_ascii=False)
+                    for value in item.finite_values
+                ]
+                if keys != sorted(set(keys)):
+                    issues.append(path + '.finite_values: expected unique canonical ordering')
+                if len({reference.name for reference in item.references}) != len(item.references):
+                    issues.append(path + '.references: duplicate finite expression binding')
+            elif item.finite_candidates or item.finite_values:
+                issues.append(path + ': finite values require a finite expression')
+        elif isinstance(item, Type):
+            if item.allowed_values:
+                if (
+                    item.exact is not None
+                    or len(item.allowed_values) < 2
+                    or item.kind in ('reference', 'collection', 'unknown')
+                ):
+                    issues.append(path + '.allowed_values: invalid finite constraint')
+                expected = item.name if not item.target else 'structured'
+                for value in item.allowed_values:
+                    target = (
+                        item.arguments[0].target
+                        if item.name == 'code' and item.arguments
+                        else item.target
+                    )
+                    if value.kind != expected or value.target != target:
+                        issues.append(
+                            path + '.allowed_values: member type disagrees with constraint'
+                        )
+                keys = [
+                    json.dumps(encode(value), sort_keys=True, ensure_ascii=False)
+                    for value in item.allowed_values
+                ]
+                if keys != sorted(set(keys)):
+                    issues.append(path + '.allowed_values: expected unique canonical ordering')
         elif isinstance(item, Value):
             valid = True
-            if item.kind == 'integer':
+            if item.kind in ('integer', 'snowflake_id'):
                 valid = bool(re.fullmatch(r'-?(?:0|[1-9][0-9]*)', item.text))
             elif item.kind == 'decimal':
                 try:
@@ -298,6 +364,31 @@ def structural(model: Model) -> list[str]:
                     valid = False
             elif item.kind == 'bool':
                 valid = item.text in ('true', 'false')
+            elif item.kind == 'float':
+                try:
+                    valid = math.isfinite(float(item.text))
+                except ValueError:
+                    valid = False
+            elif item.kind == 'date':
+                try:
+                    valid = date.fromisoformat(item.text).isoformat() == item.text
+                except ValueError:
+                    valid = False
+            elif item.kind == 'datetime':
+                from yambl_compiler.storage.conversions import convert
+
+                try:
+                    parsed = convert('parse_datetime', (item.text,))
+                    valid = convert('format_datetime', (parsed,)) == item.text
+                except ValueError:
+                    valid = False
+            elif item.kind == 'structured':
+                field_names = [field.name for field in item.fields]
+                valid = (
+                    bool(item.target) and not item.text and field_names == sorted(set(field_names))
+                )
+            if item.kind != 'structured' and item.fields:
+                valid = False
             if not valid:
                 issues.append(path + '.text: invalid scalar value')
     return issues
@@ -342,7 +433,7 @@ def validate_ir(model: Model) -> tuple[str, ...]:
     """
     try:
         decode(encode(model), Model)
-        if model.format_revision != 11:
+        if model.format_revision != 12:
             return ('$.format_revision: unsupported IR revision; recompile the model repository',)
         issues = structural(model)
         if issues:

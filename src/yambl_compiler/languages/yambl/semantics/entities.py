@@ -220,6 +220,11 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
 
     collect_subtypes(list(units), diagnostics)
     index = EntityIndex(fields, ancestors, effective, {})
+    from yambl_compiler.languages.yambl.semantics.computation import Computations
+
+    analyzer = Computations(index, diagnostics)
+    for unit in units:
+        unit.world.computations = analyzer
     groups: dict[tuple[EntityKey, str], list[tuple[EntityKey, FieldSite]]] = {}
     for key in sorted(fields, key=lambda item: len(ancestors[item])):
         for name, site in fields[key].items():
@@ -412,5 +417,6 @@ def override_type(actual: Resolved, prior: FieldSite, self_fields: FieldTypes) -
         children(children(prior.declaration, 'field_body')[0], 'type_expr')[0]
     )
     return actual == expected or (
-        actual.exact is not None and accepts(expected, actual, prior.unit.world)
+        (actual.exact is not None or bool(actual.allowed_values))
+        and accepts(expected, actual, prior.unit.world)
     )

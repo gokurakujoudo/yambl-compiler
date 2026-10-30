@@ -96,6 +96,26 @@ class Restoring:
             if reference.name != reference.value.removeprefix('model::').rpartition('.')[2]:
                 raise ValueError(f"{source.path}:{source.line}: invalid format reference")
             self.reference(reference.value, source)
+        if expression.kind == 'finite':
+            return Tree(
+                'type_expr',
+                [
+                    Tree(
+                        'exact_type' if expression.name == 'exact' else 'one_of_type',
+                        [
+                            token(
+                                expression.name,
+                                'EXACT' if expression.name == 'exact' else 'ONE_OF',
+                                source,
+                            ),
+                            *(
+                                restore_expression(candidate)
+                                for candidate in expression.finite_candidates
+                            ),
+                        ],
+                    )
+                ],
+            )
         if expression.kind == 'reference':
             first = self.reference(expression.target, source)
         elif expression.kind == 'external':

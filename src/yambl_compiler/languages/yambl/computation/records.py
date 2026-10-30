@@ -10,6 +10,53 @@ class Record:
 
 
 @dataclass(frozen=True)
+class Value(Record):
+    """Preserve a scalar or structured value without JSON numeric rounding.
+
+    :param kind: Value category.
+    :param text: Normalized scalar value or reference ID.
+    :param target: Qualified type or dictionary identity.
+    :param selections: Canonical selected flags codes.
+    :param mask: Decimal flags bit mask, empty for other values.
+    :param fields: Named members of a structured compile-time value.
+    """
+
+    kind: Literal[
+        'string',
+        'integer',
+        'decimal',
+        'bool',
+        'reference',
+        'type',
+        'dictionary',
+        'code',
+        'flags',
+        'float',
+        'date',
+        'datetime',
+        'snowflake_id',
+        'structured',
+    ]
+    text: str
+    target: str
+    selections: tuple[str, ...] = ()
+    mask: str = ''
+    fields: tuple['ValueField', ...] = ()
+
+
+@dataclass(frozen=True)
+class ValueField(Record):
+    """Preserve a structured value field and its typed member.
+
+    :param name: Declared field name.
+    :param value: Checked field value.
+    """
+
+    name: str
+    value: Value
+
+
+@dataclass(frozen=True)
 class CalculationSpan(Record):
     """Locate an expression within its declaring source.
 
@@ -103,6 +150,8 @@ class TypeHint(Record):
     :param target: Resolved declaration identity for elaborated literals.
     :param operations: Flags operations in source order.
     :param binding: Local generic binding name, when present.
+    :param finite_candidates: Compile-time expressions inside ``one_of``.
+    :param finite_values: Normalized finite members of the checked annotation.
     """
 
     name: str
@@ -113,6 +162,8 @@ class TypeHint(Record):
     target: str = ''
     operations: tuple[HintOperation, ...] = ()
     binding: str = ''
+    finite_candidates: tuple[Expression, ...] = ()
+    finite_values: tuple[Value, ...] = ()
 
 
 @dataclass(frozen=True)

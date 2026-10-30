@@ -13,6 +13,8 @@ from yambl_compiler.languages.yambl.computation.records import (
 from yambl_compiler.languages.yambl.computation.records import (
     Record as Record,
 )
+from yambl_compiler.languages.yambl.computation.records import Value as Value
+from yambl_compiler.languages.yambl.computation.records import ValueField as ValueField
 
 
 @dataclass(frozen=True)
@@ -47,34 +49,6 @@ class Text(Record):
 
     name: str
     value: str
-
-
-@dataclass(frozen=True)
-class Value(Record):
-    """Preserve scalar and identity values without JSON numeric rounding.
-
-    :param kind: Value category.
-    :param text: Normalized scalar value or reference ID.
-    :param target: Qualified type or dictionary identity.
-    :param selections: Canonical selected flags codes.
-    :param mask: Decimal flags bit mask, empty for other values.
-    """
-
-    kind: Literal[
-        'string',
-        'integer',
-        'decimal',
-        'bool',
-        'reference',
-        'type',
-        'dictionary',
-        'code',
-        'flags',
-    ]
-    text: str
-    target: str
-    selections: tuple[str, ...] = ()
-    mask: str = ''
 
 
 @dataclass(frozen=True)
@@ -120,9 +94,13 @@ class Expression(Record):
     :param binding: Locally introduced mapping binding.
     :param source: Original expression location.
     :param references: Lexical bindings used by string format references.
+    :param finite_candidates: Source-ordered compile-time expressions for ``one_of``.
+    :param finite_values: Canonically ordered values derived from ``one_of``.
     """
 
-    kind: Literal['primitive', 'generic', 'reference', 'parameter', 'self', 'literal', 'external']
+    kind: Literal[
+        'primitive', 'generic', 'reference', 'parameter', 'self', 'literal', 'external', 'finite'
+    ]
     name: str
     target: str
     literal: Value | None
@@ -133,6 +111,8 @@ class Expression(Record):
     binding: str
     source: Source
     references: tuple[Text, ...] = ()
+    finite_candidates: tuple[CalculationExpression, ...] = ()
+    finite_values: tuple[Value, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -148,6 +128,7 @@ class Type(Record):
     :param dependent: Whether the declaring expression depends on an instance or binding.
     :param members: Candidate contracts selected by attrs.
     :param candidates: Logical field identities selectable by attrs.
+    :param allowed_values: Canonically ordered finite members, or empty when unconstrained.
     """
 
     name: str
@@ -159,6 +140,7 @@ class Type(Record):
     dependent: bool
     members: tuple[Type, ...]
     candidates: tuple[str, ...]
+    allowed_values: tuple[Value, ...] = ()
 
 
 @dataclass(frozen=True)

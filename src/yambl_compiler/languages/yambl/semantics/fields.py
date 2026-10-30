@@ -1,12 +1,13 @@
 """Validate field modifiers, descriptive annotations and configuration defaults."""
 
 import re
+from dataclasses import replace
 
 from lark import Token, Tree
 
 from yambl_compiler.languages.yambl.semantics.expressions import Resolver
 from yambl_compiler.languages.yambl.semantics.symbols import Unit
-from yambl_compiler.languages.yambl.semantics.types import FieldTypes, check_type
+from yambl_compiler.languages.yambl.semantics.types import FieldTypes, accepts, check_type
 from yambl_compiler.languages.yambl.syntax.parser import (
     Diagnostic,
     annotations,
@@ -102,8 +103,8 @@ def check_field(
             'bool': {'BOOLEAN'},
         }
         value = string_value(literal) if literal.type == 'STRING' else str(literal)
-        if literal.type not in allowed.get(type_name, set()) or (
-            resolved_default.exact is not None and value != resolved_default.exact
+        if literal.type not in allowed.get(type_name, set()) or not accepts(
+            resolved_default, replace(resolved_default.base(), exact=value), unit.world
         ):
             diagnostics.append(
                 diagnostic(

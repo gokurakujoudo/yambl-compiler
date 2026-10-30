@@ -1,9 +1,11 @@
 """Collect declarations and resolve file-local imports."""
 
+from __future__ import annotations
+
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 from lark import Token, Tree
 
@@ -15,6 +17,9 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     diagnostic,
     tokens,
 )
+
+if TYPE_CHECKING:
+    from yambl_compiler.languages.yambl.semantics.computation import Computations
 
 VALUES = {
     'bool',
@@ -39,6 +44,19 @@ GENERICS = {
     'exact',
 }
 type EntityKey = tuple[str, str]
+
+
+def qualified(key: EntityKey) -> str:
+    """Remove repository identity from a semantic declaration key.
+
+    :param key: Internal repository-qualified symbol key.
+    :returns: Portable qualified name, preserving model-local builtins.
+    """
+    namespace = key[0].split('\0')[-1]
+    name = '.'.join(filter(None, (namespace, key[1])))
+    return 'model::' + name if '\0' in key[0] and namespace == 'builtins' else name
+
+
 type DeclarationKind = Literal[
     'entity', 'decodes', 'value', 'type_alias', 'decorator', 'constant', 'dimension', 'hierarchy'
 ]
@@ -85,6 +103,7 @@ class World:
     :param dimensions: Entity-scoped named dimension declarations.
     :param subtypes: Derived dictionary identities and depth-first entries.
     :param builtin_units: Embedded source scopes, including extension-only files.
+    :param computations: Shared compile-time evaluator, once entity fields are indexed.
     """
 
     declarations: dict[EntityKey, tuple[Unit, Tree[Token]]] = field(
@@ -108,6 +127,7 @@ class World:
         default_factory=dict[EntityKey, tuple[SubtypeEntry, ...]]
     )
     builtin_units: list[Unit] = field(default_factory=lambda: list[Unit]())
+    computations: Computations | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass(frozen=True)

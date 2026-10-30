@@ -109,7 +109,7 @@ def loads(text: str) -> Model:
     if (
         not isinstance(data, dict)
         or type(data.get('format_revision')) is not int
-        or data['format_revision'] != 11
+        or data['format_revision'] != 12
     ):
         raise ValueError(
             '$.format_revision: unsupported IR revision; recompile the model repository'
@@ -148,6 +148,10 @@ def semantic(value: JSON) -> JSON:
         }
         if 'bound' in value:
             removed.add('arguments')
+        if value.get('kind') == 'finite':
+            removed.update(('finite_candidates', 'references'))
+        elif value.get('name') in ('one_of', 'exact') and 'finite_candidates' in value:
+            removed.add('finite_candidates')
         return {key: semantic(item) for key, item in value.items() if key not in removed}
     return value
 

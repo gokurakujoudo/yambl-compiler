@@ -42,6 +42,7 @@ from yambl_compiler.ir.model import (
     Value,
 )
 from yambl_compiler.languages.yambl.computation.records import Expression as CalculationExpression
+from yambl_compiler.languages.yambl.computation.records import TypeHint
 from yambl_compiler.languages.yambl.semantics.decodes import is_flags
 from yambl_compiler.languages.yambl.semantics.decorators import bind_call, parameters
 from yambl_compiler.languages.yambl.semantics.dimensions import (
@@ -67,9 +68,17 @@ from yambl_compiler.languages.yambl.semantics.symbols import (
     Unit,
     header,
     namespace,
+    qualified,
 )
-from yambl_compiler.languages.yambl.semantics.types import Resolved, common_type
+from yambl_compiler.languages.yambl.semantics.types import (
+    Resolved,
+    common_type,
+    portable_finite_value,
+    portable_flags,
+)
 from yambl_compiler.languages.yambl.semantics.validation import Analysis
+from yambl_compiler.languages.yambl.syntax.computation import branches
+from yambl_compiler.languages.yambl.syntax.computation import expression as calculation_expression
 from yambl_compiler.languages.yambl.syntax.parser import (
     annotations,
     children,
@@ -77,17 +86,6 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     string_value,
     tokens,
 )
-
-
-def qualified(key: EntityKey) -> str:
-    """Remove checkout identity from a semantic symbol key.
-
-    :param key: Internal repository-qualified symbol key.
-    :returns: Portable qualified name.
-    """
-    namespace = key[0].split('\0')[-1]
-    name = '.'.join(filter(None, (namespace, key[1])))
-    return 'model::' + name if '\0' in key[0] and namespace == 'builtins' else name
 
 
 def literal(token: Token) -> Value:
@@ -183,7 +181,9 @@ class Lowering:
         :returns: Portable type contract.
         """
         exact = None
-        if resolved.exact is not None:
+        if resolved.exact_value is not None:
+            exact = portable_finite_value(resolved.exact_value)
+        elif resolved.exact is not None:
             value = resolved.exact
             target = qualified(resolved.key) if resolved.key else ''
             if resolved.exact_key is not None:
@@ -194,17 +194,7 @@ class Lowering:
                 target = qualified(key) if key else ''
                 declaration = self.world.declarations.get(key or ('', ''))
                 if declaration and is_flags(declaration[1]):
-                    selected = tuple(filter(None, value.split('+')))
-                    mask = sum(
-                        (
-                            int(str(tokens(entry)[1]), 0)
-                            if '0b' in str(tokens(entry)[1])
-                            else int(tokens(entry)[1])
-                        )
-                        for entry in children(declaration[1], 'entry')
-                        if str(tokens(entry)[2]) in selected
-                    )
-                    exact = Value('flags', '', target, selected, str(mask))
+                    exact = portable_flags(resolved, self.world)
                 else:
                     exact = Value('code', value, target)
             else:
@@ -266,6 +256,12 @@ class Lowering:
                 )
             ),
             tuple(sorted(candidates)),
+            tuple(
+                sorted(
+                    (portable_finite_value(value) for value in resolved.allowed_values),
+                    key=lambda value: json.dumps(encode(value), sort_keys=True, ensure_ascii=False),
+                )
+            ),
         )
 
     def expression(
@@ -286,6 +282,57 @@ class Lowering:
         :returns: Structured expression with resolved identities.
         """
         bindings = set(bindings or ())
+        finite = children(node, 'one_of_type') or children(node, 'exact_type')
+        if finite:
+            name = 'exact' if finite[0].data == 'exact_type' else 'one_of'
+            candidates = tuple(
+                calculation_expression(candidate) for candidate in branches(finite[0])
+            )
+            finite_refs: dict[str, str] = {}
+
+            def collect(expression: CalculationExpression) -> None:
+                """Record lexical identities referenced by a finite candidate.
+
+                :param expression: Candidate subtree.
+                :returns: None; records visible declaration bindings.
+                """
+                symbol = unit.scope.get(expression.value) if expression.kind == 'name' else None
+                if symbol and symbol.kind in ('constant', 'decodes', 'entity'):
+                    finite_refs[expression.value] = qualified(symbol.key)
+                for child in expression.operands:
+                    collect(child)
+                for argument in expression.arguments:
+                    collect(argument.expression)
+                for case in expression.cases:
+                    collect(case.expression)
+
+            for candidate in candidates:
+                collect(candidate)
+            resolved = resolver.resolve(node)
+            values = tuple(
+                sorted(
+                    (portable_finite_value(value) for value in resolved.allowed_values),
+                    key=lambda value: json.dumps(encode(value), sort_keys=True, ensure_ascii=False),
+                )
+            )
+            if name == 'exact':
+                exact = self.type(resolved).exact
+                values = (exact,) if exact is not None else ()
+            return Expression(
+                'finite',
+                name,
+                '',
+                None,
+                (),
+                (),
+                (),
+                (),
+                '',
+                self.source(unit, node),
+                tuple(Text(name, target) for name, target in sorted(finite_refs.items())),
+                candidates,
+                values,
+            )
         first = tokens(node)[0]
         name = str(first)
         target = ''
@@ -494,6 +541,25 @@ class Lowering:
 
         for binding in checked.body.bindings:
             visit(binding.expression)
+            if binding.annotation:
+
+                def visit_hint(hint: TypeHint) -> None:
+                    """Collect declaration references from a local type annotation.
+
+                    :param hint: Type annotation subtree.
+                    :returns: None; records its lexical declarations.
+                    """
+                    symbol = unit.scope.get(hint.name)
+                    if symbol is not None:
+                        references[hint.name] = qualified(symbol.key)
+                    for candidate in hint.finite_candidates:
+                        visit(candidate)
+                    for argument in hint.arguments:
+                        visit_hint(argument)
+                    for operation in hint.operations:
+                        visit_hint(operation.operand)
+
+                visit_hint(binding.annotation)
         visit(checked.body.result)
         return Calculation(
             checked.body,
@@ -982,7 +1048,7 @@ class Lowering:
         )
         return seal(
             Model(
-                11,
+                12,
                 self.version,
                 self.prefix,
                 primitives,

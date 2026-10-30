@@ -12,6 +12,7 @@ from yambl_compiler.ir import compile_repository
 from yambl_compiler.languages.shared.documents import parse
 from yambl_compiler.languages.shared.model import ObjectValue, Symbol
 from yambl_compiler.storage.layout import build_layout
+from yambl_compiler.storage.scalars import decode_scalar, encode_input
 from yambl_compiler.transactions.binding import Catalog, object_items
 
 
@@ -25,6 +26,27 @@ class CatalogCase(FilesystemCase):
 
 
 class BindingTests(CatalogCase):
+    def test_ordinary_exact_aliases_bind_and_decode(self):
+        self.write(
+            'model.yambl',
+            "type enabled = exact<true> entity A { id key: string attr flag: enabled attr label: exact<'ready'> config attr count: exact<2> = 2 }",
+        )
+        catalog = Catalog(build_layout(compile_repository(self.root)))
+        entity = catalog.entity('A')
+        for name, value, payload, wrong in (
+            ('flag', True, 1, False),
+            ('label', 'ready', 'ready', 'wrong'),
+            ('count', 2, '2', 3),
+        ):
+            with self.subTest(name=name):
+                field, _ = catalog.field(entity, name)
+                self.assertEqual(catalog.scalar(field.type, value), payload)
+                self.assertEqual(decode_scalar(field.type, encode_input(field.type, value)), value)
+                with self.assertRaisesRegex(ValueError, 'exact constraint'):
+                    catalog.scalar(field.type, wrong)
+                with self.assertRaisesRegex(ValueError, 'exact constraint'):
+                    decode_scalar(field.type, encode_input(field.type, wrong))
+
     def test_shared_editor_type_cases(self):
         fixture = (
             Path(__file__).resolve().parents[3]

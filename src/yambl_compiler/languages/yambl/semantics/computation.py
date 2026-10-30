@@ -1,7 +1,9 @@
 """Type calculations and infer public inputs from their field dependencies."""
 
+import json
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal, cast
 
@@ -9,6 +11,8 @@ from lark import Token, Tree
 
 from yambl_compiler.languages.yambl.computation.evaluation import StructuredConstant, evaluate
 from yambl_compiler.languages.yambl.computation.records import Body, Expression, Span, TypeHint
+from yambl_compiler.languages.yambl.computation.records import Value as PortableValue
+from yambl_compiler.languages.yambl.semantics.decodes import is_flags
 from yambl_compiler.languages.yambl.semantics.decorators import bind_call
 from yambl_compiler.languages.yambl.semantics.dimensions import (
     Dimension,
@@ -17,8 +21,16 @@ from yambl_compiler.languages.yambl.semantics.dimensions import (
 )
 from yambl_compiler.languages.yambl.semantics.entities import EntityIndex, FieldSite
 from yambl_compiler.languages.yambl.semantics.expressions import Resolver
-from yambl_compiler.languages.yambl.semantics.symbols import EntityKey, Unit, field_owner
-from yambl_compiler.languages.yambl.semantics.types import UNKNOWN, Resolved, accepts
+from yambl_compiler.languages.yambl.semantics.symbols import EntityKey, Unit, field_owner, qualified
+from yambl_compiler.languages.yambl.semantics.types import (
+    UNKNOWN,
+    FiniteValue,
+    Resolved,
+    accepts,
+    common_type,
+    portable_finite_value,
+    portable_flags,
+)
 from yambl_compiler.languages.yambl.syntax.computation import body as calculation_body
 from yambl_compiler.languages.yambl.syntax.computation import (
     branches,
@@ -32,6 +44,7 @@ from yambl_compiler.languages.yambl.syntax.parser import (
     Diagnostic,
     annotations,
     children,
+    diagnostic,
     field_mode,
     tokens,
 )
@@ -137,6 +150,8 @@ class Computations:
     :param constant_types: Checked constant declaration types.
     :param constant_values: Successfully evaluated immutable constants.
     :param constant_active: Constant declarations in the active dependency chain.
+    :param finite_types: Previously resolved finite type expressions.
+    :param finite_active: Finite type expressions in the active dependency chain.
     """
 
     entities: EntityIndex
@@ -148,6 +163,268 @@ class Computations:
     constant_types: dict[EntityKey, Resolved] = field(default_factory=dict[EntityKey, Resolved])
     constant_values: dict[EntityKey, object] = field(default_factory=dict[EntityKey, object])
     constant_active: set[EntityKey] = field(default_factory=set[EntityKey])
+    finite_types: dict[int, tuple[Tree[Token], Resolved]] = field(
+        default_factory=dict[int, tuple[Tree[Token], Resolved]]
+    )
+    finite_active: set[int] = field(default_factory=set[int])
+
+    def finite_value(self, unit: Unit, type_: Resolved, payload: object) -> FiniteValue:
+        """Give an evaluated value its declared identity for finite-set equality.
+
+        :param unit: Scope containing the expression.
+        :param type_: Inferred value type.
+        :param payload: Evaluated immutable value.
+        :returns: Typed value independent of source spelling.
+        :raises ValueError: If a value cannot be represented as a finite member.
+        """
+        if isinstance(payload, StructuredConstant):
+            if type_.key is None:
+                raise ValueError('structured finite value requires a declared type')
+            declarations = unit.world.fields[type_.key]
+            fields: list[tuple[str, FiniteValue]] = []
+            for name, value in payload.fields:
+                field_unit, declaration = declarations[name]
+                body = children(declaration, 'field_body')[0]
+                field_type = Resolver(field_unit, self.diagnostics, {}).resolve(
+                    children(body, 'type_expr')[0]
+                )
+                fields.append((name, self.finite_value(field_unit, field_type, value)))
+            return FiniteValue('structured', type_.key, tuple(fields))
+        if not isinstance(payload, (str, int, bool, float, Decimal, date, datetime)):
+            raise ValueError('finite values must be non-collection values')
+        target = type_.args[0].key if type_.name == 'code' else type_.key
+        return FiniteValue(
+            'reference' if type_.kind == 'reference' else type_.name, target, payload
+        )
+
+    def finite_type(self, unit: Unit, syntax: Tree[Token]) -> Resolved:
+        """Infer and evaluate the non-collection members of a finite type.
+
+        :param unit: Lexical scope of the declaration.
+        :param syntax: Positioned ``one_of`` or ``exact`` syntax.
+        :returns: Common value type constrained to its normalized members.
+        """
+        identity = id(syntax)
+        if identity in self.finite_types:
+            return self.finite_types[identity][1]
+        if identity in self.finite_active:
+            self.diagnostics.append(
+                diagnostic(unit.document, syntax, 'finite type dependency cycle')
+            )
+            return UNKNOWN
+        self.finite_active.add(identity)
+        is_exact = syntax.data == 'exact_type'
+        candidates: list[tuple[Resolved, object]] = []
+        for source in branches(syntax):
+            node = calculation_expression(source)
+            checker = Checker(self, ('', ''), unit)
+            before = len(self.diagnostics)
+
+            def flags_expression(expression: Expression) -> Tree[Token] | None:
+                """Adapt flags set operations to the existing symbolic type resolver.
+
+                :param expression: Candidate calculation subtree.
+                :returns: Equivalent symbolic expression, or None for another value kind.
+                """
+                if expression.kind == 'member' and expression.operands[0].kind == 'name':
+                    root = expression.operands[0].value
+                    symbol = unit.scope.get(root)
+                    if symbol is None or symbol.kind != 'decodes':
+                        return None
+                    declaration = unit.world.declarations[symbol.key][1]
+                    if not is_flags(declaration):
+                        return None
+                    original = tokens(source)[0]
+                    return Tree(
+                        'type_expr',
+                        [
+                            Token.new_borrow_pos('NAME', root, original),
+                            Tree(
+                                'access',
+                                [
+                                    Token.new_borrow_pos('DOT', '.', original),
+                                    Token.new_borrow_pos('NAME', expression.value, original),
+                                ],
+                            ),
+                        ],
+                    )
+                if expression.kind == 'binary' and expression.value in ('+', '-'):
+                    left = flags_expression(expression.operands[0])
+                    right = flags_expression(expression.operands[1])
+                    if left is not None and right is not None:
+                        left.children.append(
+                            Tree(
+                                'flag_operation',
+                                [
+                                    Token.new_borrow_pos(
+                                        'PLUS' if expression.value == '+' else 'MINUS',
+                                        expression.value,
+                                        tokens(source)[0],
+                                    ),
+                                    Tree('flag_operand', right.children),
+                                ],
+                            )
+                        )
+                        return left
+                return None
+
+            flags = flags_expression(node)
+            if flags is not None:
+                resolver = Resolver(unit, self.diagnostics, {})
+                value_type = resolver.value_type(resolver.evaluate(flags))
+                if is_exact:
+                    self.finite_active.remove(identity)
+                    self.finite_types[identity] = (syntax, value_type)
+                    return value_type
+                if value_type.exact is not None and len(self.diagnostics) == before:
+                    candidates.append((value_type.base(), value_type.exact))
+                continue
+            symbol = unit.scope.get(node.value) if node.kind == 'name' else None
+            if is_exact and symbol is not None and symbol.kind in ('entity', 'decodes'):
+                legacy = Tree(
+                    'type_expr', [Token.new_borrow_pos('NAME', node.value, tokens(source)[0])]
+                )
+                resolver = Resolver(unit, self.diagnostics, {})
+                value_type = resolver.value_type(resolver.evaluate(legacy))
+                self.finite_active.remove(identity)
+                self.finite_types[identity] = (syntax, value_type)
+                return value_type
+            value_type = checker.read(checker.infer(node, {}), node).type
+            if is_exact and value_type.kind == 'reference' and value_type.exact_key is not None:
+                self.finite_active.remove(identity)
+                self.finite_types[identity] = (syntax, value_type)
+                return value_type
+            self.check_pure(checker, node)
+            if value_type.kind in ('collection', 'reference') or value_type.name == 'non_normal':
+                checker.issue(
+                    node, 'finite values must be non-collection values without entity instances'
+                )
+            if len(self.diagnostics) != before or value_type.kind == 'unknown':
+                if is_exact:
+                    checker.issue(node, 'exact requires a constant value')
+                continue
+            try:
+                value = evaluate(
+                    checker.elaborate(node), lambda name: self.resolve_constant(unit, name)
+                )
+                candidates.append((value_type.base(), value))
+            except (ValueError, ArithmeticError, TypeError, KeyError) as error:
+                checker.issue(node, f'finite value evaluation failed: {error}')
+        common = common_type([type_ for type_, _ in candidates], unit.world)
+        result = UNKNOWN
+        if len(candidates) != len(branches(syntax)):
+            pass
+        elif common is None and candidates:
+            self.diagnostics.append(
+                diagnostic(
+                    unit.document,
+                    syntax,
+                    'finite values require a common type; use typed constants or explicit conversions',
+                )
+            )
+        else:
+            try:
+                values = frozenset(
+                    self.finite_value(
+                        unit,
+                        common if common and common.name == 'string' else type_,
+                        (
+                            str(value)
+                            if common and common.name == 'string' and type_.name != 'string'
+                            else value
+                        ),
+                    )
+                    for type_, value in candidates
+                )
+            except (ValueError, KeyError) as error:
+                self.diagnostics.append(diagnostic(unit.document, syntax, str(error)))
+            else:
+                if is_exact and len(values) == 1:
+                    assert common is not None
+                    only = next(iter(values))
+                    result = replace(
+                        common, exact=portable_finite_value(only).text, exact_value=only
+                    )
+                elif len(values) < 2:
+                    self.diagnostics.append(
+                        diagnostic(
+                            unit.document,
+                            syntax,
+                            'one_of requires at least two distinct values; use exact for one',
+                        )
+                    )
+                else:
+                    assert common is not None
+                    result = replace(common, allowed_values=values)
+        self.finite_active.remove(identity)
+        self.finite_types[identity] = (syntax, result)
+        return result
+
+    def check_pure(
+        self, checker: 'Checker', expression: Expression, key_position: bool = False
+    ) -> None:
+        """Reject runtime-only syntax in a compile-time expression.
+
+        :param checker: Expression checker with the declaration's lexical scope.
+        :param expression: Constant subtree.
+        :param key_position: Whether a name denotes a structured field key.
+        :returns: None; appends diagnostics for impure syntax.
+        """
+        unit = checker.unit
+        if (
+            expression.kind == 'member'
+            and expression.operands[0].kind == 'descriptor'
+            and expression.operands[0].value == 'subtypes'
+            and expression.operands[0].operands[0].kind == 'name'
+        ):
+            symbol = unit.scope.get(expression.operands[0].operands[0].value)
+            if symbol is not None and symbol.kind == 'entity':
+                return
+        if expression.kind == 'name' and not key_position:
+            symbol = unit.scope.get(expression.value)
+            if expression.value not in SIGNATURES and (
+                symbol is None or symbol.kind not in ('constant', 'decodes')
+            ):
+                checker.issue(expression, f'not a pure constant dependency: {expression.value}')
+        if expression.kind in ('descriptor', 'recover', 'lambda') or (
+            expression.kind == 'call' and expression.operands[0].kind != 'name'
+        ):
+            checker.issue(
+                expression, 'constant expressions cannot read fields, inputs or non-normal results'
+            )
+        for i, child in enumerate(expression.operands):
+            hint = checker.literal_hints.get(expression.span)
+            self.check_pure(
+                checker,
+                child,
+                expression.kind == 'object' and bool(hint and hint.target) and i % 2 == 0,
+            )
+        for argument in expression.arguments:
+            self.check_pure(checker, argument.expression)
+
+    def resolve_constant(self, unit: Unit, name: str) -> object:
+        """Resolve a constant dependency in its lexical scope.
+
+        :param unit: Scope containing the reference.
+        :param name: Constant name or dictionary member path.
+        :returns: Evaluated immutable value.
+        :raises ValueError: If the dependency is not a usable constant.
+        """
+        root, dot, code = name.partition('.')
+        if dot and root.endswith('::subtypes'):
+            return code
+        symbol = unit.scope.get(root)
+        if symbol is not None and symbol.kind == 'constant':
+            self.constant(symbol.key, unit)
+            if symbol.key in self.constant_values:
+                payload = self.constant_values[symbol.key]
+                if not dot:
+                    return payload
+                assert isinstance(payload, StructuredConstant)
+                return dict(payload.fields)[code]
+        if symbol is not None and symbol.kind == 'decodes' and dot:
+            return code
+        raise ValueError(f'not a pure constant dependency: {name}')
 
     def constant(self, key: EntityKey, scope: Unit) -> Resolved:
         """Check and evaluate a constant once, detecting forward-reference cycles.
@@ -171,77 +448,16 @@ class Computations:
         before = len(self.diagnostics)
         actual = checker.infer(node, {}, expected).type
 
-        def pure(expression: Expression, key_position: bool = False) -> None:
-            """Reject runtime-only syntax even in an unselected constant branch.
-
-            :param expression: Constant subtree.
-            :param key_position: Whether a name denotes a structured field key.
-            :returns: None.
-            """
-            if (
-                expression.kind == 'member'
-                and expression.operands[0].kind == 'descriptor'
-                and expression.operands[0].value == 'subtypes'
-                and expression.operands[0].operands[0].kind == 'name'
-            ):
-                name = expression.operands[0].operands[0].value
-                symbol = unit.scope.get(name)
-                if symbol is not None and symbol.kind == 'entity':
-                    return
-            if expression.kind == 'name' and not key_position:
-                symbol = unit.scope.get(expression.value)
-                if expression.value not in SIGNATURES and (
-                    symbol is None or symbol.kind not in ('constant', 'decodes')
-                ):
-                    checker.issue(expression, f'not a pure constant dependency: {expression.value}')
-            if expression.kind in ('descriptor', 'recover', 'lambda') or (
-                expression.kind == 'call' and expression.operands[0].kind != 'name'
-            ):
-                checker.issue(
-                    expression,
-                    'constant expressions cannot read fields, inputs or non-normal results',
-                )
-            for i, child in enumerate(expression.operands):
-                hint = checker.literal_hints.get(expression.span)
-                pure(
-                    child, expression.kind == 'object' and bool(hint and hint.target) and i % 2 == 0
-                )
-            for argument in expression.arguments:
-                pure(argument.expression)
-
-        pure(node)
+        self.check_pure(checker, node)
         if not checker.compatible(expected, actual):
             checker.issue(
                 node, f'incompatible constant result: expected {expected.name}, got {actual.name}'
             )
 
-        def resolve(name: str) -> object:
-            """Resolve compile-time dependencies in the declaration scope.
-
-            :param name: Constant name or dictionary code path.
-            :returns: Evaluated dependency.
-            :raises ValueError: For nonconstant dependencies or a failed constant.
-            """
-            root, dot, code = name.partition('.')
-            if dot and root.endswith('::subtypes'):
-                return code
-            symbol = unit.scope.get(root)
-            if symbol is not None and symbol.kind == 'constant':
-                self.constant(symbol.key, unit)
-                if symbol.key in self.constant_values:
-                    payload = self.constant_values[symbol.key]
-                    if not dot:
-                        return payload
-                    assert isinstance(payload, StructuredConstant)
-                    return dict(payload.fields)[code]
-            if symbol is not None and symbol.kind == 'decodes' and dot:
-                return code
-            raise ValueError(f'not a pure constant dependency: {name}')
-
         if len(self.diagnostics) == before:
             try:
                 elaborated = checker.elaborate(node)
-                payload = evaluate(elaborated, resolve)
+                payload = evaluate(elaborated, lambda name: self.resolve_constant(unit, name))
                 if expected.name == 'decimal' and expected.params:
                     numeric = Decimal(str(payload))
                     _, digits, exponent = numeric.as_tuple()
@@ -345,7 +561,12 @@ class Computations:
             replace(
                 body,
                 bindings=tuple(
-                    replace(b, expression=checker.elaborate(b.expression)) for b in body.bindings
+                    replace(
+                        b,
+                        expression=checker.elaborate(b.expression),
+                        annotation=checker.checked_hint(b.annotation) if b.annotation else None,
+                    )
+                    for b in body.bindings
                 ),
                 result=checker.elaborate(body.result),
             ),
@@ -392,6 +613,51 @@ class Checker:
         )
         return TypeHint(
             type_.name, tuple(self.hint(a, location) for a in type_.args), (), (), location, target
+        )
+
+    def checked_hint(self, hint: TypeHint) -> TypeHint:
+        """Retain normalized finite constraints in a local type annotation.
+
+        :param hint: Source-preserving type annotation.
+        :returns: Annotation with canonical members for semantic hashing.
+        """
+        values: tuple[PortableValue, ...] = ()
+        if hint.name in ('one_of', 'exact') and hint.finite_candidates:
+            resolved = Resolver(
+                self.unit,
+                self.computations.diagnostics,
+                self.computations.entities.field_types(self.owner),
+            ).resolve(restore_hint(hint))
+            values = tuple(
+                sorted(
+                    (portable_finite_value(member) for member in resolved.allowed_values),
+                    key=lambda member: json.dumps(
+                        asdict(member), sort_keys=True, ensure_ascii=False
+                    ),
+                )
+            )
+            if resolved.exact_value is not None:
+                values = (portable_finite_value(resolved.exact_value),)
+            elif resolved.exact_key is not None:
+                values = (
+                    PortableValue(
+                        'type' if resolved.name == 'type' else 'dictionary',
+                        '',
+                        qualified(resolved.exact_key),
+                    ),
+                )
+            elif resolved.name == 'code' and resolved.exact is not None:
+                declaration = self.unit.world.declarations.get(resolved.args[0].key or ('', ''))
+                if declaration and is_flags(declaration[1]):
+                    values = (portable_flags(resolved, self.unit.world),)
+        return replace(
+            hint,
+            arguments=tuple(self.checked_hint(argument) for argument in hint.arguments),
+            operations=tuple(
+                replace(operation, operand=self.checked_hint(operation.operand))
+                for operation in hint.operations
+            ),
+            finite_values=values,
         )
 
     def elaborate(self, node: Expression) -> Expression:
@@ -466,6 +732,8 @@ class Checker:
         :param actual: Inferred value.
         :returns: Whether the value is compatible.
         """
+        if expected.allowed_values or expected.exact is not None:
+            return accepts(expected, actual, self.unit.world)
         if expected.name in NUMBERS and actual.name in NUMBERS:
             return NUMBERS.index(actual.name) <= NUMBERS.index(expected.name)
         if actual.kind == "unknown" and actual.name == "non_normal":
@@ -1409,7 +1677,9 @@ def check_computations(
     :param units: Resolved scopes containing dimension policy definitions.
     :returns: Computed implementations with inferred signatures.
     """
-    analyzer = Computations(entities, diagnostics)
+    analyzer = units[0].world.computations if units else None
+    if analyzer is None:
+        analyzer = Computations(entities, diagnostics)
     for unit in units:
         for symbol in unit.scope.values():
             if symbol.kind == 'constant':

@@ -76,6 +76,11 @@ def type_hint(node: Tree[Token]) -> TypeHint:
             for o in children(node, 'flag_operation')
         ),
         binding=str(tokens(children(node, 'binding')[0])[-1]) if children(node, 'binding') else '',
+        finite_candidates=tuple(
+            expression(candidate)
+            for finite in children(node, 'one_of_type') + children(node, 'exact_type')
+            for candidate in branches(finite)
+        ),
     )
 
 
@@ -97,7 +102,21 @@ def restore_hint(hint: TypeHint) -> Tree[Token]:
         )
         return located_token(value, kind, hint.span)
 
-    parts: list[Token | Tree[Token]] = [literal(hint.name)]
+    parts: list[Token | Tree[Token]] = (
+        [
+            Tree(
+                'exact_type' if hint.name == 'exact' else 'one_of_type',
+                [
+                    located_token(
+                        hint.name, 'EXACT' if hint.name == 'exact' else 'ONE_OF', hint.span
+                    ),
+                    *(restore_expression(candidate) for candidate in hint.finite_candidates),
+                ],
+            )
+        ]
+        if hint.name in ('one_of', 'exact') and hint.finite_candidates
+        else [literal(hint.name)]
+    )
     if hint.arguments:
         parts.append(Tree('arguments', [restore_hint(a) for a in hint.arguments]))
     if hint.parameters:

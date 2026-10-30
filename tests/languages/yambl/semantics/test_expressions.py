@@ -20,10 +20,6 @@ VALID = "\nnamespace core\ndecodes Currencies { - 100 USD: 'USD' - 200 CNY: 'CNY
 
 INVALID = [
     (
-        'entity A { attr a: exact<1<string>> }',
-        'a value expression does not accept type arguments',
-    ),
-    (
         'entity A { attr a: self<A> }',
         'a value expression does not accept type arguments',
     ),
@@ -59,7 +55,6 @@ INVALID = [
         'entity A { attr a: mapping<attrs<AttrCats.Static, A> as Attr, Attr::value> }',
         'field value requires an instance origin',
     ),
-    ('entity A { attr a: exact<true> }', 'exact requires override or overload'),
     (
         'entity A { attr a: type<Entity> @override attr b: exact<self.a::value> }',
         'exact requires a constant value',
@@ -82,6 +77,86 @@ INVALID = [
 
 
 class ExpressionTests(unittest.TestCase):
+    def test_finite_values_and_inherited_narrowing(self):
+        source = """const LOW: integer = 1 + 1
+entity Base { attr choice: one_of[LOW, 3, 4] }
+entity Child inherits Base { @override attr choice: one_of[3, LOW] }
+entity Leaf inherits Child { @override attr choice: exact<3> }
+"""
+        self.assertEqual(check([document(source)]), [])
+        resolver, fields, _ = self.resolver(source, 'Child')
+        resolved = resolver.resolve(fields['choice'][1])
+        self.assertEqual({value.value for value in resolved.allowed_values}, {2, 3})
+        for replacement in ('one_of[3, 5]', 'exact<4>', 'integer'):
+            invalid = source.replace('one_of[3, LOW]', replacement)
+            with self.subTest(type=replacement):
+                self.assertTrue(
+                    any(
+                        'override signature mismatch' in d.message
+                        for d in check([document(invalid)])
+                    )
+                )
+
+    def test_finite_value_diagnostics(self):
+        for expression in (
+            "one_of[]",
+            "one_of[1]",
+            "one_of[1, 1]",
+            "one_of[1, 'x']",
+            "one_of[self.x::value(), 1]",
+            'one_of[NO_ENTRY, 1]',
+        ):
+            with self.subTest(expression=expression):
+                self.assertTrue(check([document(f'entity A {{ attr x: {expression} }}')]))
+
+    def test_finite_config_default_must_be_a_member(self):
+        source = 'entity A { config attr choice: one_of[1, 2] = 2 }'
+        self.assertEqual(check([document(source)]), [])
+        invalid = source.replace('= 2', '= 3')
+        self.assertTrue(
+            any('incompatible config default' in d.message for d in check([document(invalid)]))
+        )
+
+    def test_finite_constants_normalize_typed_values(self):
+        source = """value point { attr x: integer attr y: string }
+const FIRST: point = {x: 1, y: 'a'}
+const SECOND: point = {x: 2, y: 'b'}
+const START: datetime = parse_datetime('2026-01-01T08:00:00+08:00')
+decodes D { - 1 One: 'one' - 2 Two: 'two' }
+entity A {
+    attr point: one_of[FIRST, SECOND]
+    attr day: one_of[START, parse_datetime('2026-01-02T00:00:00Z')]
+    attr code: one_of[D.One, D.Two]
+}
+"""
+        self.assertEqual(check([document(source)]), [])
+        resolver, fields, _ = self.resolver(source, 'A')
+        for name in ('point', 'day', 'code'):
+            with self.subTest(name=name):
+                self.assertEqual(len(resolver.resolve(fields[name][1]).allowed_values), 2)
+        duplicate = "decodes D { - 1 Same: 'one' } decodes E { - 1 Same: 'two' } entity A { attr x: one_of[D.Same, E.Same] }"
+        self.assertTrue(any('two distinct' in d.message for d in check([document(duplicate)])))
+
+    def test_singleton_types_are_available_without_override(self):
+        source = """type active = exact<true>
+entity A {
+    id key: string
+    static attr enabled: active
+    static attr label: exact<'ready'>
+    config attr count: exact<2> = 2
+    static attr choices: values<exact<'ready'>>
+    static attr labels: mapping<string, exact<'ready'>>
+}
+"""
+        self.assertEqual(check([document(source)]), [])
+        resolver, fields, _ = self.resolver(source, 'A')
+        self.assertEqual(resolver.resolve(fields['enabled'][1]).exact, 'true')
+        self.assertEqual(resolver.resolve(fields['label'][1]).exact, 'ready')
+        self.assertEqual(resolver.resolve(fields['choices'][1]).args[0].exact, 'ready')
+        self.assertEqual(resolver.resolve(fields['labels'][1]).args[1].exact, 'ready')
+        diagnostics = check([document(source.replace('= 2', '= 3'))])
+        self.assertTrue(any('incompatible config default' in item.message for item in diagnostics))
+
     def resolver(self, source, entity='Selection'):
         units = resolve_scopes([document(source)], [])
         index = check_entities(units, [])

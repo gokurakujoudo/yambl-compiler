@@ -2,19 +2,41 @@
 
 import re
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
 from lark import Lark, Token, Tree, UnexpectedInput
 
+GRAMMAR = (Path(__file__).parents[3] / 'grammars/yambl.lark').read_text(encoding='utf-8')
 PARSER = Lark(
-    (Path(__file__).parents[3] / 'grammars/yambl.lark').read_text(encoding='utf-8'),
+    GRAMMAR,
     import_paths=[str(Path(__file__).parents[3] / 'grammars')],
     parser='lalr',
     propagate_positions=True,
     keep_all_tokens=True,
     maybe_placeholders=False,
 )
+
+
+@cache
+def ambiguous_exact_parser() -> Lark:
+    """Resolve an adjacent exact closer and assignment without changing source positions.
+
+    :returns: Parser that considers both readings of ``>=`` when needed.
+    """
+    grammar = '\n'.join(
+        'EXACT_END: ">"' if line.startswith('EXACT_END.') else line for line in GRAMMAR.splitlines()
+    )
+    return Lark(
+        grammar,
+        import_paths=[str(Path(__file__).parents[3] / 'grammars')],
+        parser='earley',
+        lexer='dynamic',
+        propagate_positions=True,
+        keep_all_tokens=True,
+        maybe_placeholders=False,
+    )
 
 
 class TextParser(Protocol):
@@ -143,6 +165,13 @@ def parse(text: str, path: Path = Path('<input>')) -> Document | Diagnostic:
         # Lark's custom-lexer input is untyped; this parser only accepts text and returns trees.
         return Document(path, text, cast(TextParser, PARSER).parse(masked), blocks)
     except UnexpectedInput as error:
+        if 'exact' in masked and '>=' in masked:
+            try:
+                return Document(
+                    path, text, cast(TextParser, ambiguous_exact_parser()).parse(masked), blocks
+                )
+            except UnexpectedInput:
+                pass
         return Diagnostic(path, max(1, error.line), max(1, error.column), 'invalid YAMBL syntax')
 
 

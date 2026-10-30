@@ -24,6 +24,7 @@ from yambl_compiler.storage.results import (
     Status,
     Success,
 )
+from yambl_compiler.storage.scalars import check_finite
 from yambl_compiler.storage.selection import Available, BestRequest
 from yambl_compiler.storage.session import Session
 
@@ -216,6 +217,7 @@ class Computing:
                 raise ValueError('computed structured value has an incompatible type')
             for field in definition.fields:
                 self.boundary(field.type, getattr(value, field.name))
+            check_finite(type_, value)
             return value
         if type_.name == "mapping":
             if not isinstance(value, Mapping):
@@ -238,7 +240,9 @@ class Computing:
         if type_.name == 'datetime':
             if not isinstance(value, datetime) or value.utcoffset() is None:
                 raise ValueError('computed datetime requires an explicit timezone')
-            return value.astimezone(timezone.utc)
+            value = value.astimezone(timezone.utc)
+            check_finite(type_, value)
+            return value
         if type_.name == "float":
             import math
 
@@ -247,6 +251,7 @@ class Computing:
             value = float(cast(int | float | Decimal, value))
             if not math.isfinite(value):
                 raise ValueError("non-finite computed float")
+            check_finite(type_, value)
             return value
         self.reader.encode(type_, value)
         return value

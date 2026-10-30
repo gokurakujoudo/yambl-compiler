@@ -10,6 +10,7 @@ from yambl_compiler.ir.model import Definition, Field, Type
 from yambl_compiler.languages.shared.model import ObjectValue, Symbol, Value
 from yambl_compiler.storage.conversions import convert
 from yambl_compiler.storage.records import Layout, StoredField, table_name
+from yambl_compiler.storage.scalars import check_finite
 
 
 @dataclass(frozen=True)
@@ -211,10 +212,7 @@ class Catalog:
             encoded = value
         else:
             raise ValueError(f'unsupported literal for {type_.name}')
-        if type_.exact is not None:
-            compared = str(bool(encoded)).lower() if type_.name == 'bool' else str(encoded)
-            if compared != type_.exact.text:
-                raise ValueError('value violates exact constraint')
+        check_finite(type_, encoded)
         return encoded
 
     def literal(self, type_: Type, payload: object) -> Value:
