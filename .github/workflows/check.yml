@@ -7,9 +7,24 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: yambl-compiler
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: yambl-compiler
+      - uses: actions/checkout@v4
+        with:
+          repository: gokurakujoudo/yambl
+          ref: 4bddb6974c2a7ef1cf47342bbeb30f6d3ba14070
+          path: yambl
+      - uses: actions/checkout@v4
+        with:
+          repository: gokurakujoudo/fmc-data-model
+          ref: 64322a11eaccabb3a5e8b0d9c3a0be80b195c10f
+          path: fmc-data-model
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
@@ -55,4 +70,4 @@ jobs:
         if: always()
         with:
           name: coverage-${{ matrix.os }}
-          path: build/coverage.json
+          path: yambl-compiler/build/coverage.json
