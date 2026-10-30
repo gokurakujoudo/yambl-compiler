@@ -10,7 +10,7 @@ from yambl_compiler.storage.conversions import SIGNATURES
 class Emitter:
     """Emit vector operations without evaluating or interpreting model source."""
 
-    def __init__(self, model: Model, field: Field) -> None:
+    def __init__(self, model: Model, field: Field | None) -> None:
         """Retain resolved dependencies for one generated implementation.
 
         :param model: Checked portable model.
@@ -19,9 +19,13 @@ class Emitter:
         """
         self.model = model
         self.field = field
-        self.accesses = {a.span: a for a in field.calculation.accesses} if field.calculation else {}
+        self.accesses = (
+            {a.span: a for a in field.calculation.accesses} if field and field.calculation else {}
+        )
         self.references = (
-            {t.name: t.value for t in field.calculation.references} if field.calculation else {}
+            {t.name: t.value for t in field.calculation.references}
+            if field and field.calculation
+            else {}
         )
         self.counter = 0
 
@@ -247,7 +251,7 @@ class Emitter:
                 )
                 if effective is None:
                     raise ValueError(
-                        f"{self.field.identity}: unresolved fallback field {node.value}"
+                        f"{self.field.identity if self.field else 'constraint'}: unresolved fallback field {node.value}"
                     )
                 field = fields[effective.implementation]
                 if field.category not in ("static", "config", "id") and not (
@@ -281,11 +285,12 @@ def programs(model: Model) -> str:
         "from ._results import EntityRef",
         "from ._conversions import convert",
         "from ._computing import literal_mapping",
-        "from ._computing import Computing, Frame, Program, Vector",
+        "from ._computing import Computing, ConstraintProgram, Frame, Program, Vector",
         "",
         "",
     ]
     registry: dict[str, str] = {}
+    constraint_registry: dict[str, str] = {}
 
     def function(
         key: str,
@@ -403,10 +408,45 @@ def programs(model: Model) -> str:
                         emitter,
                         dimension.fallback,
                     )
+    for definition in model.definitions:
+        for constraint in definition.constraints:
+            name = 'constraint_' + str(len(constraint_registry))
+            constraint_registry[constraint.identity] = name
+            emitter = Emitter(model, None)
+            emitter.accesses = {access.span: access for access in constraint.accesses}
+            emitter.references = {
+                reference.name: reference.value for reference in constraint.references
+            }
+            lines.extend(
+                [
+                    f'def {name}(engine: Computing, frame: Frame) -> tuple[tuple[Vector, dict[tuple[int, ...], tuple[tuple[str, str], ...]]], ...]:',
+                    '    """Evaluate the ordered statements of a checked constraint."""',
+                    '    results: list[tuple[Vector, dict[tuple[int, ...], tuple[tuple[str, str], ...]]]] = []',
+                ]
+            )
+            locals_: dict[str, str] = {}
+            for statement in constraint.statements:
+                emitted = emitter.expression(statement.expression, 'frame', locals_)
+                if statement.kind == 'let':
+                    local = emitter.fresh()
+                    lines.append(f'    {local} = {emitted}')
+                    locals_[statement.name] = local
+                else:
+                    lines.append('    engine.constraint_coordinates.clear()')
+                    lines.append(f'    result = {emitted}')
+                    lines.append(
+                        '    results.append((result, dict(engine.constraint_coordinates)))'
+                    )
+            lines.extend(['    return tuple(results)', '', ''])
     lines.append(
         "PROGRAMS: dict[str, Program] = {"
         + ", ".join(f"{key!r}: {name}" for key, name in registry.items())
         + "}"
+    )
+    lines.append(
+        'CONSTRAINT_PROGRAMS: dict[str, ConstraintProgram] = {'
+        + ', '.join(f'{key!r}: {name}' for key, name in constraint_registry.items())
+        + '}'
     )
     if not any("Decimal(" in line for line in lines):
         lines.remove("from decimal import Decimal")
@@ -422,8 +462,10 @@ def programs(model: Model) -> str:
     ):
         if not any(marker in line for line in lines):
             lines.remove(imported)
-    if not registry:
-        lines[lines.index("from ._computing import Computing, Frame, Program, Vector")] = (
-            "from ._computing import Program"
-        )
+    if not registry and not constraint_registry:
+        lines[
+            lines.index(
+                "from ._computing import Computing, ConstraintProgram, Frame, Program, Vector"
+            )
+        ] = "from ._computing import ConstraintProgram, Program"
     return "\n".join(lines) + "\n"

@@ -157,14 +157,17 @@ class Data:
         """Read the declared temporal parameter name.
 
         :param field: Temporal field.
-        :returns: Model-defined name.
+        :returns: Model-defined name, or the standard inferred name.
         """
         return next(
-            b.key
-            for d in field.decorators
-            if d.target == 'builtins.temporal'
-            for b in d.bound
-            if b.key
+            (
+                b.key
+                for d in field.decorators
+                if d.target == 'builtins.temporal'
+                for b in d.bound
+                if b.key
+            ),
+            'as_of_date',
         )
 
     def selection(

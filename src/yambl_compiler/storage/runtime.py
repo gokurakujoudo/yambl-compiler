@@ -19,7 +19,7 @@ from yambl_compiler.storage.backends import (
     SQLiteBackend,
 )
 from yambl_compiler.storage.batch import Batch, FieldRequest
-from yambl_compiler.storage.computing import Computing, Frame, Program, Vector
+from yambl_compiler.storage.computing import Computing, ConstraintProgram, Frame, Program, Vector
 from yambl_compiler.storage.configuration import Configuration
 from yambl_compiler.storage.contract import decode, load_contract, loads
 from yambl_compiler.storage.records import (
@@ -45,6 +45,7 @@ from yambl_compiler.storage.scalars import (
 )
 from yambl_compiler.storage.session import Session
 from yambl_compiler.storage.validation import (
+    EntityValidationError,
     ValidationIssue,
     ValidationReport,
     validate_dictionaries,
@@ -131,6 +132,7 @@ class Reader:
     entity_types: ClassVar[dict[str, type[EntityHandle]]] = {}
     code_types: ClassVar[dict[str, type[str]]] = {}
     calculation_programs: ClassVar[dict[str, Program]] = {}
+    constraint_programs: ClassVar[dict[str, ConstraintProgram]] = {}
 
     def root_type(self, entity_type: str) -> str:
         """Find the inheritance root of a known entity type.
@@ -699,7 +701,7 @@ class Reader:
 
         issues = validate_entities(self)
         if issues:
-            raise ValueError(f'candidate entity validation failed: {issues}')
+            raise EntityValidationError(issues)
 
     def validate_dictionary_references(
         self, dictionaries: set[str], removed: dict[str, set[str]] | None = None

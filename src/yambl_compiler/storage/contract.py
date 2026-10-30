@@ -11,7 +11,7 @@ from typing import Literal, cast, get_args, get_origin, get_type_hints
 from yambl_compiler.storage.records import Layout
 
 type JSON = None | str | int | bool | list[JSON] | dict[str, JSON]
-RUNTIME_REVISION = 17
+RUNTIME_REVISION = 18
 
 
 def unique_object(pairs: list[tuple[str, JSON]]) -> dict[str, JSON]:

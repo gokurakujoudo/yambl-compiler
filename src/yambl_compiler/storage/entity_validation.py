@@ -3,8 +3,9 @@
 from dataclasses import fields, is_dataclass
 from typing import TYPE_CHECKING, cast
 
+from yambl_compiler.storage.computing import Frame, Vector
 from yambl_compiler.storage.records import actual_type, table_name
-from yambl_compiler.storage.results import EntityRef, NonNormalResult, Status, Success
+from yambl_compiler.storage.results import EntityRef, NonNormalResult, Partial, Status, Success
 from yambl_compiler.storage.validation import ValidationIssue
 
 if TYPE_CHECKING:
@@ -39,14 +40,19 @@ def value_key(value: object, type_: 'Type', reader: 'Reader') -> object:
 
 
 def validate_entities(reader: 'Reader') -> tuple[ValidationIssue, ...]:
-    """Check each declared unique key over its entity and descendants.
+    """Check unique keys and constraints over applicable instances.
 
     :param reader: Reader pinned to the full or candidate snapshot.
     :returns: Read failures and all duplicate identity groups.
     """
     layout = reader._layout
     keys = [key for definition in layout.model.definitions for key in definition.unique_keys]
-    if not keys:
+    constraints = [
+        constraint
+        for definition in layout.model.definitions
+        for constraint in definition.constraints
+    ]
+    if not keys and not constraints:
         return ()
     issues: list[ValidationIssue] = []
     for key in keys:
@@ -87,6 +93,60 @@ def validate_entities(reader: 'Reader') -> tuple[ValidationIssue, ...]:
                         key.entity,
                         f'unique_by {key.fields} at {source.path}:{source.line}:{source.column}',
                         tuple(sorted(identities)),
+                    )
+                )
+    for constraint in sorted(constraints, key=lambda item: item.identity):
+        owner = constraint.identity.split('::constraint.', 1)[0]
+        root = layout.roots[owner]
+        for row in sorted(
+            reader._backend.rows(table_name(root), {}), key=lambda item: str(item['id'])
+        ):
+            actual = actual_type(layout, root, row)
+            if constraint.identity not in layout.entities[actual].effective_constraints:
+                continue
+            identity = cast(str | int, reader._decode(layout.ids[root].type, row['id']))
+            lane = (0,)
+            owner_vector: Vector = {lane: Success(EntityRef(actual, identity))}
+            frame = Frame((lane,), owner_vector, {}, (False,))
+            reader._computing.trace_constraints = True
+            try:
+                assertion_results = reader.constraint_programs[constraint.identity](
+                    reader._computing, frame
+                )
+            finally:
+                reader._computing.trace_constraints = False
+                reader._computing.constraint_coordinates.clear()
+            assertions = [
+                statement for statement in constraint.statements if statement.kind == 'assert'
+            ]
+            for statement, (vector, located) in zip(assertions, assertion_results, strict=True):
+                outcome = vector[lane]
+                if isinstance(outcome, Success) and outcome.value is True:
+                    continue
+                state = (
+                    outcome.status.value
+                    if isinstance(outcome, (NonNormalResult, Partial))
+                    else 'false'
+                )
+                coordinates = (
+                    outcome.issues[0].coordinates
+                    if isinstance(outcome, (NonNormalResult, Partial)) and outcome.issues
+                    else ()
+                ) or located.get(lane, ())
+                issues.append(
+                    ValidationIssue(
+                        constraint.identity,
+                        f'constraint assertion failed: {state}',
+                        (f'{actual}:{identity}',),
+                        dimensions=coordinates,
+                        constraint=constraint.identity,
+                        entity=actual,
+                        instance_id=str(identity),
+                        source_path=constraint.source.path,
+                        line=statement.span.line,
+                        column=statement.span.column,
+                        assert_source=statement.assert_source,
+                        status=state,
                     )
                 )
     return tuple(issues)

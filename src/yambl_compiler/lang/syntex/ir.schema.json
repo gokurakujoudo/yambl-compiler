@@ -7,7 +7,7 @@
             "properties": {
                 "format_revision": {
                     "type": "integer",
-                    "const": 15
+                    "const": 16
                 },
                 "compiler_version": {
                     "type": "string"
@@ -204,6 +204,18 @@
                     "items": {
                         "$ref": "#/$defs/UniqueKey"
                     }
+                },
+                "constraints": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/Constraint"
+                    }
+                },
+                "effective_constraints": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             },
             "required": [
@@ -227,7 +239,9 @@
                 "effective_lookups",
                 "hierarchy_entries",
                 "abstract",
-                "unique_keys"
+                "unique_keys",
+                "constraints",
+                "effective_constraints"
             ],
             "additionalProperties": false
         },
@@ -1532,6 +1546,101 @@
                 "entity",
                 "fields",
                 "source"
+            ],
+            "additionalProperties": false
+        },
+        "Constraint": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "identity": {
+                    "type": "string"
+                },
+                "statements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/ConstraintStatement"
+                    }
+                },
+                "accesses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/CalculationAccess"
+                    }
+                },
+                "dependencies": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "references": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/Text"
+                    }
+                },
+                "extension": {
+                    "type": "boolean"
+                },
+                "source": {
+                    "$ref": "#/$defs/Source"
+                }
+            },
+            "required": [
+                "name",
+                "identity",
+                "statements",
+                "accesses",
+                "dependencies",
+                "references",
+                "extension",
+                "source"
+            ],
+            "additionalProperties": false
+        },
+        "ConstraintStatement": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "let",
+                        "assert"
+                    ]
+                },
+                "name": {
+                    "type": "string"
+                },
+                "expression": {
+                    "$ref": "#/$defs/CalculationExpression"
+                },
+                "annotation": {
+                    "anyOf": [
+                        {
+                            "$ref": "#/$defs/TypeHint"
+                        },
+                        {
+                            "type": "null"
+                        }
+                    ]
+                },
+                "span": {
+                    "$ref": "#/$defs/CalculationSpan"
+                },
+                "assert_source": {
+                    "type": "string"
+                }
+            },
+            "required": [
+                "kind",
+                "name",
+                "expression",
+                "annotation",
+                "span",
+                "assert_source"
             ],
             "additionalProperties": false
         },

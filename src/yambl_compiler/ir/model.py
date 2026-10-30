@@ -6,6 +6,7 @@ from typing import Literal
 from yambl_compiler.languages.yambl.computation.records import (
     Body,
     Span,
+    TypeHint,
 )
 from yambl_compiler.languages.yambl.computation.records import (
     Expression as CalculationExpression,
@@ -470,6 +471,50 @@ class UniqueKey(Record):
 
 
 @dataclass(frozen=True)
+class ConstraintStatement(Record):
+    """Retain an ordered constraint expression and its diagnostic text.
+
+    :param kind: Let binding or assertion.
+    :param name: Local binding name, empty for an assertion.
+    :param expression: Checked expression syntax.
+    :param annotation: Explicit local type, if any.
+    :param span: Original statement location.
+    :param assert_source: Original assertion text, empty for a let binding.
+    """
+
+    kind: Literal['let', 'assert']
+    name: str
+    expression: CalculationExpression
+    annotation: TypeHint | None
+    span: Span
+    assert_source: str
+
+
+@dataclass(frozen=True)
+class Constraint(Record):
+    """Describe one constraint in its defining scope.
+
+    :param name: Local constraint name.
+    :param identity: Qualified constraint identity.
+    :param statements: Ordered lets and assertions.
+    :param accesses: Resolved field operations.
+    :param dependencies: Referenced computed implementations.
+    :param references: Referenced lexical declarations.
+    :param extension: Whether the constraint comes from an extend block.
+    :param source: Original constraint location.
+    """
+
+    name: str
+    identity: str
+    statements: tuple[ConstraintStatement, ...]
+    accesses: tuple[CalculationAccess, ...]
+    dependencies: tuple[str, ...]
+    references: tuple[Text, ...]
+    extension: bool
+    source: Source
+
+
+@dataclass(frozen=True)
 class Definition(Record):
     """Preserve a declaration and its checked effective view.
 
@@ -494,6 +539,8 @@ class Definition(Record):
     :param hierarchy_entries: Named Hierarchy's declared ordering and values.
     :param abstract: Whether the entity cannot be instantiated directly.
     :param unique_keys: Unique combinations declared on this entity.
+    :param constraints: Constraints declared directly on this entity.
+    :param effective_constraints: Visible constraint identities, including inherited declarations.
     """
 
     kind: Literal[
@@ -526,6 +573,8 @@ class Definition(Record):
     hierarchy_entries: tuple[HierarchyEntry, ...] = ()
     abstract: bool = False
     unique_keys: tuple[UniqueKey, ...] = ()
+    constraints: tuple[Constraint, ...] = ()
+    effective_constraints: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

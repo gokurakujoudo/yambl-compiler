@@ -222,6 +222,23 @@ def format_document(document: Document) -> str:
                             lookup_parentheses.append(cast(int, item.end_pos))
                         elif str(item) == ')':
                             blocks.append((lookup_parentheses.pop(), cast(int, item.start_pos)))
+            for constraint in children(declaration, 'constraint'):
+                constraint_items = tokens(constraint)
+                opening = line_piece(constraint_items[:3], 1)
+                ending = line_piece(constraint_items[-1:], 1)
+                pieces.extend((opening, ending))
+                blocks.append((opening.end, ending.start))
+                for constraint_statement in constraint.children:
+                    if not isinstance(constraint_statement, Tree):
+                        continue
+                    statement_tokens = tokens(constraint_statement)
+                    pieces.extend(calculation_pieces(statement_tokens, 2))
+                    constraint_parentheses: list[int] = []
+                    for item in statement_tokens:
+                        if str(item) == '(':
+                            constraint_parentheses.append(cast(int, item.end_pos))
+                        elif str(item) == ')':
+                            blocks.append((constraint_parentheses.pop(), cast(int, item.start_pos)))
             for entry in children(declaration, 'entry'):
                 pieces.append(line_piece(tokens(entry), 1))
             for entry in children(declaration, 'hierarchy_entry'):

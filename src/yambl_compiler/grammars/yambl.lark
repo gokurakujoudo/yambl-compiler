@@ -13,12 +13,12 @@ type_alias: annotation* type_alias_header "=" type_expr
 type_alias_header: TYPE NAME type_parameters?
 type_parameters: "<" type_parameter ("," type_parameter)* ">"
 type_parameter: NAME ":" type_expr
-entity: annotation* entity_header "{" (field | dimension | lookup)* "}"
+entity: annotation* entity_header "{" (field | dimension | lookup | constraint)* "}"
 entity_header: (FINAL | ABSTRACT)? ENTITY NAME inheritance?
 value: annotation* value_header "{" field* "}"
 value_header: VALUE NAME
 inheritance: INHERITS NAME
-extension: extension_header "{" (field | dimension | lookup)* "}"
+extension: extension_header "{" (field | dimension | lookup | constraint)* "}"
 extension_header: EXTEND NAME
 field: annotation* field_body
 field_body: (ID | ATTR | STATIC ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) NAME ":" type_expr default_value?
@@ -26,6 +26,8 @@ field_body: (ID | ATTR | STATIC ATTR | SNAPSHOT ATTR | SCD ATTR | CONFIG ATTR) N
           | ABSTRACT COMPUTED ATTR NAME ":" type_expr
 lookup: annotation* LOOKUP NAME "{" lookup_key* "}"
 lookup_key: NAME "=" calculation
+constraint: CONSTRAINT NAME "{" (let_statement | assert_statement)* "}"
+assert_statement: ASSERT calculation
 dimension: dimension_header "{" dimension_value dimension_hierarchy? dimension_fallback? "}"
 dimension_header: DIMENSION NAME
 dimension_value: VALUE NAME ":" type_expr
@@ -94,6 +96,8 @@ ONE_OF.2: /one_of\b/
 EXACT.2: /exact\b/
 COMPUTED.2: /computed\b/
 LOOKUP.2: /lookup\b/
+CONSTRAINT.2: /constraint\b/
+ASSERT.2: /assert\b/
 DIMENSION.2: /dimension\b/
 HIERARCHY.2: /hierarchy\b/
 FALLBACK_DAYS.2: /fallback_days\b/
@@ -107,7 +111,7 @@ AND.2: /and\b/
 OR.2: /or\b/
 NOT.2: /not\b/
 COMPARISON: "==" | "!=" | "<=" | ">=" | "<" | ">"
-EXACT_END.2: />(?!=)(?=(?:\s|#[^\n]*(?:\n|$))*(?:[,{}\])>@=]|$|(?:attr|static|snapshot|scd|config|computed|abstract|id|entity|value|extend|type|const|decorator|lookup|dimension|hierarchy|decodes|final|as)\b))/
+EXACT_END.2: />(?!=)(?=(?:\s|#[^\n]*(?:\n|$))*(?:[,{}\])>@=]|$|(?:attr|static|snapshot|scd|config|computed|abstract|id|entity|value|extend|type|const|decorator|lookup|constraint|dimension|hierarchy|decodes|final|as)\b))/
 CALC_NUMBER: /[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/
 NAMESPACE.2: /namespace\b/
 FROM.2: /from\b/

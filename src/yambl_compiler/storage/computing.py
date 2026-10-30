@@ -2,7 +2,7 @@
 
 import operator
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, is_dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal, DecimalException
 from enum import Enum
@@ -46,6 +46,10 @@ def literal_mapping(*values: object) -> Mapping[object, object]:
 
 
 type Program = Callable[["Computing", "Frame"], Vector]
+type Coordinates = tuple[tuple[str, str], ...]
+type ConstraintProgram = Callable[
+    ["Computing", "Frame"], tuple[tuple[Vector, dict[Lane, Coordinates]], ...]
+]
 type Lambda = Callable[["Frame", Vector], Vector]
 
 
@@ -146,6 +150,8 @@ class Computing:
         self.configuration = configuration
         self.programs = programs
         self.available = Available(batch)
+        self.constraint_coordinates: dict[Lane, Coordinates] = {}
+        self.trace_constraints = False
         self.computed_fields = {
             field.identity for field in reader.implementations.values() if field.calculation
         }
@@ -1013,6 +1019,18 @@ class Computing:
             for index, value in enumerate(cast(Sequence[object], values)):
                 child = (*lane, index)
                 predicate = at(function(frame.subset((child,)), {child: Success(value)}), child)
+                if (
+                    self.trace_constraints
+                    and (not isinstance(predicate, Success) or predicate.value is False)
+                    and is_dataclass(value)
+                    and not isinstance(value, type)
+                    and hasattr(value, 'value')
+                ):
+                    self.constraint_coordinates[lane] = tuple(
+                        (member.name, str(getattr(value, member.name)))
+                        for member in fields(value)
+                        if member.name != 'value'
+                    )
                 if not isinstance(predicate, Success):
                     output[lane] = predicate
                     break

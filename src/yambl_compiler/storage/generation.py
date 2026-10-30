@@ -246,6 +246,13 @@ def python_package(layout: Layout, package: str) -> str:
         for access in field.calculation.accesses
         if access.operation == 'records'
     }
+    accessed_records.update(
+        access.identity
+        for definition in layout.model.definitions
+        for constraint in definition.constraints
+        for access in constraint.accesses
+        if access.operation == 'records'
+    )
     records = {
         key: names[s.root] + "".join(p.capitalize() for p in s.field.name.split("_")) + "Record"
         for key, s in layout.fields.items()
@@ -297,11 +304,13 @@ def python_package(layout: Layout, package: str) -> str:
         "dataclass",
         "ValidationReport",
         "ValidationIssue",
+        "EntityValidationError",
         "Partial",
         "CalculationIssue",
         "Omitted",
         "UNSET",
         "PROGRAMS",
+        "CONSTRAINT_PROGRAMS",
         "Mapping",
         "Sequence",
         "MODEL_DIGEST",
@@ -343,10 +352,10 @@ def python_package(layout: Layout, package: str) -> str:
         "",
         "from ._results import CalculationIssue, EntityRef, HierarchyView, NonNormalResult, Partial, ReadResult, Status, Success",
         "from ._computing import Omitted, UNSET",
-        "from ._calculations import PROGRAMS",
+        "from ._calculations import CONSTRAINT_PROGRAMS, PROGRAMS",
         "from ._runtime import EntityHandle, Reader",
         "from .transactions.repository import DataStore, TransactionReport, TransactionStatus",
-        "from ._validation import ValidationReport, ValidationIssue",
+        "from ._validation import EntityValidationError, ValidationReport, ValidationIssue",
         "",
     ]
     if lookups:
@@ -759,6 +768,7 @@ def python_package(layout: Layout, package: str) -> str:
             "    entity_types = {" + ", ".join(f"{k!r}: {v}" for k, v in names.items()) + "}",
             "    code_types = {" + ", ".join(f"{k!r}: {v}" for k, v in codes.items()) + "}",
             "    calculation_programs = PROGRAMS",
+            "    constraint_programs = CONSTRAINT_PROGRAMS",
         ]
     )
     lookup_methods: set[str] = set()
@@ -906,6 +916,7 @@ def python_package(layout: Layout, package: str) -> str:
                         "UNSET",
                         "ValidationReport",
                         "ValidationIssue",
+                        "EntityValidationError",
                         "TransactionReport",
                         "TransactionStatus",
                         "MODEL_DIGEST",

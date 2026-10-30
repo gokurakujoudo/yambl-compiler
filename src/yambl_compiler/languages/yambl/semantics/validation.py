@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from dataclasses import field as data_field
 
 from yambl_compiler.languages.yambl.semantics.computation import Calculation, check_computations
+from yambl_compiler.languages.yambl.semantics.constraints import Constraint, check_constraints
 from yambl_compiler.languages.yambl.semantics.decodes import check_decodes
 from yambl_compiler.languages.yambl.semantics.decorators import check_decorators
 from yambl_compiler.languages.yambl.semantics.dimensions import check_dimensions, collect_dimensions
@@ -34,6 +35,7 @@ class Analysis:
     :param diagnostics: Ordered errors and warnings.
     :param calculations: Typed computation bodies and inferred parameter contracts.
     :param lookups: Effective named rules and their inferred contracts.
+    :param constraints: Direct checked constraints indexed by declaring entity.
     """
 
     units: tuple[Unit, ...]
@@ -44,6 +46,9 @@ class Analysis:
     )
     lookups: dict[EntityKey, dict[str, Lookup]] = data_field(
         default_factory=dict[EntityKey, dict[str, Lookup]]
+    )
+    constraints: dict[EntityKey, dict[str, Constraint]] = data_field(
+        default_factory=dict[EntityKey, dict[str, Constraint]]
     )
 
 
@@ -83,6 +88,7 @@ def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
     check_relationships(sources, entities, diagnostics)
     calculations = check_computations(entities, diagnostics, units)
     lookups = check_lookups(sources, entities, diagnostics)
+    constraints = check_constraints(sources, entities, diagnostics)
     return Analysis(
         tuple(units),
         entities,
@@ -94,6 +100,7 @@ def analyze_units(units: list[Unit], diagnostics: list[Diagnostic]) -> Analysis:
         ),
         calculations,
         lookups,
+        constraints,
     )
 
 

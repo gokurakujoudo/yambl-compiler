@@ -21,6 +21,7 @@ from yambl_compiler.languages.shared.documents import parse
 from yambl_compiler.languages.yaplan.model import Plan
 from yambl_compiler.languages.yatran.model import Transaction
 from yambl_compiler.storage.results import Success
+from yambl_compiler.storage.validation import EntityValidationError
 from yambl_compiler.transactions.repository import DataStore
 
 
@@ -107,11 +108,21 @@ def commands(data_type: type[DataStore]) -> CommandGroup:
                         status_mgr.update(ExecutionStatus.FAILURE)
                         return Outcome(ok=False)
             else:
-                report = (
-                    data.apply(Path(args.source))
-                    if args.operation == 'apply'
-                    else data.rollback(Path(args.source), args.groups or None)
-                )
+                try:
+                    report = (
+                        data.apply(Path(args.source))
+                        if args.operation == 'apply'
+                        else data.rollback(Path(args.source), args.groups or None)
+                    )
+                except EntityValidationError as error:
+                    print(
+                        json.dumps(
+                            {'valid': False, 'issues': [asdict(issue) for issue in error.issues]},
+                            ensure_ascii=False,
+                        )
+                    )
+                    status_mgr.update(ExecutionStatus.FAILURE)
+                    return Outcome(ok=False)
                 print(json.dumps(asdict(report), ensure_ascii=False, default=str))
         status_mgr.update(ExecutionStatus.SUCCESS)
         return Outcome(ok=True)

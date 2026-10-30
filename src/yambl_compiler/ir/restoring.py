@@ -6,6 +6,7 @@ from lark import Token, Tree
 
 from yambl_compiler.ir.model import (
     Call,
+    Constraint,
     Definition,
     Dimension,
     Expression,
@@ -17,7 +18,12 @@ from yambl_compiler.ir.model import (
 )
 from yambl_compiler.languages.yambl.semantics.symbols import EntityKey, resolve_scopes
 from yambl_compiler.languages.yambl.semantics.validation import Analysis, analyze_units
-from yambl_compiler.languages.yambl.syntax.computation import restore_body, restore_expression
+from yambl_compiler.languages.yambl.syntax.computation import (
+    located_token,
+    restore_body,
+    restore_expression,
+    restore_hint,
+)
 from yambl_compiler.languages.yambl.syntax.parser import Diagnostic, Document
 
 
@@ -265,6 +271,7 @@ class Restoring:
         extension: tuple[Field, ...] | None = None,
         dimensions: tuple[Dimension, ...] = (),
         lookups: tuple[Lookup, ...] = (),
+        constraints: tuple[Constraint, ...] = (),
     ) -> Document:
         """Restore a definition or one extension in its original lexical context.
 
@@ -272,6 +279,7 @@ class Restoring:
         :param extension: Extension fields, or None for the declaration itself.
         :param dimensions: Dimensions declared in this lexical context.
         :param lookups: Rules declared in this lexical context.
+        :param constraints: Constraints declared in this lexical context.
         :returns: In-memory document; no source text is reconstructed or parsed.
         """
         source = definition.source
@@ -279,7 +287,11 @@ class Restoring:
             source = (
                 extension[0].source
                 if extension
-                else (dimensions[0].source if dimensions else lookups[0].source)
+                else (
+                    dimensions[0].source
+                    if dimensions
+                    else lookups[0].source if lookups else constraints[0].source
+                )
             )
         kind = 'extension' if extension is not None else definition.kind
         keyword = {'type_alias': 'type', 'extension': 'extend', 'constant': 'const'}.get(kind, kind)
@@ -430,6 +442,33 @@ class Restoring:
                     ],
                 )
             )
+        for constraint in constraints:
+            for reference in constraint.references:
+                self.reference(reference.value, constraint.source)
+            statements: list[Tree[Token]] = []
+            for statement in constraint.statements:
+                location = statement.span
+                parts: list[Token | Tree[Token]] = [
+                    located_token(statement.kind, statement.kind.upper(), location)
+                ]
+                if statement.kind == 'let':
+                    parts.append(located_token(statement.name, 'NAME', location))
+                    if statement.annotation:
+                        parts.append(restore_hint(statement.annotation))
+                    parts.append(located_token('=', 'EQUAL', location))
+                parts.append(restore_expression(statement.expression))
+                statements.append(Tree(statement.kind + '_statement', parts))
+            body.append(
+                Tree(
+                    'constraint',
+                    [
+                        token('constraint', 'CONSTRAINT', constraint.source),
+                        token(constraint.name, 'NAME', constraint.source),
+                        *statements,
+                        token('}', 'RBRACE', constraint.source),
+                    ],
+                )
+            )
         for entry in (() if extension is not None else definition.entries):
             if not entry.generated:
                 body.append(
@@ -490,7 +529,9 @@ def restore(model: Model) -> Analysis:
     for definition in model.definitions:
         if definition.derived:
             continue
-        groups: dict[tuple[str, str], tuple[list[Field], list[Dimension], list[Lookup]]] = {}
+        groups: dict[
+            tuple[str, str], tuple[list[Field], list[Dimension], list[Lookup], list[Constraint]]
+        ] = {}
         own_dimensions: list[Dimension] = []
         for dimension in definition.dimensions:
             source, owner = dimension.source, definition.source
@@ -502,29 +543,43 @@ def restore(model: Model) -> Analysis:
             ):
                 own_dimensions.append(dimension)
             else:
-                groups.setdefault((source.path, source.namespace), ([], [], []))[1].append(
+                groups.setdefault((source.path, source.namespace), ([], [], [], []))[1].append(
                     dimension
                 )
         for field in definition.fields:
             if field.extension:
-                groups.setdefault((field.source.path, field.source.namespace), ([], [], []))[
+                groups.setdefault((field.source.path, field.source.namespace), ([], [], [], []))[
                     0
                 ].append(field)
         own_lookups = tuple(rule for rule in definition.lookups if not rule.extension)
         for rule in definition.lookups:
             if rule.extension:
-                groups.setdefault((rule.source.path, rule.source.namespace), ([], [], []))[
+                groups.setdefault((rule.source.path, rule.source.namespace), ([], [], [], []))[
                     2
                 ].append(rule)
+        own_constraints = tuple(rule for rule in definition.constraints if not rule.extension)
+        for constraint_rule in definition.constraints:
+            if constraint_rule.extension:
+                groups.setdefault(
+                    (constraint_rule.source.path, constraint_rule.source.namespace),
+                    ([], [], [], []),
+                )[3].append(constraint_rule)
         adapter = Restoring()
         documents.append(
-            adapter.declaration(definition, dimensions=tuple(own_dimensions), lookups=own_lookups)
+            adapter.declaration(
+                definition,
+                dimensions=tuple(own_dimensions),
+                lookups=own_lookups,
+                constraints=own_constraints,
+            )
         )
         bindings.append(adapter.bindings)
-        for fields, dimensions, lookups in groups.values():
+        for fields, dimensions, lookups, constraints in groups.values():
             adapter = Restoring()
             documents.append(
-                adapter.declaration(definition, tuple(fields), tuple(dimensions), tuple(lookups))
+                adapter.declaration(
+                    definition, tuple(fields), tuple(dimensions), tuple(lookups), tuple(constraints)
+                )
             )
             bindings.append(adapter.bindings)
     diagnostics: list[Diagnostic] = []

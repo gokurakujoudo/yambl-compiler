@@ -33,6 +33,14 @@ class ValidationIssue:
     :param dimensions: Canonical dimension key/value pairs.
     :param start: Snapshot date or inclusive SCD start, empty for static data.
     :param end: Exclusive SCD end, empty otherwise.
+    :param constraint: Qualified constraint identity, when applicable.
+    :param entity: Actual entity type, when applicable.
+    :param instance_id: Actual entity ID, when applicable.
+    :param source_path: Original declaration file, when applicable.
+    :param line: Assertion start line, or zero.
+    :param column: Assertion start column, or zero.
+    :param assert_source: Original assertion text, when applicable.
+    :param status: False or non-normal assertion result.
     """
 
     field: str
@@ -41,6 +49,14 @@ class ValidationIssue:
     dimensions: tuple[tuple[str, str], ...] = ()
     start: str = ""
     end: str = ""
+    constraint: str = ''
+    entity: str = ''
+    instance_id: str = ''
+    source_path: str = ''
+    line: int = 0
+    column: int = 0
+    assert_source: str = ''
+    status: str = ''
 
 
 @dataclass(frozen=True)
@@ -59,6 +75,19 @@ class ValidationReport:
         :returns: True when no issues were found.
         """
         return not self.issues
+
+
+class EntityValidationError(ValueError):
+    """Keep candidate validation issues available to callers and CLI reports."""
+
+    def __init__(self, issues: tuple[ValidationIssue, ...]) -> None:
+        """Retain the diagnostics while preserving the existing error message.
+
+        :param issues: Structured validation diagnostics.
+        :returns: None.
+        """
+        self.issues = issues
+        super().__init__(f'candidate entity validation failed: {issues}')
 
 
 def cycles(edges: set[tuple[str, str]]) -> list[tuple[str, ...]]:

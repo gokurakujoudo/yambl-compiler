@@ -7,6 +7,22 @@ from yambl_compiler.languages.yambl.formatting.formatter import format_document
 
 
 class FormattingTests(unittest.TestCase):
+    def test_constraint_statements_keep_order_and_comments(self):
+        source = (
+            'entity E { constraint positive { let a=1 assert a>0 #first\nlet b=a+1 assert b>a } }'
+        )
+        expected = '''entity E {
+    constraint positive {
+        let a = 1
+        assert a > 0  # first
+        let b = a + 1
+        assert b > a
+    }
+}
+'''
+        self.assertEqual(format_document(document(source)), expected)
+        self.assertEqual(format_document(document(expected)), expected)
+
     def test_abstract_formatting_is_idempotent(self):
         source = 'abstract entity A{abstract computed attr label:string}'
         expected = 'abstract entity A {\n    abstract computed attr label: string\n}\n'

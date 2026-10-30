@@ -20,6 +20,8 @@ from yambl_compiler.ir.model import (
     CalculationAccess,
     CalculationInput,
     Call,
+    Constraint,
+    ConstraintStatement,
     Definition,
     Dimension,
     Effective,
@@ -719,6 +721,82 @@ class Lowering:
             )
         return tuple(result)
 
+    def constraints(self, key: EntityKey) -> tuple[Constraint, ...]:
+        """Lower direct entity constraints and their lexical field bindings.
+
+        :param key: Declaring entity identity.
+        :returns: Constraints in deterministic name order.
+        """
+        result: list[Constraint] = []
+        for name, checked in sorted(self.analysis.constraints.get(key, {}).items()):
+            references: dict[str, str] = {}
+
+            def visit(node: CalculationExpression) -> None:
+                """Collect lexical names used by a checked expression.
+
+                :param node: Expression subtree.
+                :returns: None.
+                """
+                if node.kind == 'name' and (symbol := checked.unit.scope.get(node.value)):
+                    references[node.value] = qualified(symbol.key)
+                for operand in node.operands:
+                    visit(operand)
+                for argument in node.arguments:
+                    visit(argument.expression)
+                for case in node.cases:
+                    visit(case.expression)
+
+            def hint_references(hint: TypeHint) -> None:
+                """Collect lexical declarations used in a local type.
+
+                :param hint: Local annotation subtree.
+                :returns: None.
+                """
+                if symbol := checked.unit.scope.get(hint.name):
+                    references[hint.name] = qualified(symbol.key)
+                for candidate in hint.finite_candidates:
+                    visit(candidate)
+                for argument in hint.arguments:
+                    hint_references(argument)
+                for operation in hint.operations:
+                    hint_references(operation.operand)
+
+            for statement in checked.statements:
+                visit(statement.expression)
+                if statement.annotation:
+                    hint_references(statement.annotation)
+            result.append(
+                Constraint(
+                    name,
+                    qualified(key) + '::constraint.' + name,
+                    tuple(
+                        ConstraintStatement(
+                            cast('ConstraintKind', statement.kind),
+                            statement.name,
+                            statement.expression,
+                            statement.annotation,
+                            statement.span,
+                            statement.assert_source,
+                        )
+                        for statement in checked.statements
+                    ),
+                    tuple(
+                        CalculationAccess(
+                            access.span,
+                            self.identity(access.owner, access.name),
+                            qualified(access.owner) + '.' + access.name,
+                            cast('CalculationOperation', access.operation),
+                        )
+                        for access in checked.accesses
+                    ),
+                    tuple(qualified(owner) + '.' + local for owner, local in checked.dependencies),
+                    tuple(Text(n, target) for n, target in sorted(references.items())),
+                    checked.extension,
+                    self.source(checked.unit, checked.node),
+                )
+            )
+        return tuple(result)
+
     def dimensions(self, key: EntityKey, unit: Unit) -> tuple[Dimension, ...]:
         """Lower entity-local dimension definitions, including extensions.
 
@@ -1001,6 +1079,14 @@ class Lowering:
                 and (symbol := unit.scope.get('unique_by')) is not None
                 and symbol.key[0].split('\0')[-1] == 'builtins'
             ),
+            constraints=self.constraints(key),
+            effective_constraints=tuple(
+                sorted(
+                    qualified(owner) + '::constraint.' + name
+                    for owner in (key, *self.analysis.entities.ancestors.get(key, []))
+                    for name in self.analysis.constraints.get(owner, {})
+                )
+            ),
         )
 
     def model(self) -> Model:
@@ -1099,7 +1185,7 @@ class Lowering:
         )
         return seal(
             Model(
-                15,
+                16,
                 self.version,
                 self.prefix,
                 primitives,
@@ -1145,6 +1231,7 @@ type ExpressionKind = Literal[
 type ArgumentKind = Literal['positional', 'keyword', 'pair']
 type FieldCategory = Literal['id', 'static', 'config', 'snapshot', 'scd', "computed"]
 type CalculationOperation = Literal["best_available", "value", "records"]
+type ConstraintKind = Literal['let', 'assert']
 type DefinitionKind = Literal[
     'entity', 'value', 'type_alias', 'decorator', 'decodes', 'constant', 'dimension', 'hierarchy'
 ]
