@@ -413,6 +413,8 @@ class Batch:
         for stored, field, row in records:
             if not stored.members or row[stored.state] != STATE_CODES['VALUE']:
                 continue
+            if stored.root == 'builtins.ConfigGroup' and field.type.name == 'mapping':
+                continue
             keys = [
                 id_column(self.reader.layout, stored.root),
                 *("dim_" + d.key for d in stored.dimensions),

@@ -13,6 +13,7 @@ from yambl_compiler.ir import compile_repository
 from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol
 from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.storage.generation import generate
+from yambl_compiler.storage.results import Success
 from yambl_compiler.transactions.writing import dumps
 
 
@@ -28,6 +29,8 @@ entity E {
     attr dictionary: Decodes
     attr hierarchy: Hierarchy
     attr group: ConfigGroup
+    attr sector: string
+    config attr limit: integer
     computed attr direct: values<decodes_entry> { return self.dictionary::value().entries::value() }
     computed attr best: values<decodes_entry> { return self.dictionary::value().entries::best_available().value }
     computed attr selected_ordering: bool { return self.dictionary::value().entries::best_available().value.all(e -> e.ordering > 0) }
@@ -36,6 +39,9 @@ entity E {
     computed attr hierarchy_best: values<hierarchy_entry> { return self.hierarchy::value().hierarchy_entries::best_available().value }
     computed attr hierarchy_records: bool { return self.hierarchy::value().hierarchy_entries::records().all(r -> r.value.all(e -> e.ordering > 0)) }
     computed attr group_priority: integer { return self.group::value().priority::best_available().value }
+    computed attr conditions_equal: bool { return self.group::value().when::value() == self.group::value().when::value() }
+    computed attr conditions_selected: bool { return self.group::value().when::best_available().value == self.group::value().when::value() }
+    computed attr conditions_records: bool { return self.group::value().when::records().all(r -> r.value == r.value) }
 }
 """,
         )
@@ -51,16 +57,24 @@ entity E {
                 (('group', Symbol('E'), 7),),
             ),
             Operation(
-                'replace', 'builtins.ConfigGroup.when', ('value',), ((ObjectValue(()),),), scope
+                'replace',
+                'builtins.ConfigGroup.when',
+                ('value',),
+                ((ObjectValue(((Symbol('E.sector'), 'alpha'),)),),),
+                scope,
             ),
             Operation(
-                'replace', 'builtins.ConfigGroup.then_set', ('value',), ((ObjectValue(()),),), scope
+                'replace',
+                'builtins.ConfigGroup.then_set',
+                ('value',),
+                ((ObjectValue(((Symbol('E.limit'), 5),)),),),
+                scope,
             ),
             Operation(
                 'insert',
                 'E',
-                ('id', 'dictionary', 'hierarchy', 'group'),
-                (('e', 'D', 'H', 'group'),),
+                ('id', 'dictionary', 'hierarchy', 'group', 'sector'),
+                (('e', 'D', 'H', 'group', 'alpha'),),
             ),
         )
         plan = self.write('insert.yaplan', dumps(Plan('insert', None, (Group('g', operations),))))
@@ -84,6 +98,9 @@ entity E {
                         self.assertTrue(entity.read_selected_ordering().value)
                         self.assertTrue(entity.read_all_records().value)
                         self.assertEqual(entity.read_group_priority().value, 7)
+                        self.assertTrue(entity.read_conditions_equal().value)
+                        self.assertTrue(entity.read_conditions_selected().value)
+                        self.assertTrue(entity.read_conditions_records().value)
                         hierarchy = frozenset(
                             {
                                 module.hierarchy_entry(entry_value='x', ordering=1),
@@ -93,6 +110,16 @@ entity E {
                         self.assertEqual(entity.read_hierarchy_direct().value, hierarchy)
                         self.assertEqual(entity.read_hierarchy_best().value, hierarchy)
                         self.assertTrue(entity.read_hierarchy_records().value)
+                        group = reader.get_config_group('group').value
+                        self.assertEqual(
+                            reader.read(group, 'builtins.ConfigGroup.when', {}),
+                            Success({'E.sector': 'alpha'}),
+                        )
+                        self.assertEqual(
+                            reader.read(group, 'builtins.ConfigGroup.then_set', {}),
+                            Success({'E.limit': 5}),
+                        )
+                        self.assertEqual(entity.limit, Success(5, 'config_group', ('group',)))
 
     async def test_combined_features_and_transaction_failures(self):
         self.write('yambl-root.lclcfg', "prefix: ''\n")

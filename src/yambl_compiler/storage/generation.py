@@ -69,6 +69,8 @@ def python_package(layout: Layout, package: str) -> str:
         return {
             "string": "str",
             "type": "str",
+            'attrs': 'str',
+            'dependent': 'object',
             "bool": "bool",
             "integer": "int",
             "snowflake_id": "int",

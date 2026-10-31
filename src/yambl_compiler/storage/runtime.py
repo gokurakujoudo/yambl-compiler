@@ -7,7 +7,7 @@ from dataclasses import field as data_field
 from datetime import date
 from decimal import InvalidOperation
 from pathlib import Path
-from types import TracebackType
+from types import MappingProxyType, TracebackType
 from typing import ClassVar, Protocol, Self, cast
 
 from yambl_compiler.ir.model import Field, LogicalField, Type
@@ -1065,7 +1065,7 @@ class Reader:
         :raises ValueError: If dimension keys or values are invalid.
         """
         keys = [
-            "id",
+            id_column(self._layout, stored.root),
             *("dim_" + d.key for d in stored.dimensions),
             *(k for k, _ in stored.key_values),
         ]
@@ -1107,6 +1107,14 @@ class Reader:
                 return NonNormalResult(Status(state))
             if state != "VALUE" or row is None:
                 raise ValueError("invalid stored field state")
+            if stored.root == 'builtins.ConfigGroup' and field.type.name == 'mapping':
+                group = next(
+                    group
+                    for group in self._configuration.load()
+                    if group.id == row['config_group_id']
+                )
+                entries = group.conditions if field.name == 'when' else group.assignments
+                return Success(MappingProxyType({entry.field: entry.decoded for entry in entries}))
             if stored.members:
                 keys = [
                     id_column(self._layout, stored.root),

@@ -25,11 +25,13 @@ class Entry:
     :param field: Logical field identity.
     :param type: Embedded value contract.
     :param value: Encoded scalar payload.
+    :param decoded: Value checked against the embedded contract.
     """
 
     field: str
     type: Type
     value: object
+    decoded: object
 
 
 @dataclass(frozen=True)
@@ -115,11 +117,11 @@ class Configuration:
                     raise ValueError(
                         "ConfigGroup requires stored static conditions and config assignments"
                     )
-                self.value(type_, envelope["value"])
+                decoded = self.value(type_, envelope["value"])
                 entries = mappings[role].setdefault(group_id, [])
                 if any(e.field == identity for e in entries):
                     raise ValueError("duplicate ConfigGroup mapping field")
-                entries.append(Entry(identity, type_, envelope["value"]))
+                entries.append(Entry(identity, type_, envelope["value"], decoded))
         groups: list[Group] = []
         for row in headers:
             group_id = str(row["config_group_id"])
@@ -205,7 +207,7 @@ class Configuration:
                             failed = actual
                         matches = False
                     else:
-                        expected = self.value(condition.type, condition.value)
+                        expected = condition.decoded
                         matches &= actual.value == expected
                 if matches:
                     candidates.append((group, assignment))
