@@ -38,7 +38,7 @@ entity Item {
 }
 ```
 
-完整名称由根前缀和文件 namespace 组成，因此实体是 `demo.catalog.Item`。`multiplier` 无实例值时使用默认值；`doubled_quantity` 根据读取结果计算，不占物理列。
+完整名称由根前缀和文件 namespace 组成，因此实体是 `demo.catalog.Item`。`multiplier` 没有匹配的配置组且实例值为 `NO_ENTRY` 时使用默认值；`doubled_quantity` 根据读取结果计算，不占物理列。
 
 ## 2. 检查并生成
 
@@ -105,7 +105,7 @@ foreach ($backend in @('sqlite', 'files')) {
 .\venv\Scripts\python.exe docs\tutorial\example\read_and_change.py build\tutorial-demo\files.lclcfg docs\tutorial\example\change.yaplan
 ```
 
-每次输出 `apply=committed, rollback=committed, redo=committed`。脚本执行后 `item-1` 的 quantity 是 4；再次运行前需要先将该值恢复为 3，或使用新的数据仓库。读取器固定在创建时的快照，使用完应关闭；示例通过 `closing` 关闭各读取器。真实程序应先判断读取结果类型或状态，再访问成功结果的 `value`；示例用断言固定了已知数据。更多行为和错误处理见[参考手册](../reference/README.md)。
+每次输出 `apply=committed, rollback=committed, redo=committed`。`item-1` 初始数量为 3，计算结果为 6；应用修改后旧读取器仍返回 6，新读取器返回 8。回滚后新读取器返回 6，再次回滚后返回 8。脚本执行后 `item-1` 的 quantity 是 4；再次运行前需要先将该值恢复为 3，或使用新的数据仓库。读取器固定在创建时的快照，使用完应关闭；示例通过 `closing` 关闭各读取器。真实程序应先判断读取结果类型或状态，再访问成功结果的 `value`；示例用断言固定了已知数据。更多行为和错误处理见[参考手册](../reference/README.md)。
 
 ## 5. 扩充字典和配置组
 
@@ -150,3 +150,16 @@ foreach ($backend in @('sqlite', 'files')) {
 每个后端依次输出 `value=10.5 status=NO_ENTRY, message=`、`status=NO_ENTRY, message= partial=10, issues=1` 和 `partial rollback=committed, valid=True`。这里的 partial rollback 是按组回滚。第二行展示真实的 `Partial`：`Basket` 的两条 `Entry` 中一条 amount 为 10，另一条没有值。默认严格计算返回 `NO_ENTRY`；使用 `best_effort=True` 后得到 10 和一条 `NO_ENTRY` 问题。模型、数据和计算代码都在示例目录中。脚本查询 `2026-01-05` 的 primary 和 secondary 价格、primary 的 `[2026-01-01, 2026-02-01)` 价格列表，并验证 SCD 结束日期不含在区间中。
 
 `revise.yaplan` 的价格替换选择 primary 和一月份，`expect any` 要求被选范围至少已有一条记录；评级替换使用 `expect one`，要求恰好一条。脚本先用 [expect_fail.yaplan](temporal/expect_fail.yaplan) 对不存在的维度运行预检，确认 `expect any matched 0` 且原数据未变；然后对 revise 做语法和期待值预检，再提交 Plan。`data.rollback(changed.path, groups=('prices',))` 只恢复价格组；评级仍是 B。最后对新读取器运行 `validate()` 并检查报告。全部 Python 代码见 [run.py](temporal/run.py)，读取结果分类及更多使用方式见[参考手册](../reference/README.md#时态和维度读取示例)。
+
+## 7. 理解数据校验结果
+
+模型可以用 `@unique_by` 声明实体字段的唯一组合，并在 entity 或 extend 中用
+`constraint` 声明有序的 `let` 和 `assert`。生成包在 `apply` 和 `rollback` 提交前检查
+最终候选；约束失败时事务不提交，CLI 输出包含实例、断言位置和失败状态的诊断。
+`check-data` 和 Python 的 `reader.validate()` 可用于显式检查整个读取快照；取得成功结果后
+仍须查看报告的 `valid` 和 `issues`。这两种检查覆盖模型声明的规则，不代替未声明的业务校验。
+
+计算属性可以用 `field::records()` 读取物理记录，再用 `all` 检查每条记录。
+`field::best_available()` 返回包含 `.value` 和 `.dimensions` 的选择结果；它与精确坐标
+读取使用不同的选择规则。语言声明、日期回退及反向关系的完整示例见
+[YAMBL 语言参考](https://github.com/gokurakujoudo/yambl)。

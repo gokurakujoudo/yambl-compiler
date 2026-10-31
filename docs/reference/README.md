@@ -183,7 +183,7 @@ print(rolled_back.status, rolled_back.warnings)
 
 ## 数据校验
 
-应用与回滚校验变动记录及受影响关系，假定未变数据原本有效；存在 `@unique_by` 时还检查其声明范围内的完整最终候选。`reader.validate()` 全量扫描仓库，返回包含 `ValidationReport` 的 `ReadResult`；检查成功后再检查 `report.valid` 和 `report.issues`。CLI `check-data` 输出 JSON，数据无效或读取失败时返回非零。检查包括物理记录、集合归属、SCD 重叠、配置映射、同字段引用环及声明的唯一键；不把悬空引用一律视作错误。绕过生成接口直接写入的数据应先做全量校验。
+应用与回滚校验变动记录及受影响关系，假定未变数据原本有效；存在 `@unique_by` 或实体 `constraint` 时，还对各自声明范围内的适用实例检查完整最终候选，以捕获引用或配置变化对未修改实例的影响。`reader.validate()` 全量扫描仓库，返回包含 `ValidationReport` 的 `ReadResult`；检查成功后再检查 `report.valid` 和 `report.issues`。CLI `check-data` 输出 JSON，数据无效或读取失败时返回非零。检查包括物理记录、集合归属、SCD 重叠、配置映射、同字段引用环、声明的唯一键及实体断言；不把悬空引用一律视作错误。绕过生成接口直接写入的数据应先做全量校验。
 
 全量校验结果处理片段（`reader` 为已打开的读取器）：
 

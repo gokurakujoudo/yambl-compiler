@@ -219,8 +219,10 @@ def unique_fields(
     :param diagnostics: Destination for invalid fields.
     :returns: Ordered logical identities for valid direct field arguments.
     """
+    if node.data != 'entity':
+        return ()
     entity = unit.scope.get(declaration_name(node))
-    if entity is None or node.data != 'entity':
+    if entity is None:
         return ()
     fields = unit.world.fields.get(entity.key, {})
     ancestors = unit.world.parents.get(entity.key, [])
