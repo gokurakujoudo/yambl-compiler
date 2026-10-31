@@ -47,8 +47,8 @@ jobs:
               measurement.save()
           raise SystemExit(0 if result.wasSuccessful() else 1)
           "
+      - run: python -m coverage json --fail-under=0 -o build/coverage.json
       - run: python -m coverage report
-      - run: python -m coverage json -o build/coverage.json
       - name: Require exact complete coverage in every file
         run: python -c "import json; r = json.load(open('build/coverage.json')); assert all(f['summary']['missing_lines'] == 0 and f['summary']['missing_branches'] == 0 for f in r['files'].values())"
       - uses: actions/upload-artifact@v4
