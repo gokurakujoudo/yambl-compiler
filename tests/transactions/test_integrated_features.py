@@ -10,13 +10,90 @@ from decimal import Decimal
 
 from tests.support import FilesystemCase, load_generated
 from yambl_compiler.ir import compile_repository
-from yambl_compiler.languages.shared.model import Condition, Symbol
+from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol
 from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.transactions.writing import dumps
 
 
 class IntegratedFeatureTests(FilesystemCase, unittest.IsolatedAsyncioTestCase):
+    async def test_builtin_collection_reads_on_both_backends(self):
+        self.write('yambl-root.lclcfg', "prefix: ''\n")
+        self.write(
+            'model.yambl',
+            """decodes D { - 1 A: 'a' - 2 B: 'b' }
+hierarchy H { - 1 'x' - 2 'y' }
+entity E {
+    id id: string
+    attr dictionary: Decodes
+    attr hierarchy: Hierarchy
+    attr group: ConfigGroup
+    computed attr direct: values<decodes_entry> { return self.dictionary::value().entries::value() }
+    computed attr best: values<decodes_entry> { return self.dictionary::value().entries::best_available().value }
+    computed attr selected_ordering: bool { return self.dictionary::value().entries::best_available().value.all(e -> e.ordering > 0) }
+    computed attr all_records: bool { return self.dictionary::value().entries::records().all(r -> r.value.all(e -> e.ordering > 0)) }
+    computed attr hierarchy_direct: values<hierarchy_entry> { return self.hierarchy::value().hierarchy_entries::value() }
+    computed attr hierarchy_best: values<hierarchy_entry> { return self.hierarchy::value().hierarchy_entries::best_available().value }
+    computed attr hierarchy_records: bool { return self.hierarchy::value().hierarchy_entries::records().all(r -> r.value.all(e -> e.ordering > 0)) }
+    computed attr group_priority: integer { return self.group::value().priority::best_available().value }
+}
+""",
+        )
+        output = self.root / 'generated'
+        generate(compile_repository(self.root), output, 'sample_model')
+        module = load_generated(output / 'sample_model', 'sample_model')
+        scope = (Condition('config_group_id', 'group'),)
+        operations = (
+            Operation(
+                'insert',
+                'builtins.ConfigGroup',
+                ('config_group_id', 'target_entity_type', 'priority'),
+                (('group', Symbol('E'), 7),),
+            ),
+            Operation(
+                'replace', 'builtins.ConfigGroup.when', ('value',), ((ObjectValue(()),),), scope
+            ),
+            Operation(
+                'replace', 'builtins.ConfigGroup.then_set', ('value',), ((ObjectValue(()),),), scope
+            ),
+            Operation(
+                'insert',
+                'E',
+                ('id', 'dictionary', 'hierarchy', 'group'),
+                (('e', 'D', 'H', 'group'),),
+            ),
+        )
+        plan = self.write('insert.yaplan', dumps(Plan('insert', None, (Group('g', operations),))))
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                config = self.write(
+                    f'{backend}.lclcfg', f"backend: '{backend}'\npath: '{backend}.data'\n"
+                )
+                with await module.SampleData.create(config) as store:
+                    self.assertEqual(store.apply(plan).status, 'committed')
+                    with closing(store.read()) as reader:
+                        entity = reader.get_e('e').value
+                        expected = frozenset(
+                            {
+                                module.decodes_entry(code='A', decode='a', ordering=1),
+                                module.decodes_entry(code='B', decode='b', ordering=2),
+                            }
+                        )
+                        self.assertEqual(entity.read_direct().value, expected)
+                        self.assertEqual(entity.read_best().value, expected)
+                        self.assertTrue(entity.read_selected_ordering().value)
+                        self.assertTrue(entity.read_all_records().value)
+                        self.assertEqual(entity.read_group_priority().value, 7)
+                        hierarchy = frozenset(
+                            {
+                                module.hierarchy_entry(entry_value='x', ordering=1),
+                                module.hierarchy_entry(entry_value='y', ordering=2),
+                            }
+                        )
+                        self.assertEqual(entity.read_hierarchy_direct().value, hierarchy)
+                        self.assertEqual(entity.read_hierarchy_best().value, hierarchy)
+                        self.assertTrue(entity.read_hierarchy_records().value)
+
     async def test_combined_features_and_transaction_failures(self):
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write(

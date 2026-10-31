@@ -140,6 +140,16 @@ class Layout:
     tables: tuple[Table, ...]
 
 
+def id_column(layout: Layout, root: str) -> str:
+    """Return the physical identity column for an inheritance root.
+
+    :param layout: Validated storage layout.
+    :param root: Entity root identity.
+    :returns: Built-in ID field name or the business table's shared ID column.
+    """
+    return layout.ids[root].name if layout.entities[root].source.origin == 'builtin' else 'id'
+
+
 def actual_type(layout: Layout, root: str, row: Mapping[str, object]) -> str:
     """Resolve the actual entity type from its identity table.
 

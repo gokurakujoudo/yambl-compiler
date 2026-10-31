@@ -28,6 +28,7 @@ from yambl_compiler.storage.records import (
     Layout,
     StoredField,
     actual_type,
+    id_column,
     table_name,
 )
 from yambl_compiler.storage.results import (
@@ -39,6 +40,7 @@ from yambl_compiler.storage.results import (
 )
 from yambl_compiler.storage.scalars import (
     ScalarRule,
+    check_finite,
     decode_scalar,
     encode_input,
     reference_matches,
@@ -131,6 +133,7 @@ class Reader:
     selection_types: ClassVar[dict[str, tuple[Callable[..., object], Callable[..., object]]]] = {}
     entity_types: ClassVar[dict[str, type[EntityHandle]]] = {}
     code_types: ClassVar[dict[str, type[str]]] = {}
+    value_types: ClassVar[dict[str, Callable[..., object]]] = {}
     calculation_programs: ClassVar[dict[str, Program]] = {}
     constraint_programs: ClassVar[dict[str, ConstraintProgram]] = {}
 
@@ -571,7 +574,9 @@ class Reader:
             rows = self._backend.rows(
                 stored.table,
                 {
-                    "id": self._encode(self._layout.ids[stored.root].type, handle.id),
+                    id_column(self._layout, stored.root): self._encode(
+                        self._layout.ids[stored.root].type, handle.id
+                    ),
                     **dict(stored.key_values),
                 },
             )
@@ -829,6 +834,19 @@ class Reader:
         :returns: Typed value or reference.
         :raises ValueError: If the stored value violates its contract.
         """
+        if type_.target in self.value_types:
+            payload = cast(dict[str, object], value)
+            definition = next(
+                d for d in self._layout.model.definitions if d.identity == type_.target
+            )
+            result = self.value_types[type_.target](
+                **{
+                    field.name: self._decode(field.type, payload[field.name])
+                    for field in definition.fields
+                }
+            )
+            check_finite(type_, result)
+            return result
         if type_.kind == "reference":
             id_type = self._id_type(type_.target)
             if not reference_matches(type_, value):
@@ -1091,7 +1109,7 @@ class Reader:
                 raise ValueError("invalid stored field state")
             if stored.members:
                 keys = [
-                    "id",
+                    id_column(self._layout, stored.root),
                     *("dim_" + d.key for d in stored.dimensions),
                     *(k for k, _ in stored.key_values),
                 ]
@@ -1102,7 +1120,15 @@ class Reader:
                 members = self._backend.rows(stored.members, {k: row[k] for k in keys})
                 return Success(
                     frozenset(
-                        self._decode(field.type.arguments[0], r["member_id"]) for r in members
+                        self._decode(
+                            field.type.arguments[0],
+                            (
+                                r
+                                if self._layout.entities[stored.root].source.origin == 'builtin'
+                                else r["member_id"]
+                            ),
+                        )
+                        for r in members
                     )
                 )
             return Success(self._decode(field.type, row[stored.value]))

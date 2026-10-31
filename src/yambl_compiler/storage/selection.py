@@ -8,7 +8,7 @@ from typing import cast
 from yambl_compiler.ir.model import Dimension, Field
 from yambl_compiler.storage.backends import Row, Selection
 from yambl_compiler.storage.batch import Batch, FieldRequest
-from yambl_compiler.storage.records import STATE_CODES, STATE_NAMES
+from yambl_compiler.storage.records import STATE_CODES, STATE_NAMES, id_column
 from yambl_compiler.storage.results import (
     HierarchyView,
     NonNormalResult,
@@ -283,9 +283,10 @@ class Available:
             reader.ready()
         for table, entries in groups.items():
             unique = list(dict.fromkeys(selection for _, _, selection in entries))
-            columns = {"id"}
+            columns: set[str] = set()
             for request, _, _ in entries:
                 stored = reader.layout.fields[request.point.identity]
+                columns.add(id_column(reader.layout, stored.root))
                 columns.add(stored.state)
                 if stored.value:
                     columns.add(stored.value)

@@ -253,6 +253,20 @@ def python_package(layout: Layout, package: str) -> str:
         for access in constraint.accesses
         if access.operation == 'records'
     )
+    accessed_best = {
+        access.identity
+        for field in computed.values()
+        if field.calculation
+        for access in field.calculation.accesses
+        if access.operation == 'best_available'
+    }
+    accessed_best.update(
+        access.identity
+        for definition in layout.model.definitions
+        for constraint in definition.constraints
+        for access in constraint.accesses
+        if access.operation == 'best_available'
+    )
     records = {
         key: names[s.root] + "".join(p.capitalize() for p in s.field.name.split("_")) + "Record"
         for key, s in layout.fields.items()
@@ -262,7 +276,8 @@ def python_package(layout: Layout, package: str) -> str:
     selections = {
         key: names[s.root] + ''.join(p.capitalize() for p in s.field.name.split('_')) + 'Selection'
         for key, s in layout.fields.items()
-        if s.root in names and layout.entities[s.root].source.origin != 'builtin'
+        if s.root in names
+        and (layout.entities[s.root].source.origin != 'builtin' or key in accessed_best)
     }
     dimension_types = {
         key: name.removesuffix('Selection') + 'Dimensions' for key, name in selections.items()
@@ -767,6 +782,7 @@ def python_package(layout: Layout, package: str) -> str:
             + "}",
             "    entity_types = {" + ", ".join(f"{k!r}: {v}" for k, v in names.items()) + "}",
             "    code_types = {" + ", ".join(f"{k!r}: {v}" for k, v in codes.items()) + "}",
+            "    value_types = {" + ", ".join(f"{k!r}: {v}" for k, v in value_names.items()) + "}",
             "    calculation_programs = PROGRAMS",
             "    constraint_programs = CONSTRAINT_PROGRAMS",
         ]

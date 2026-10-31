@@ -7,7 +7,13 @@ from typing import cast
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.storage.backends import Row, Selection
-from yambl_compiler.storage.records import STATE_CODES, StoredField, actual_type, table_name
+from yambl_compiler.storage.records import (
+    STATE_CODES,
+    StoredField,
+    actual_type,
+    id_column,
+    table_name,
+)
 from yambl_compiler.storage.results import (
     EntityRef,
     NonNormalResult,
@@ -142,7 +148,7 @@ class Batch:
             raise ValueError("all declared dimensions must be supplied exactly once")
         keys = [
             (
-                "id",
+                id_column(self.reader.layout, stored.root),
                 self.reader.encode(self.reader.layout.ids[stored.root].type, request.owner.id),
             ),
             *(("dim_" + d.key, self.reader.encode(d.type, dims[d.key])) for d in stored.dimensions),
@@ -213,8 +219,9 @@ class Batch:
             reader.ready()
         for table, group in groups.items():
             entries = list(group.items())
-            columns = {"id"}
+            columns: set[str] = set()
             for _, (_, stored, field, _, _) in entries:
+                columns.add(id_column(reader.layout, stored.root))
                 columns.add(stored.state)
                 if stored.value:
                     columns.add(stored.value)
@@ -407,7 +414,7 @@ class Batch:
             if not stored.members or row[stored.state] != STATE_CODES['VALUE']:
                 continue
             keys = [
-                "id",
+                id_column(self.reader.layout, stored.root),
                 *("dim_" + d.key for d in stored.dimensions),
                 *(k for k, _ in stored.key_values),
             ]
@@ -418,14 +425,17 @@ class Batch:
             selection = Selection(tuple((key, row[key]) for key in keys))
             groups.setdefault(stored.members, []).append((stored, field, row, selection))
         for table, entries in groups.items():
+            builtin = self.reader.layout.entities[entries[0][0].root].source.origin == 'builtin'
             members = self.reader.backend.rows_many(
-                table, [entry[3] for entry in entries], ("member_id",)
+                table, [entry[3] for entry in entries], () if builtin else ("member_id",)
             )
             for (_, field, row, _), group in zip(entries, members, strict=True):
                 try:
                     row["_result"] = Success(
                         frozenset(
-                            self.reader.decode(field.type.arguments[0], member["member_id"])
+                            self.reader.decode(
+                                field.type.arguments[0], member if builtin else member["member_id"]
+                            )
                             for member in group
                         )
                     )
