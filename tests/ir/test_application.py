@@ -283,7 +283,7 @@ print(model.model_digest)
         from tests.support import document
         from yambl_compiler.languages.yambl.semantics.validation import check
 
-        fixtures = Path(__file__).parents[3] / 'yambl/tools/vscode/lsp/tests'
+        fixtures = Path(__file__).resolve().parents[1] / 'fixtures/editor'
         count = 0
         for filename in [
             'cases.json',
@@ -351,7 +351,7 @@ entity A {
         ):
             with self.assertRaisesRegex(ValueError, 'inconsistent view'):
                 compile_repository(root)
-        from yambl_compiler.languages.yambl.semantics.builtins import AUTHOR_ROOT
+        from yambl_compiler.languages.yambl.semantics.builtins import MODEL_ROOT
 
-        model = compile_repository(AUTHOR_ROOT)
+        model = compile_repository(MODEL_ROOT)
         self.assertTrue(all(d.source.origin == 'builtin' for d in model.definitions))

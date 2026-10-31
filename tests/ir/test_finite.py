@@ -247,6 +247,28 @@ entity X {
         self.write('model.yambl', 'unavailable')
         self.assertEqual(validate_ir(loads(dumps(model))), ())
 
+    def test_flags_in_computed_and_constraint_local_type_annotations_round_trip(self):
+        self.write(
+            'model.yambl',
+            """
+entity A {
+    id id: string
+    attr title: string
+    computed attr fields: field_mapping<AttrCats.All - AttrCats.Snapshot, A> {
+        let x: field_mapping<AttrCats.All - AttrCats.Snapshot, A> = {}
+        return x
+    }
+    constraint c {
+        let x: field_mapping<AttrCats.All - AttrCats.Snapshot, A> = {}
+        assert true
+    }
+}
+""",
+        )
+        model = compile_repository(self.root)
+        self.write('model.yambl', 'unavailable')
+        self.assertEqual(validate_ir(loads(dumps(model))), ())
+
     def test_constraint_local_annotation_round_trip(self):
         self.write(
             'model.yambl',

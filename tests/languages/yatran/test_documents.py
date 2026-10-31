@@ -36,8 +36,7 @@ class DocumentTests(unittest.TestCase):
 
     def test_shared_sealed_image_cases(self):
         fixture = (
-            Path(__file__).resolve().parents[4]
-            / 'yambl/tools/vscode/lsp/tests/transaction-image-cases.json'
+            Path(__file__).resolve().parents[2] / 'fixtures/editor/transaction-image-cases.json'
         )
         for case in json.loads(fixture.read_text(encoding='utf-8'))['cases']:
             with self.subTest(case=case['name']):

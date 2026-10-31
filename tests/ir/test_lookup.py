@@ -6,64 +6,14 @@ from dataclasses import replace
 from pathlib import Path
 
 from tests.support import document
-from yambl_compiler.ir import compile_repository
 from yambl_compiler.ir.codec import dumps, loads, seal
 from yambl_compiler.ir.lowering import Lowering
 from yambl_compiler.ir.model import Text
 from yambl_compiler.ir.validation import validate_ir
 from yambl_compiler.languages.yambl.semantics.validation import analyze
 
-FMC_ROOT = Path(__file__).resolve().parents[3] / 'fmc-data-model' / 'model'
-
 
 class LookupIRTests(unittest.TestCase):
-    @unittest.skipUnless(FMC_ROOT.is_dir(), 'FMC model repository is not present')
-    def test_fmc_security_lookup_contracts(self):
-        model = compile_repository(FMC_ROOT)
-        entity = next(d for d in model.definitions if d.identity == 'core.Security')
-        actual = {
-            rule.name: (
-                [
-                    (key.name, key.type.name, tuple(arg.target for arg in key.type.arguments))
-                    for key in rule.keys
-                ],
-                [
-                    (item.name, item.type.name, tuple(arg.target for arg in item.type.arguments))
-                    for item in rule.inputs
-                ],
-            )
-            for rule in entity.lookups
-        }
-        self.assertEqual(
-            actual,
-            {
-                'by_name': (
-                    [
-                        ('security_name', 'string', ()),
-                        ('market', 'code', ('core.TradingMarkets',)),
-                        ('issuer_name', 'string', ()),
-                    ],
-                    [],
-                ),
-                'by_client_id': (
-                    [('client_id', 'string', ())],
-                    [
-                        ('as_of_date', 'date', ()),
-                        ('client_id_type', 'code', ('core.ClientIdTypes',)),
-                    ],
-                ),
-                'by_wind_id': ([('client_id', 'string', ())], [('as_of_date', 'date', ())]),
-                'by_issuer_industry': (
-                    [('issuer_name', 'string', ()), ('industry', 'string', ())],
-                    [
-                        ('as_of_date', 'date', ()),
-                        ('classification', 'code', ('decodes.IndustryTypes',)),
-                        ('industry_date', 'date', ()),
-                    ],
-                ),
-            },
-        )
-
     def model(self, extension):
         sources = [
             "namespace codes decodes Sources { - 1 Wind: 'Wind' }",

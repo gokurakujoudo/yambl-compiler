@@ -1,0 +1,599 @@
+[
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(text: string['[A-Z]+'] = 'ABC', amount: decimal[18, 4] = 2, rate: float = 1.2, count: integer = 1, active: bool = true, key: snowflake_id = 123) @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(text: string) @tag('hello') entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(text: string = 'hello', rank: integer) @tag(rank=2) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(text: string, rank: integer) @tag(rank=2, text='hello') entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(text: string, rank: integer) @tag('hello', rank=2) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(*source: string, *selector?: Hierarchy) @tag(source: code<'External'>) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(*source: string, *selector?: Hierarchy) @tag(source: string, fallback: Hierarchy) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag() @tag entity A {} @tag() value item { @tag attr item: string }"
+  ],
+  [
+    "@title(text='Tag') @description('Metadata') @allow_multiple @targets(DecoratorTargets.All) decorator @tag(text: string) @tag('a') @tag('a') entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag() @tag @targets(DecoratorTargets.All) decorator @other() @other type label = string"
+  ],
+  [
+    "@flags() decodes Codes {}"
+  ],
+  [
+    "entity A { @temporal(effective_date: date) snapshot attr x: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @proxy(target: type<self::entity>) entity Security {} entity Holding { @proxy(Holding) attr security: Security }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @proxy(target: type<self::entity>) entity Holding {} entity Child inherits Holding {} extend Holding { @proxy(Child) attr x: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @proxy(target: type<self>) @proxy(Child) entity Holding {} entity Child inherits Holding {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(text: self::type) entity A { @tag('hello') attr name: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(text: self::type = 'hello') entity A { @tag attr name: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(target: type<Entity> = self::entity) entity A { @tag attr name: string }"
+  ],
+  [
+    "entity Security { id key: string['[A-Z]+'] } @targets(DecoratorTargets.All) decorator @tag(target: Security) @tag('ABC') entity A {}"
+  ],
+  [
+    "entity Security { id key: snowflake_id } entity Bond inherits Security {} @targets(DecoratorTargets.All) decorator @tag(target: Bond = '123') @tag entity A {}"
+  ],
+  [
+    "decodes Codes { - 1 One: 'One' } @targets(DecoratorTargets.All) decorator @tag(dict: Decodes, code: code<Codes>, target: type<Entity>) @tag(Codes, Codes.One, A) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(flags: code<AttrCats> = AttrCats.All - AttrCats.Static) @tag(AttrCats.Config + AttrCats.Static) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(text: string = 'x') entity A { @tag attr x: string } entity B inherits A { @override @tag(text='x') attr x: string }"
+  ],
+  [
+    "@allow_multiple @targets(DecoratorTargets.All) decorator @tag(text: string) entity A {} entity B inherits A { @overload @tag('a') @tag('b') attr x: string } entity C inherits A { @tag('b') @overload @tag('a') attr x: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag() @tag decodes Codes {} @tag value item { @tag attr x: string } @tag type label = string entity A { @tag id key: string }"
+  ],
+  [
+    "namespace meta type text = string @targets(DecoratorTargets.All) decorator @tag(label: text = 'x')",
+    "namespace app from meta import tag @tag entity A {}"
+  ],
+  [
+    "namespace meta @targets(DecoratorTargets.All) decorator @tag(target: type<self::entity>)",
+    "namespace app from meta import tag entity A { @tag(A) attr x: string }"
+  ],
+  [
+    "@tag entity A {} @targets(DecoratorTargets.All) decorator @tag()"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Value) decorator @tag() @tag value item {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Decodes) decorator @tag() @tag decodes Codes {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Type) decorator @tag() @tag type label = string"
+  ],
+  [
+    "@targets(DecoratorTargets.Decorator) decorator @tag() @tag @targets(DecoratorTargets.None) decorator @other()"
+  ],
+  [
+    "@targets(DecoratorTargets.Id) decorator @tag() entity A { @tag id key: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr) decorator @tag() entity A { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr) decorator @tag() value item { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.None) decorator @unused()"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr, categories=AttrCats.Config + AttrCats.Snapshot) decorator @tag() entity A { @tag config attr x: integer = 1 @tag snapshot attr y: values<string> } extend A { @tag snapshot attr z: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr, categories=AttrCats.Static) decorator @tag() value item { @tag attr implicit: string @tag static attr explicit: string }"
+  ],
+  [
+    "@targets(categories=AttrCats.None, targets=DecoratorTargets.Id + DecoratorTargets.Entity) decorator @tag() @tag entity A { @tag id key: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.All - DecoratorTargets.EntityAttr - DecoratorTargets.EntityAttr + DecoratorTargets.Type + DecoratorTargets.Type) decorator @tag() @tag type label = string"
+  ],
+  [
+    "namespace builtins @targets(DecoratorTargets.Entity) decorator @flags() @flags entity A {}"
+  ],
+  [
+    "namespace usage from meta import tag @tag entity A {}",
+    "namespace meta @targets(DecoratorTargets.Entity) decorator @tag()"
+  ],
+  [
+    "entity A { dimension dimension_11 { value source: Hierarchy }  @dimension(dimension_11) attr x: string }"
+  ],
+  [
+    "entity A { dimension dimension_11 { value source: Missing }  @dimension(dimension_11) attr x: string }"
+  ],
+  [
+    "entity A { @dimension() attr x: string }"
+  ],
+  [
+    "namespace builtins @allow_multiple @allow_multiple @targets(DecoratorTargets.All) decorator @allow_multiple()"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @Bad()"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(Bad: string)"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: string, a: string)"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(*a: string, b: string)"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(*a?: string, *b: string)"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a?: string)"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(*a: string = 'x')"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: values<string>)"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: integer = 'x')"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: Missing)"
+  ],
+  [
+    "@missing entity A {}"
+  ],
+  [
+    "type tag = string @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag() entity A { attr x: tag }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: string) @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: string) @tag(a='x', 'y') entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: string) @tag('x', a='y') entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: string) @tag(unknown='x') entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag() @tag('x') entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag() @tag(x: string) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: string, *p: string) @tag(x: string, a='x') entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(*p: string) @tag(Bad: string) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(*p: string, *q: string) @tag(x: string, x: string) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(*p: string) @tag(x: integer) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(*p: string) @tag(x: values<string>) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: integer) @tag(string) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: self::type) entity A { @tag attr x: values<string> }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag() @tag @tag entity A {}"
+  ],
+  [
+    "@allow_multiple entity A {}"
+  ],
+  [
+    "@allow_multiple @allow_multiple @targets(DecoratorTargets.All) decorator @tag()"
+  ],
+  [
+    "@flags type label = string"
+  ],
+  [
+    "entity A { @flags attr x: string }"
+  ],
+  [
+    "@override entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: type<self::entity>) @tag(A) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: type<self::entity>) value item { @tag(A) attr x: string } entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: type<self::entity>) entity A { @tag(B) attr x: string } entity B {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: self::value) entity A { @tag attr x: string }"
+  ],
+  [
+    "entity A {} @targets(DecoratorTargets.All) decorator @tag(a: A) @tag('id') entity B {}"
+  ],
+  [
+    "entity A { id one: string id two: string } @targets(DecoratorTargets.All) decorator @tag(a: A) @tag('id') entity B {}"
+  ],
+  [
+    "entity A { id key: integer } @targets(DecoratorTargets.All) decorator @tag(a: A) @tag('id') entity B {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag(a: string) entity A { @tag('x') attr x: string } entity B inherits A { @override @tag('y') attr x: string }"
+  ],
+  [
+    "@allow_multiple @targets(DecoratorTargets.All) decorator @tag() entity A { @tag @tag attr x: string } entity B inherits A { @override @tag attr x: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag() @tag extend A {} entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @tag() @tag value item {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @tag() @tag decodes Codes {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @tag() @tag type label = string"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @tag() @tag @targets(DecoratorTargets.None) decorator @other()"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @tag() entity A { @tag id key: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @tag() entity A { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @tag() value item { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Value) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Value) decorator @tag() @tag decodes Codes {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Value) decorator @tag() @tag type label = string"
+  ],
+  [
+    "@targets(DecoratorTargets.Value) decorator @tag() @tag @targets(DecoratorTargets.None) decorator @other()"
+  ],
+  [
+    "@targets(DecoratorTargets.Value) decorator @tag() entity A { @tag id key: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Value) decorator @tag() entity A { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Value) decorator @tag() value item { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Decodes) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Decodes) decorator @tag() @tag value item {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Decodes) decorator @tag() @tag type label = string"
+  ],
+  [
+    "@targets(DecoratorTargets.Decodes) decorator @tag() @tag @targets(DecoratorTargets.None) decorator @other()"
+  ],
+  [
+    "@targets(DecoratorTargets.Decodes) decorator @tag() entity A { @tag id key: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Decodes) decorator @tag() entity A { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Decodes) decorator @tag() value item { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Type) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Type) decorator @tag() @tag value item {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Type) decorator @tag() @tag decodes Codes {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Type) decorator @tag() @tag @targets(DecoratorTargets.None) decorator @other()"
+  ],
+  [
+    "@targets(DecoratorTargets.Type) decorator @tag() entity A { @tag id key: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Type) decorator @tag() entity A { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Type) decorator @tag() value item { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Decorator) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Decorator) decorator @tag() @tag value item {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Decorator) decorator @tag() @tag decodes Codes {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Decorator) decorator @tag() @tag type label = string"
+  ],
+  [
+    "@targets(DecoratorTargets.Decorator) decorator @tag() entity A { @tag id key: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Decorator) decorator @tag() entity A { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Decorator) decorator @tag() value item { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Id) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Id) decorator @tag() @tag value item {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Id) decorator @tag() @tag decodes Codes {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Id) decorator @tag() @tag type label = string"
+  ],
+  [
+    "@targets(DecoratorTargets.Id) decorator @tag() @tag @targets(DecoratorTargets.None) decorator @other()"
+  ],
+  [
+    "@targets(DecoratorTargets.Id) decorator @tag() entity A { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Id) decorator @tag() value item { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr) decorator @tag() @tag value item {}"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr) decorator @tag() @tag decodes Codes {}"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr) decorator @tag() @tag type label = string"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr) decorator @tag() @tag @targets(DecoratorTargets.None) decorator @other()"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr) decorator @tag() entity A { @tag id key: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr) decorator @tag() value item { @tag attr item: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr) decorator @tag() @tag value item {}"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr) decorator @tag() @tag decodes Codes {}"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr) decorator @tag() @tag type label = string"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr) decorator @tag() @tag @targets(DecoratorTargets.None) decorator @other()"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr) decorator @tag() entity A { @tag id key: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr) decorator @tag() entity A { @tag attr item: string }"
+  ],
+  [
+    "namespace builtins @targets() decorator @targets() @targets() decorator @tag() @tag entity A { @tag attr x: string }"
+  ],
+  [
+    "decorator @unused()"
+  ],
+  [
+    "@tag entity A {} decorator @tag()"
+  ],
+  [
+    "@targets(DecoratorTargets.None) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All - DecoratorTargets.Entity) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr, categories=AttrCats.None) decorator @tag() entity A { @tag attr x: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.ValueAttr, categories=AttrCats.Static) decorator @tag() value item { @tag attr x: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.EntityAttr, categories=AttrCats.Config) decorator @tag() entity A { @tag static attr x: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) @targets(DecoratorTargets.Entity) decorator @tag()"
+  ],
+  [
+    "@targets() decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(AttrCats.All) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.All, categories=DecoratorTargets.All) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets('Entity') decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Missing) decorator @tag() @tag entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) entity A {}"
+  ],
+  [
+    "entity A { @targets(DecoratorTargets.EntityAttr) attr x: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.All) decorator @tag() @tag decodes Codes { @tag - 1 One: 'One' }"
+  ],
+  [
+    "entity A { @sparse('info') attr x: string @dense(cat='details') static attr y: integer }"
+  ],
+  [
+    "entity A { @sparse('info') attr x: string } entity B inherits A { @override attr x: string }"
+  ],
+  [
+    "entity A {} entity B inherits A { @overload @sparse('info') attr x: string } entity C inherits A { @overload attr x: string }"
+  ],
+  [
+    "entity A {} extend A { @sparse('info') attr x: decimal } entity B inherits A { @sparse('info') static attr y: bool }"
+  ],
+  [
+    "entity A { @sparse('info') attr x: string } entity B { @dense('info') attr x: string }"
+  ],
+  [
+    "@sparse('x') entity A {}"
+  ],
+  [
+    "value item { @dense('x') attr x: string }"
+  ],
+  [
+    "entity A { @sparse('') attr x: string }"
+  ],
+  [
+    "entity A { @dense('BondInfo') attr x: string }"
+  ],
+  [
+    "entity A { @sparse('x; DROP TABLE') attr x: string }"
+  ],
+  [
+    "entity A { @sparse attr x: string }"
+  ],
+  [
+    "entity A { @dense(2) attr x: string }"
+  ],
+  [
+    "entity A { @sparse('x') config attr x: string }"
+  ],
+  [
+    "entity A { @dense('x') snapshot attr x: string }"
+  ],
+  [
+    "entity A { @sparse('x') scd attr x: string }"
+  ],
+  [
+    "entity A { @dense('x') id key: string }"
+  ],
+  [
+    "entity A { @sparse('x') attr x: collection<A> }"
+  ],
+  [
+    "type items = values<string> entity A { @dense('x') attr x: items }"
+  ],
+  [
+    "entity A { @sparse('x') attr x: mapping<string, string> }"
+  ],
+  [
+    "entity A { dimension dimension_24 { value source: string }  @sparse('x') @dimension(dimension_24) attr x: string }"
+  ],
+  [
+    "entity A { dimension dimension_23 { value source: string }  @dense('x') @dimension(dimension_23) attr x: string }"
+  ],
+  [
+    "entity A { @sparse('x') @dense('x') attr x: string }"
+  ],
+  [
+    "entity A { @sparse('x') @sparse('x') attr x: string }"
+  ],
+  [
+    "entity A { @sparse('info') attr x: string } entity B inherits A { @dense('info') static attr y: integer }"
+  ],
+  [
+    "entity A { @sparse('info') attr x: string } entity B inherits A { @override @sparse('other') attr x: string }"
+  ],
+  [
+    "entity A {} entity B inherits A { @overload @sparse('info') attr x: string } entity C inherits A { @overload @dense('info') attr x: string }"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @labels(prefix: integer, ...values: string) @labels(1, 'a', 'b', description='notes') entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @labels(...values: string) @labels(1) entity A {}"
+  ],
+  [
+    "@targets(DecoratorTargets.Entity) decorator @labels(*pair: string, ...values: string)"
+  ],
+  [
+    "@unique_by(self.market, self.symbol) entity Instrument { id id: string attr market: string attr symbol: string }"
+  ],
+  [
+    "@unique_by() entity A {}"
+  ],
+  [
+    "@unique_by(self.x, self.x) entity A { attr x: string }"
+  ],
+  [
+    "@unique_by(self.x) entity A { config attr x: string }"
+  ],
+  [
+    "@unique_by(A.x) entity A { attr x: string }"
+  ],
+  [
+    "entity A { attr x: string } @unique_by(self.x) entity B inherits A {}"
+  ],
+  [
+    "@unique_by(self.primary) entity Issuer { id id: string @reverse_relationship(Security.lead) attr primary: Security } entity Security { id id: string @relationship(one, maybe) attr lead: Issuer }"
+  ]
+]

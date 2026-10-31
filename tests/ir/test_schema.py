@@ -1,7 +1,6 @@
 """Keep the published schema aligned with strict offline decoding."""
 
 import json
-from pathlib import Path
 
 from jsonschema import Draft202012Validator
 
@@ -9,6 +8,7 @@ from tests.support import FilesystemCase
 from yambl_compiler.ir import compile_repository
 from yambl_compiler.ir.codec import dumps, loads
 from yambl_compiler.ir.schema import schema, validate_schema
+from yambl_compiler.languages.yambl.semantics.builtins import MODEL_ROOT
 
 
 class SchemaTests(FilesystemCase):
@@ -37,7 +37,7 @@ class SchemaTests(FilesystemCase):
     def test_metaschema_publication_and_rejections(self):
         contract = schema()
         Draft202012Validator.check_schema(contract)
-        published = Path(__file__).parents[3] / 'yambl/lang/syntex/ir.schema.json'
+        published = MODEL_ROOT / 'syntex/ir.schema.json'
         self.assertEqual(json.loads(published.read_text(encoding='utf-8')), contract)
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write('model.yambl', 'entity A { id key: string attr text: string }')

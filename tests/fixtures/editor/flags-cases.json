@@ -1,0 +1,101 @@
+[
+  [
+    "@title('Access')\n@flags\n@description('Independent permissions')\ndecodes Permissions { - 0b001 Read: 'Read' - 2 Write: 'Write' }\ntype selected<a: code<AttrCats>, b: type<Entity>> = field_mapping<a + AttrCats.None, b>\nentity Base {\n    id key: string\n    attr label: string\n    static attr rank: integer\n    config attr enabled: bool = true\n    attr many: values<string>\n    attr permissions: code<Permissions>\n}\nextend Base { config attr size: decimal }\nentity Child inherits Base {\n    snapshot attr date: date\n    @override attr permissions: exact<Permissions.Read + Permissions.Write + Permissions.Read + Permissions.None>\n}\nentity Grandchild inherits Child {\n    @override attr permissions: exact<Permissions.All - Permissions.Write + Permissions.Write>\n}\nentity Selection {\n    attr union: selected<AttrCats.Static + AttrCats.Config, Base>\n    attr keys: attrs<AttrCats.Static + AttrCats.Config + AttrCats.Snapshot, Base>\n    attr empty: attrs<AttrCats.None, Base>\n    attr identity: attrs<AttrCats.None + AttrCats.Config + AttrCats.Config, Base>\n    attr all: attrs<AttrCats.All, Base>\n    attr removed: attrs<AttrCats.All-AttrCats.Static-AttrCats.Snapshot-AttrCats.Scd-AttrCats.Scd, Base>\n    attr cleared: attrs<AttrCats.All - AttrCats.All, Base>\n    attr absent: attrs<AttrCats.None - AttrCats.Config - AttrCats.Config, Base>\n    attr restored: attrs<AttrCats.All - AttrCats.Config + AttrCats.Config, Base>\n    attr flags: code<Permissions>\n    attr symbolic: attrs<self.categories::value + AttrCats.Static, Base>\n    attr symbolic_difference: attrs<self.categories::value - AttrCats.Static, Base>\n    attr categories: code<AttrCats>\n}\n"
+  ],
+  [
+    "@flags decodes Codes { - 1 All: 'All' }"
+  ],
+  [
+    "entity A { attr x: attrs<AttrCats.All-1, A> }"
+  ],
+  [
+    "entity A { attr x: attrs<AttrCats.All - -1, A> }"
+  ],
+  [
+    "entity A { attr x: attrs<AttrCats.All - string, A> }"
+  ],
+  [
+    "@flags decodes Codes { - 1 A: 'x' } entity A { attr x: attrs<AttrCats.All - Codes.All, A> }"
+  ],
+  [
+    "decodes Codes { - 1 A: 'x' } type chosen<a: code<Codes>> = string entity A { attr x: chosen<Codes.A - Codes.A> }"
+  ],
+  [
+    "decodes Codes {} type chosen<a: code<Codes>> = string entity A { attr x: chosen<Codes.All> }"
+  ],
+  [
+    "@flags entity A {}"
+  ],
+  [
+    "@flags value pair {}"
+  ],
+  [
+    "decodes Codes { - 1 lower: 'x' }"
+  ],
+  [
+    "decodes Codes { - 1 Snake_Case: 'x' }"
+  ],
+  [
+    "@flags @flags decodes Codes {}"
+  ],
+  [
+    "@flags decodes Codes { - 1 None: 'x' }"
+  ],
+  [
+    "@flags decodes Codes { - 0 Zero: 'x' }"
+  ],
+  [
+    "@flags decodes Codes { - -1 Negative: 'x' }"
+  ],
+  [
+    "@flags decodes Codes { - -0b10 Negative: 'x' }"
+  ],
+  [
+    "@flags decodes Codes { - 0b11 Both: 'x' }"
+  ],
+  [
+    "@flags decodes Codes { - 1 A: 'x' - 0b01 B: 'y' }"
+  ],
+  [
+    "@flags decodes Codes { - 1 A: 'x' - 2 A: 'y' }"
+  ],
+  [
+    "entity A { attr x: attrs<AttrCats.Config + 1, A> }"
+  ],
+  [
+    "entity A { attr x: attrs<string + AttrCats.Config, A> }"
+  ],
+  [
+    "@flags decodes Codes { - 1 A: 'x' } entity A { attr x: attrs<AttrCats.Config + Codes.A, A> }"
+  ],
+  [
+    "decodes Codes { - 1 A: 'x' } type chosen<a: code<Codes>> = string entity A { attr x: chosen<Codes.A + Codes.A> }"
+  ],
+  [
+    "entity A { attr x: code<Missing> attr y: exact<self.x::value + self.x::value> }"
+  ],
+  [
+    "decodes Codes {} type chosen<a: code<Codes>> = string entity A { attr x: chosen<Codes.None> }"
+  ],
+  [
+    "@flags decodes Codes {} type chosen<a: code<Codes>> = string entity A { attr x: chosen<Codes.Missing + Codes.None> }"
+  ],
+  [
+    "@flags type flag = string"
+  ],
+  [
+    "entity A { @flags attr x: string }"
+  ],
+  [
+    "@flags decodes Codes { - 0b12 A: 'x' }"
+  ],
+  [
+    "type a = AttrCats.Static +"
+  ],
+  [
+    "entity A { config attr x: integer = 0b1 }"
+  ],
+  [
+    "type a = exact<0b1>"
+  ]
+]

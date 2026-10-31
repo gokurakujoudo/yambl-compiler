@@ -17,10 +17,7 @@ from yambl_compiler.transactions.writing import dumps
 
 class DocumentTests(unittest.TestCase):
     def test_shared_editor_cases(self):
-        fixture = (
-            Path(__file__).resolve().parents[4]
-            / 'yambl/tools/vscode/lsp/tests/transaction-cases.json'
-        )
+        fixture = Path(__file__).resolve().parents[2] / 'fixtures/editor/transaction-cases.json'
         for case in json.loads(fixture.read_text(encoding='utf-8')):
             with self.subTest(case=case['name']):
                 if case.get('invalid'):

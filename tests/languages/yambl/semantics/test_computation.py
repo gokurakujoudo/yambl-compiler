@@ -4,12 +4,26 @@ import unittest
 from dataclasses import replace
 
 from tests.support import document
+from yambl_compiler.languages.yambl.computation.evaluation import StructuredConstant
 from yambl_compiler.languages.yambl.semantics.computation import Checker, Computations, Input
 from yambl_compiler.languages.yambl.semantics.types import Resolved
 from yambl_compiler.languages.yambl.semantics.validation import analyze
 
 
 class ComputationTests(unittest.TestCase):
+    def test_finite_value_requires_a_declared_scalar_or_structure(self):
+        analysis = self.analyze('value point { attr x: integer } entity A {}')
+        unit = analysis.units[0]
+        computations = unit.world.computations
+        point = StructuredConstant('point', (('x', 2),))
+        result = computations.finite_value(unit, Resolved('point', key=('', 'point')), point)
+        self.assertEqual(result.target, ('', 'point'))
+        self.assertEqual(result.value[0][1].value, 2)
+        with self.assertRaisesRegex(ValueError, 'structured finite value requires a declared type'):
+            computations.finite_value(unit, Resolved('point'), point)
+        with self.assertRaisesRegex(ValueError, 'finite values must be non-collection values'):
+            computations.finite_value(unit, Resolved('integer'), [1, 2])
+
     def test_best_available_requires_explicit_value_and_checks_dimensions(self):
         prefix = '''decodes Sources { - 1 Feed: 'Feed' }
         entity E { dimension feed { value source: code<Sources> hierarchy order: Hierarchy }

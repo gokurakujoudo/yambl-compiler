@@ -1,0 +1,247 @@
+[
+  {
+    "name": "empty plan",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\n\n}\n}\n",
+    "formatted": "plan daily {\n    version 1\n    model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n    group first {\n\n    }\n}\n"
+  },
+  {
+    "name": "exact literals and comments",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id, amount, active, tags, fields) {\n'中😀#a', -12345678901234567890.1200, true, ['don\\'t', 'a\\\\b'], {name: NO_ENTRY, 'empty': []} #note\n}\n}\n}\n",
+    "formatted": "plan daily {\n    version 1\n    model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n    group first {\n        insert core.A (id, amount, active, tags, fields) {\n            '中😀#a', -12345678901234567890.1200, true, ['don\\'t', 'a\\\\b'], { name: NO_ENTRY, 'empty': [] }  # note\n        }\n    }\n}\n"
+  },
+  {
+    "name": "scope and owned data",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\nreplace core.A.price scope (id='x', day in ['2026-01-01', '2026-02-01')) columns (day, value) {\n'2026-01-02', 1e-20\n}\ndelete core.A.price scope (id='y')\ndelete core.A owned_data delete_all (id) {\n'z'\n}\n}\n}\n",
+    "formatted": "plan daily {\n    version 1\n    model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n    group first {\n        replace core.A.price scope (id='x', day in ['2026-01-01', '2026-02-01')) columns (day, value) {\n            '2026-01-02', 1e-20\n        }\n        delete core.A.price scope (id='y')\n        delete core.A owned_data delete_all (id) {\n            'z'\n        }\n    }\n}\n"
+  },
+  {
+    "name": "CRLF",
+    "text": "plan daily {\r\nversion 1\r\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\r\ngroup first {\r\n# a\r\nupdate core.A (id, x) {\r\n1, EMPTY\r\n}\r\n}\r\n}\r\n",
+    "formatted": "plan daily {\n    version 1\n    model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n    group first {\n        # a\n        update core.A (id, x) {\n            1, EMPTY\n        }\n    }\n}\n"
+  },
+  {
+    "name": "sealed transaction",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest '74040ec10dc331d81bb280923a84391a435e69b44a851633b017c34aeca49181'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "formatted": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest '74040ec10dc331d81bb280923a84391a435e69b44a851633b017c34aeca49181'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n"
+  },
+  {
+    "name": "sealed transaction alternate spelling",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n # comment\n    digest '74040ec10dc331d81bb280923a84391a435e69b44a851633b017c34aeca49181'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.500e0\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "formatted": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    # comment\n    digest '74040ec10dc331d81bb280923a84391a435e69b44a851633b017c34aeca49181'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.500e0\n            }\n        }\n        warning 'later change retained'\n    }\n}\n"
+  },
+  {
+    "name": "wrong width",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id, x) {\n1\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "multiline record",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id, x) {\n1,\n2\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "same line",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id) { 1 }\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "expression",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id) {\n1+2\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "empty scope",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ndelete core.A.x scope ()\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "duplicate scope",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ndelete core.A.x scope (id=1, id=2)\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "replace without scope",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\nreplace core.A (id) {\n1\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "duplicate columns",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id, id) {\n1,2\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "unsupported version",
+    "text": "plan daily {\nversion 2\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\n\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "tampered transaction",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest '74040ec10dc331d81bb280923a84391a435e69b44a851633b017c34aeca49181'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.6\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "trailing token",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\n\n}\n}\nextra",
+    "invalid": true
+  },
+  {
+    "name": "leap day with fractional UTC time",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2024-02-29T23:59:59.123456Z'\n    digest '40b9a94b89ac31afdda2753c895480c3c9f0422c2240c538b863b6d2465c90ee'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "formatted": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2024-02-29T23:59:59.123456Z'\n    digest '40b9a94b89ac31afdda2753c895480c3c9f0422c2240c538b863b6d2465c90ee'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n"
+  },
+  {
+    "name": "first supported year",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '0001-01-01T00:00:00Z'\n    digest 'dbeb61792ccd48cb01daf6acafdd434d6987bdb25bdb899284d8208dff4cf538'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "formatted": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '0001-01-01T00:00:00Z'\n    digest 'dbeb61792ccd48cb01daf6acafdd434d6987bdb25bdb899284d8208dff4cf538'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n"
+  },
+  {
+    "name": "last supported year",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '9999-12-31T23:59:59Z'\n    digest '11559eff2d6960fc2eae182e1145d865134bd5e33249440d7a478addea099e9e'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "formatted": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '9999-12-31T23:59:59Z'\n    digest '11559eff2d6960fc2eae182e1145d865134bd5e33249440d7a478addea099e9e'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n"
+  },
+  {
+    "name": "non-leap February day",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-02-29T12:00:00Z'\n    digest 'dd31eeea76828d6346d0cabf692b64cf229b0bf13f673c5776b0b39cafdcc757'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "overflow February day",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-02-30T12:00:00Z'\n    digest 'e541df7ebb3b4982238545db5df2ce7a3333ffa4ae0b204605a4521dacabea08'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "overflow hour",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T24:00:00Z'\n    digest '52d910ddb9e22b6e0681a2700ea338ac70b146cb19852062a866035a6bdeb25a'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "year zero",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '0000-01-01T00:00:00Z'\n    digest 'c0a1b049daae5d522dd90d88bb2c8cbe201eedd9d7e9138e342a0cc1574de31e'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "UTC offset instead of Z",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:00:00+00:00'\n    digest 'b5f889927a8e408f253196038b2a4186e437847e8702b88afc571d36a0a4260e'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "space instead of time separator",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26 12:00:00Z'\n    digest 'ed99808e3cc1756097fcbb78ae29c0bb922184cb3390184f7ebc3a5c1dd4b65d'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "overflow minute",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:60:00Z'\n    digest 'be05fc930b484380fa8963408b348555387bad6f0ad22782b8ba51ed285eba62'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "leap second",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:00:60Z'\n    digest 'bad8353b15bec5dfc2bbf27e7ffd50414706b70d0f418b1ae7ba08b04ac25236'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "decimal exponent 1e1000000000000000000",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id) {\n1e1000000000000000000\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "decimal exponent 12e999999999999999999",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id) {\n12e999999999999999999\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "decimal exponent 1e-1999999999999999998",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id) {\n1e-1999999999999999998\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "decimal exponent 0e9999999999999999999",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id) {\n0e9999999999999999999\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "decimal exponent 1e999999999999999999",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id) {\n1e999999999999999999\n}\n}\n}\n",
+    "formatted": "plan daily {\n    version 1\n    model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n    group first {\n        insert core.A (id) {\n            1e999999999999999999\n        }\n    }\n}\n"
+  },
+  {
+    "name": "decimal exponent 1e-1999999999999999997",
+    "text": "plan daily {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup first {\ninsert core.A (id) {\n1e-1999999999999999997\n}\n}\n}\n",
+    "formatted": "plan daily {\n    version 1\n    model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n    group first {\n        insert core.A (id) {\n            1e-1999999999999999997\n        }\n    }\n}\n"
+  },
+  {
+    "name": "replace A.x expect one scope (id=1) columns (value) {",
+    "text": "plan p {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup g {\nreplace A.x expect one scope (id=1) columns (value) {\n2\n}\n}\n}\n",
+    "formatted": "plan p {\n    version 1\n    model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n    group g {\n        replace A.x expect one scope (id=1) columns (value) {\n            2\n        }\n    }\n}\n"
+  },
+  {
+    "name": "delete A.x expect any scope (id=1)",
+    "text": "plan p {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup g {\ndelete A.x expect any scope (id=1)\n}\n}\n",
+    "formatted": "plan p {\n    version 1\n    model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n    group g {\n        delete A.x expect any scope (id=1)\n    }\n}\n"
+  },
+  {
+    "name": "delete A expect one owned_data delete_all (id) {",
+    "text": "plan p {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup g {\ndelete A expect one owned_data delete_all (id) {\n1\n}\n}\n}\n",
+    "formatted": "plan p {\n    version 1\n    model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n    group g {\n        delete A expect one owned_data delete_all (id) {\n            1\n        }\n    }\n}\n"
+  },
+  {
+    "name": "invalid insert A expect one (id) {",
+    "text": "plan p {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup g {\ninsert A expect one (id) {\n1\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "invalid update A expect any (id) {",
+    "text": "plan p {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup g {\nupdate A expect any (id) {\n1\n}\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "invalid delete A.x expect none scope (id=1)",
+    "text": "plan p {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup g {\ndelete A.x expect none scope (id=1)\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "invalid delete A.x expectone scope (id=1)",
+    "text": "plan p {\nversion 1\nmodel 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\ngroup g {\ndelete A.x expectone scope (id=1)\n}\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "plan without a model digest",
+    "text": "plan p {\nversion 1\ngroup g {\ninsert A (id) {\n1\n}\n}\n}\n",
+    "formatted": "plan p {\n    version 1\n    group g {\n        insert A (id) {\n            1\n        }\n    }\n}\n"
+  },
+  {
+    "name": "sealed transaction retains expectation in digest",
+    "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-27T00:00:00Z'\n    digest 'a9f615b5da87dfe6d61d7b94f01a13680331221a0d7dd6477281cee452280795'\n    plan p {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group g {\n            delete A.x expect any scope (id=1)\n        }\n    }\n    group g {\n    }\n}\n",
+    "formatted": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-27T00:00:00Z'\n    digest 'a9f615b5da87dfe6d61d7b94f01a13680331221a0d7dd6477281cee452280795'\n    plan p {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group g {\n            delete A.x expect any scope (id=1)\n        }\n    }\n    group g {\n    }\n}\n"
+  },
+  {
+    "name": "sealed Snowflake transaction with UUID source",
+    "text": "transaction '1234567890123456789' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    source '12345678-1234-1234-1234-123456789abc'\n    digest '1dd9651f6bd3a1a5af0063c1a2e523cc9f36b0db684ad3b106aa1a53c6eb87c5'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "formatted": "transaction '1234567890123456789' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    source '12345678-1234-1234-1234-123456789abc'\n    digest '1dd9651f6bd3a1a5af0063c1a2e523cc9f36b0db684ad3b106aa1a53c6eb87c5'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n"
+  },
+  {
+    "name": "invalid Snowflake zero",
+    "text": "transaction '0' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest '74040ec10dc331d81bb280923a84391a435e69b44a851633b017c34aeca49181'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "invalid Snowflake leading zero",
+    "text": "transaction '0123' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest '74040ec10dc331d81bb280923a84391a435e69b44a851633b017c34aeca49181'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "invalid Snowflake signed ID",
+    "text": "transaction '-123' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest '74040ec10dc331d81bb280923a84391a435e69b44a851633b017c34aeca49181'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "invalid Snowflake source",
+    "text": "transaction '1234567890123456789' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    source '0123'\n    digest '1dd9651f6bd3a1a5af0063c1a2e523cc9f36b0db684ad3b106aa1a53c6eb87c5'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "invalid": true
+  },
+  {
+    "name": "sealed Snowflake rollback",
+    "text": "transaction '1234567890123456789' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    source '1234567890123456788'\n    digest 'a85a97d2f702422792addfc229a7ebe004c97f064d152f2b2fd1668c08e1a556'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n",
+    "formatted": "transaction '1234567890123456789' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    source '1234567890123456788'\n    digest 'a85a97d2f702422792addfc229a7ebe004c97f064d152f2b2fd1668c08e1a556'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Security.coupon scope (security_id='S1') {\n            before core.Security (security_id, coupon) {\n                'S1', 1.25\n            }\n            after core.Security (security_id, coupon) {\n                'S1', 2.5\n            }\n        }\n        warning 'later change retained'\n    }\n}\n"
+  }
+]

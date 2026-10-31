@@ -1,0 +1,25 @@
+{
+  "model": "namespace core\ndecodes Currencies { - 1 CNY: 'CNY' - 2 USD: 'USD' }\ntype money = decimal[6, 2]\nentity Item {\n    id id: integer\n    static attr text: string\n    static attr flag: bool\n    static attr count: integer\n    static attr day: date\n    static attr amount: money\n    static attr currency: code<Currencies>\n    static attr other: Item\n}\nentity Child inherits Item { @override static attr flag: exact<true> }\n\nextend Item { @temporal(day: date) snapshot attr price: money }\n",
+  "cases": [
+    {
+      "name": "valid",
+      "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest 'bd68d356781511c36f2c3a846525c412bd2d3ca88c75e51b7afdf8c742a68c30'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Item.price scope (id=1, day in ['2026-01-01', '2026-02-01')) {\n            before core.Item.price (id, day, value) {\n                1, '2026-01-04', 1.25\n            }\n            after core.Item.price (id, day, value) {\n                1, '2026-01-04', 2.5\n            }\n        }\n    }\n}\n",
+      "error": ""
+    },
+    {
+      "name": "wrong before ID",
+      "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest '231d056c5eb28c9ab6408905582484e39281dfc3a05f52d455aeacf688179e34'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Item.price scope (id=1, day in ['2026-01-01', '2026-02-01')) {\n            before core.Item.price (id, day, value) {\n                '1', '2026-01-04', 1.25\n            }\n            after core.Item.price (id, day, value) {\n                1, '2026-01-04', 2.5\n            }\n        }\n    }\n}\n",
+      "error": "integer literal"
+    },
+    {
+      "name": "wrong after value",
+      "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest '70106424ff1ec681ddfae03c67e582720de5094b5a392e09a7af48a7dc5ec0c5'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Item.price scope (id=1, day in ['2026-01-01', '2026-02-01')) {\n            before core.Item.price (id, day, value) {\n                1, '2026-01-04', 1.25\n            }\n            after core.Item.price (id, day, value) {\n                1, '2026-01-04', true\n            }\n        }\n    }\n}\n",
+      "error": "decimal literal"
+    },
+    {
+      "name": "missing image coordinate",
+      "text": "transaction '12345678-1234-1234-1234-123456789abc' {\n    version 1\n    time '2026-10-26T12:34:56Z'\n    digest 'd4c03a4190ee215148bf7a26f46c104d2df32737511f8f6079b7959c0e95d9d9'\n    plan daily {\n        version 1\n        model 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n        group first {\n        }\n    }\n    group first {\n        change core.Item.price scope (id=1, day in ['2026-01-01', '2026-02-01')) {\n            before core.Item.price (id, value) {\n                1, 1.25\n            }\n            after core.Item.price (id, day, value) {\n                1, '2026-01-04', 2.5\n            }\n        }\n    }\n}\n",
+      "error": "missing replacement column"
+    }
+  ]
+}

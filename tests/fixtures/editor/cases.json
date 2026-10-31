@@ -1,0 +1,338 @@
+[
+  [
+    "namespace core from decodes import Currencies entity Security { id security_id: string['[A-Z]{12}'] @title('Currency') @description('Security\\'s currency') attr currency: code<Currencies> attr market: code<'TradingMarkets'> } extend Security { dimension dimension_272 { value source: code<'PriceSources'> }  @temporal(as_of_date: date) @dimension(dimension_272) snapshot attr price: decimal config attr days: integer = 20 } entity Bond inherits Security { attr coupon: decimal @temporal(as_of_date: date) scd attr notional: decimal }",
+    "namespace decodes decodes Currencies { - 100 CNY: '人民币' - 200 USD: 'USD' }"
+  ],
+  [
+    "namespace core entity Security {}",
+    "namespace extras from core import Security extend Security { attr price: decimal }",
+    "namespace core entity Bond inherits Security { attr price: decimal }"
+  ],
+  [
+    "namespace enums decodes Currencies {}",
+    "namespace core from enums import Currencies entity A { attr x: code<Currencies> }",
+    "namespace core entity B { attr x: code<Currencies> }"
+  ],
+  [
+    "entity A { attr x: collection<string> attr y: values<A> attr z: mapping<integer, collection<A>> }"
+  ],
+  [
+    "entity A { attr x: code<'A'> attr y: code<Decodes> attr z: code<integer> }"
+  ],
+  [
+    "entity A { attr x: collection<'A'> attr y: code<Currencies<string>> attr z: mapping<string> }"
+  ],
+  [
+    "entity A { attr x: decimal[18, scale: 4] attr y: string[4] attr z: bool[1] attr a: decimal[precision: 18, precision: 4] }"
+  ],
+  [
+    "entity A { attr x: string[regex: ''] attr y: decimal[scale: 4, precision: 18] attr z: decimal[18, 4] }"
+  ],
+  [
+    "entity A { attr x: Missing attr y: string<A> attr z: int }"
+  ],
+  [
+    "entity A inherits B {} entity B inherits A {}"
+  ],
+  [
+    "entity A inherits Missing {} entity B inherits Decodes {}"
+  ],
+  [
+    "decodes Names {} entity A inherits Names {} extend Names { attr x: string } extend Missing {}"
+  ],
+  [
+    "entity A { id x: string } extend A { id y: string attr x: string }"
+  ],
+  [
+    "entity A {} extend A { attr x: string } extend A { attr x: string }"
+  ],
+  [
+    "entity A { @title('A') @title('B') attr x: string @description('A') @description('B') attr y: string }"
+  ],
+  [
+    "entity A { @temporal(day: date) snapshot attr x: decimal @temporal(as_of_date: date) config attr y: integer }"
+  ],
+  [
+    "entity A { dimension dimension_11 { value Bad: string } dimension dimension_35 { value source: string } dimension dimension_62 { value source: string }  @dimension(dimension_11) @dimension(dimension_35) @dimension(dimension_62) attr x: string }"
+  ],
+  [
+    "entity A { @temporal(as_of_date: date) @temporal(as_of_date: date) scd attr x: decimal }"
+  ],
+  [
+    "entity A { config attr i: integer = -1 config attr f: float = -1.2e3 config attr d: decimal = 20 config attr s: string = 'it\\'s # fine' config attr b: bool = false config attr s_id: snowflake_id = 123 }"
+  ],
+  [
+    "entity A { attr x: integer = 1 config attr y: bool = 1 config attr z: date = '2026-01-01' }"
+  ],
+  [
+    "entity bad_name {} entity A { attr Bad: integer } entity A {}"
+  ],
+  [
+    "from missing import A entity B {}"
+  ],
+  [
+    "namespace a from a import A entity A {}"
+  ],
+  [
+    "decodes Currencies { - 1 CNY: 'a' - 2 CNY: 'b' } entity A { attr x: Currencies }"
+  ],
+  [
+    "#head\r\nnamespace core\r\n\r\n\r\nentity A{#entity\r\n @title('人民币 😀') attr price:decimal[precision:18,scale:4]#price\r\n attr pattern:string[regex:'[# \\'x]+']\r\n}\r\n\r\n"
+  ],
+  [
+    "entity #name\nA { attr x: mapping< #key\nstring, #value\ndecimal[18, 4]> #field\n}"
+  ],
+  [
+    ""
+  ],
+  [
+    "# only comment\n\n"
+  ],
+  [
+    "entity Fund"
+  ],
+  [
+    "entity A { attr x: A[] }"
+  ],
+  [
+    "entity A { attr x: string['unterminated }"
+  ],
+  [
+    "namespace a namespace b"
+  ],
+  [
+    "entityFund {}"
+  ],
+  [
+    "entity A { ref x: A }"
+  ],
+  [
+    "entity A { config attr x: decimal = 1. }"
+  ],
+  [
+    "entity A { @unknown('x') attr y: string }"
+  ],
+  [
+    "@title('x') extend A {}"
+  ],
+  [
+    "entity A { attr x: decimal[1.5, 2] }"
+  ],
+  [
+    "final entity A {} entity B inherits A {}"
+  ],
+  [
+    "final entity A {} extend A {}"
+  ],
+  [
+    "entity B inherits ConfigGroup {}"
+  ],
+  [
+    "extend ConfigGroup {}"
+  ],
+  [
+    "entity A { @override attr x: string }"
+  ],
+  [
+    "entity A { @overload attr x: string }"
+  ],
+  [
+    "entity A { @override id x: string }"
+  ],
+  [
+    "entity A { @overload @override attr x: string }"
+  ],
+  [
+    "entity A { attr x: string } entity B inherits A { @override attr x: integer }"
+  ],
+  [
+    "entity A {} entity B inherits A { attr x: string } entity C inherits A { @overload attr x: string }"
+  ],
+  [
+    "entity A {} entity B inherits A { @overload static attr x: string } entity C inherits A { @overload attr x: string }"
+  ],
+  [
+    "entity A {} entity B inherits A { @overload @title('B') attr x: string } entity C inherits A { @overload @title('C') attr x: string }"
+  ],
+  [
+    "entity A {} entity B { @overload attr x: string } entity C { @overload attr x: string }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: type }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: type<string> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: type<Missing> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: type<'A'> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: type<A, A> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: type<type<A>> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: type<Codes> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping[1] }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<id, A> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<'static', A> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<static<A>, A> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<self.target::value, A> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<AttrCats.Static, Entity> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<AttrCats.Static, Missing> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<AttrCats.Static, Codes> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<AttrCats.Static, self.absent::value> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<AttrCats.Static, self.bad::value> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<AttrCats.Static, self.wrong::value> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<AttrCats.Static, self.many::value> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: field_mapping<AttrCats.Static, self.quoted::value> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: values<self.target::value> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: code<self.target::value> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: code<Entity> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: collection<type<A>> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: values<field_mapping<AttrCats.Static, A>> }"
+  ],
+  [
+    "decodes Codes {} entity A { attr target: type<Entity> attr bad: string attr wrong: type<Missing> attr many: type<A, A> attr quoted: type<'A'> attr value: mapping<string, field_mapping<AttrCats.Static, A>> }"
+  ],
+  [
+    "final entity Selection { attr condition: field_mapping<AttrCats.Static, self.selected::value> config attr selected: type<Entity> }"
+  ],
+  [
+    "namespace n entity A { attr selected: type<A> }",
+    "namespace other from n import A entity B inherits A {} extend B { attr fields: field_mapping<AttrCats.Config, self.selected::value> }"
+  ],
+  [
+    "entity Base {} entity A inherits Base { @overload @title('Price') config attr x: decimal[18,4] = 1 } entity B inherits Base { @title('Price') @overload config attr x: decimal[scale:4,precision:18] = 2 } entity C inherits A { @title('Price') @override config attr x: decimal[18,4] = 3 }"
+  ],
+  [
+    "entity A { attr x: field_mapping<AttrCats.Static, self.a.b> }"
+  ],
+  [
+    "entity A { @override() attr x: string }"
+  ],
+  [
+    "final extend A {}"
+  ],
+  [
+    "entity A { attr t: type<Entity> attr x: type<self.t::value> attr y: mapping<self.t::value, string> }"
+  ],
+  [
+    "entity A { attr t: type<Entity> attr x: field_mapping<AttrCats.Static, A> attr y: field_mapping<AttrCats.Config, ConfigGroup> }"
+  ],
+  [
+    "entity A {} entity B inherits A { @overload @overload attr x: string } entity C inherits A { @overload attr x: string }"
+  ],
+  [
+    "entity A { id x: string } entity B inherits A { @override id x: string }"
+  ],
+  [
+    "entity Base {} entity A inherits Base { @overload attr x: decimal[-0018,-0] } entity B inherits Base { @overload attr x: decimal[scale:0,precision:-18] }"
+  ],
+  [
+    "value record { attr entity: Item attr child: leaf } value leaf { attr code: string } entity Item { attr x: values<record> }"
+  ],
+  [
+    "value a { attr b: b } value b { attr a: a }"
+  ],
+  [
+    "value a { attr b: b attr c: c } value b { attr d: d } value c { attr d: d } value d {}"
+  ],
+  [
+    "value a { id x: string @override attr y: values<string> @dimension(source: string) attr z: integer }"
+  ],
+  [
+    "entity A { dimension dimension_39 { value source: code<'Outside'> hierarchy selector: Hierarchy } dimension dimension_96 { value kind: string }  @temporal(as_of_date: date) @dimension(dimension_39) @dimension(dimension_96) snapshot attr x: decimal }"
+  ],
+  [
+    "entity A { @dimension(a: integer, b: string, c: string) static attr x: string }"
+  ],
+  [
+    "entity A { dimension dimension_39 { value as_of_date: string hierarchy h: Hierarchy } dimension dimension_84 { value other: string hierarchy h: Hierarchy }  @temporal(as_of_date: date) @dimension(dimension_39) @dimension(dimension_84) snapshot attr x: string }"
+  ],
+  [
+    "---\r\n# Heading  \r\n\r\n\r\n { invalid @ \r\n---\r\nvalue a {\r\n    ---\r\n  body  \r\n    ---\r\nattr x:string\r\n}"
+  ],
+  [
+    "---\nnot closed"
+  ],
+  [
+    "final value a {}"
+  ],
+  [
+    "value a inherits b {}"
+  ],
+  [
+    "namespace a value record { attr x: string }",
+    "namespace b from a import record entity A { attr x: record }"
+  ],
+  [
+    "entity A { attr h: Hierarchy attr e: values<hierarchy_entry> attr d: values<decodes_entry> }"
+  ],
+  [
+    "value a {} entity A { attr x: collection<a> attr y: type<a> attr z: field_mapping<AttrCats.Static, a> }"
+  ],
+  [
+    "entity Base {} entity A inherits Base { dimension dimension_50 { value x: string hierarchy a: Hierarchy } dimension dimension_86 { value y: string hierarchy b: Hierarchy }  @overload @dimension(dimension_50) @dimension(dimension_86) attr z: string } entity B inherits Base { dimension dimension_174 { value x: string hierarchy b: Hierarchy } dimension dimension_210 { value y: string hierarchy a: Hierarchy }  @overload @dimension(dimension_174) @dimension(dimension_210) attr z: string }"
+  ],
+  [
+    "entity A { @dimensions(x: string) attr x: string }"
+  ],
+  [
+    "namespace builtins final entity Hierarchy {}",
+    "namespace builtins final entity Hierarchy {}"
+  ],
+  [
+    "namespace builtins value string {} entity Entity {}"
+  ],
+  [
+    "namespace demo.builtins final entity Hierarchy {}"
+  ],
+  [
+    "namespace builtins entity Private {}",
+    "namespace business entity A { attr x: Private attr h: Hierarchy }"
+  ]
+]

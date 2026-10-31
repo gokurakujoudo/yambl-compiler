@@ -1,0 +1,158 @@
+[
+  [
+    "\nnamespace core\ndecodes Currencies { - 100 USD: 'USD' - 200 CNY: 'CNY' }\ntype money = decimal[18, 4]\ntype selected<t: type<Entity>> = t\ntype codes<d: Decodes> = code<d>\ntype label = string\ntype preference = Hierarchy\nentity Security inherits Entity { dimension dimension_366 { value source: label hierarchy preference: preference } \n    id security_id: snowflake_id\n    static attr currency: code<Currencies>\n    config attr size: money = 12.5\n    @dimension(dimension_366)\n    attr price: money\n    attr related: collection<Security>\n}\nentity Bond inherits Security { @override static attr currency: exact<Currencies.USD> }\nentity Selection {\n    attr kind: type<Security>\n    attr c1: self.kind::value\n    attr c2: self.kind::type\n    attr c3: type<self.kind::value>\n    attr c4: alias<self.kind::value>\n    attr c5: selected<self.kind::value>\n    attr dictionary: Decodes\n    attr code: code<self.dictionary::value>\n    attr codes: codes<Currencies>\n    attr security: Security\n    attr currency: self.security::value.currency::type\n    attr same_currency: alias<self.security::value.currency::value>\n    attr fields: attrs<AttrCats.Static, Security>\n    attr bond_fields: attrs<AttrCats.Static, Bond>\n    attr mapping: mapping<attrs<AttrCats.Static, Security> as Attr, Attr::type>\n    attr shortcut: field_mapping<AttrCats.Static, Security>\n    attr references: mapping<type<Entity>, Security>\n    attr by_code: mapping<code<Currencies>, money>\n    attr by_field: mapping<attrs<AttrCats.Static, Security>, string>\n    attr id_map: mapping<snowflake_id, string>\n    attr aliases: alias<self.mapping::value>\n}\n"
+  ],
+  [
+    "entity A { attr a: exact<1<string>> }"
+  ],
+  [
+    "entity A { attr a: self<A> }"
+  ],
+  [
+    "entity A { attr a: string as X }"
+  ],
+  [
+    "entity A { attr a: Decodes[1] }"
+  ],
+  [
+    "type loop = loop"
+  ],
+  [
+    "type first = second type second = first"
+  ],
+  [
+    "type bad<t: type<Entity>> = t<string>"
+  ],
+  [
+    "type bad<T: type<Entity>, T: type<Entity>> = T"
+  ],
+  [
+    "type bad = self.kind::value"
+  ],
+  [
+    "entity A { attr a: self.b::type attr b: self.a::type }"
+  ],
+  [
+    "entity A { attr a: string::type }"
+  ],
+  [
+    "entity A { attr a: string.nope }"
+  ],
+  [
+    "entity A { attr a: string attr b: self.a::nope }"
+  ],
+  [
+    "entity A { attr a: string attr b: self.a.type }"
+  ],
+  [
+    "entity A { attr a: string attr b: A.a::value }"
+  ],
+  [
+    "entity A { attr a: mapping<attrs<AttrCats.Static, A> as Attr, Attr::value> }"
+  ],
+  [
+    "entity A { attr a: exact<true> }"
+  ],
+  [
+    "entity A { attr a: type<Entity> @override attr b: exact<self.a::value> }"
+  ],
+  [
+    "entity A { attr a: alias<string> }"
+  ],
+  [
+    "entity A { attr a: alias<1> }"
+  ],
+  [
+    "entity A { attr a: attrs<string, A> }"
+  ],
+  [
+    "entity A { attr a: attrs<AttrCats.Static, string> }"
+  ],
+  [
+    "entity A { attr a: attrs<AttrCats.absent, A> }"
+  ],
+  [
+    "entity A {} entity B { attr a: A.absent::type }"
+  ],
+  [
+    "entity A { attr a: Entity[1] }"
+  ],
+  [
+    "type money = decimal entity A { attr a: money[1] }"
+  ],
+  [
+    "entity A { attr x: bool } entity B inherits A { @override attr x: exact<true> }"
+  ],
+  [
+    "@title('x') type money = decimal"
+  ],
+  [
+    "entity A { attr x: map<string, string> }"
+  ],
+  [
+    "type x<t: type<Entity>> = t entity A { attr a: x<t: A> }"
+  ],
+  [
+    "entity A { attr b: type<Entity> attr x: self.b:type }"
+  ],
+  [
+    "entity A { config attr x: string } entity B inherits A { @override config attr x: exact<'USD'> = 'USD' }"
+  ],
+  [
+    "entity A { config attr x: string } entity B inherits A { @override config attr x: exact<'USD'> = 'CNY' }"
+  ],
+  [
+    "type active = exact<true> entity A { id key: string attr enabled: active attr label: exact<'ready'> }"
+  ],
+  [
+    "const LOW: integer = 1 + 1 entity Base { attr choice: one_of[LOW, 3, 4] } entity Child inherits Base { @override attr choice: one_of[3, LOW] } entity Leaf inherits Child { @override attr choice: exact<3> }"
+  ],
+  [
+    "entity Base { attr choice: one_of[1, 2] } entity Child inherits Base { @override attr choice: one_of[2, 3] }"
+  ],
+  [
+    "entity A { config attr x: one_of[1, 2] = 3 }"
+  ],
+  [
+    "entity A { attr x: one_of[] }"
+  ],
+  [
+    "entity A { attr x: one_of[1, 1] }"
+  ],
+  [
+    "entity A { attr x: one_of[1, 'x'] }"
+  ],
+  [
+    "decodes D { - 1 Same: 'd' } decodes E { - 1 Same: 'e' } entity A { attr x: one_of[D.Same, E.Same] }"
+  ],
+  [
+    "const START: datetime = parse_datetime('2026-01-01T08:00:00+08:00') entity A { attr x: one_of[START, parse_datetime('2026-01-02T00:00:00Z')] }"
+  ],
+  [
+    "value point { attr x: integer } const P: point = {x: 1} const Q: point = {x: 2} entity A { attr x: one_of[P, Q] }"
+  ],
+  [
+    "const N: integer = 2 entity A { attr x: exact<N + 1> attr y: exact<1 > 0> }"
+  ],
+  [
+    "value point { attr x: integer } const P: point = {x: 1} entity A { attr x: exact<P> }"
+  ],
+  [
+    "const START: datetime = parse_datetime('2026-01-01T08:00:00+08:00') entity A { attr x: exact<START> }"
+  ],
+  [
+    "entity Base { attr x: one_of[1, 2] } entity Child inherits Base { @override attr x: exact<1 + 1> }"
+  ],
+  [
+    "entity A { config attr x: exact<1>=1 attr y: exact<1 >= 0> }"
+  ],
+  [
+    "@flags decodes D { - 1 One: 'one' - 2 Two: 'two' } entity A { attr x: one_of[D.One, D.All] }"
+  ],
+  [
+    "@flags decodes D { - 1 One: 'one' - 2 Two: 'two' } entity A { attr x: one_of[D.All, D.One + D.Two] }"
+  ],
+  [
+    "decodes D {} entity A { attr x: Decodes } entity B inherits A { @override attr x: D }"
+  ]
+]

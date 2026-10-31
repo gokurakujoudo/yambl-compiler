@@ -255,6 +255,54 @@ class HierarchyRuntimeTests(FilesystemCase):
             )
             reader.close()
 
+    def test_reference_input_to_hierarchy_default_is_exposed_and_read(self):
+        self.write(
+            'model.yambl',
+            """
+decodes Sources { - 1 Wind: 'Wind' }
+entity A {
+    id id: string
+    @extra_input_param(ref: Decodes) computed attr dictionary: Decodes { return input.ref }
+    dimension prices { value source: string hierarchy order: Hierarchy = self.dictionary::value()::hierarchy() }
+    @dimension(prices) attr price: decimal
+}
+""",
+        )
+        model = compile_repository(self.root)
+        output = self.root / 'reference-generated'
+        layout = generate(model, output, 'reference_model')
+        api = load_generated(output / 'reference_model', 'reference_model')
+        database = self.root / 'reference.sqlite'
+        field = layout.fields['A.price']
+        with closing(sqlite3.connect(database)) as writer:
+            writer.executescript((output / 'schema.sql').read_text(encoding='utf-8'))
+            writer.execute('INSERT INTO tb_a (id) VALUES (?)', ('a',))
+            writer.execute(
+                f'INSERT INTO {quote(field.table)} (id,dim_source,{quote(field.state)},{quote(field.value)}) VALUES (?,?,?,?)',
+                ('a', 'Wind', 0, '7.5'),
+            )
+            writer.commit()
+            writer.row_factory = sqlite3.Row
+            tables = {
+                table.name: [
+                    dict(row) for row in writer.execute(f'SELECT * FROM {quote(table.name)}')
+                ]
+                for table in layout.tables
+            }
+        files = self.root / 'reference-files'
+        for name, content in repository_contents(layout, tables).items():
+            target = files / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding='utf-8', newline='\n')
+        for opened in (api.ReferenceReader.open(database), api.ReferenceReader.open_files(files)):
+            with closing(opened.value) as reader:
+                select = reader.get_a('a').value.read_price_best_available
+                self.assertIn('EntityRef[Decodes] | str', str(inspect.signature(select)))
+                result = select(ref='Sources')
+                self.assertEqual(
+                    (result.value.value, result.value.dimensions.source), (Decimal('7.5'), 'Wind')
+                )
+
     def test_generated_package_runs_without_compiler(self):
         script = '''
 import sys

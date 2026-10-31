@@ -49,8 +49,7 @@ class BindingTests(CatalogCase):
 
     def test_shared_editor_type_cases(self):
         fixture = (
-            Path(__file__).resolve().parents[3]
-            / 'yambl/tools/vscode/lsp/tests/transaction-type-cases.json'
+            Path(__file__).resolve().parents[1] / 'fixtures/editor/transaction-type-cases.json'
         )
         data = json.loads(fixture.read_text(encoding='utf-8'))
         self.write('model.yambl', data['model'])

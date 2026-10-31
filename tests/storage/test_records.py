@@ -11,6 +11,7 @@ from tests.support import FilesystemCase, load_generated
 from yambl_compiler.ir import compile_repository
 from yambl_compiler.languages.shared.model import Condition, Symbol
 from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
+from yambl_compiler.storage.computing import Frame
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.results import EntityRef, Status, Success
 from yambl_compiler.transactions.snapshot import SnapshotBackend
@@ -191,6 +192,15 @@ entity A {
                         self.assertEqual(entity.read_prices_ok(), Success(True, 'computation'))
                         self.assertEqual(entity.read_periods_ok(), Success(True, 'computation'))
                         self.assertEqual(entity.read_missing_record().status, Status.NO_ENTRY)
+                        lane = (0,)
+                        frame = Frame((lane,), {}, {}, (False,))
+                        result = reader._computing.sequence_all(
+                            frame,
+                            {lane: Success((1,))},
+                            lambda child, values: {child.lanes[0]: Success(1)},
+                        )[lane]
+                        self.assertEqual(result.status, Status.ERROR)
+                        self.assertIn('all predicate requires bool', result.message)
                         self.assertEqual(
                             reader.get_a('b').value.read_prices_ok(), Success(True, 'computation')
                         )

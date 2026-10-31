@@ -9,7 +9,7 @@ from yambl_compiler.ir import compile_repository
 from yambl_compiler.languages.shared.model import Condition
 from yambl_compiler.languages.yaplan.model import Group, Operation, Plan
 from yambl_compiler.storage.generation import generate
-from yambl_compiler.storage.results import Status
+from yambl_compiler.storage.results import EntityRef, Status
 from yambl_compiler.transactions.snapshot import SnapshotBackend
 
 
@@ -249,6 +249,9 @@ entity D { id id: string @reverse_relationship(A.b.c.d) attr a: A }
                     with closing(store.read()) as reader:
                         self.assertEqual(reader.get_c('c').value.read_a().value.id, 'a')
                         self.assertEqual(reader.get_d('d').value.read_a().value.id, 'a')
+                        reverse_records = reader._physical_records(EntityRef('D', 'd'), 'D.a')
+                        self.assertEqual(reverse_records.status, Status.ERROR)
+                        self.assertIn('physically stored', reverse_records.message)
                         self.assertEqual(
                             reader.get_d('empty').value.read_a().status, Status.NO_ENTRY
                         )
