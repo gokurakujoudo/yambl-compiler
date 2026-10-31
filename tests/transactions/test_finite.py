@@ -14,6 +14,56 @@ from yambl_compiler.transactions.writing import dumps
 
 
 class FiniteTransactionTests(FilesystemCase, unittest.IsolatedAsyncioTestCase):
+    async def test_hierarchy_singleton_applies_to_subtype_on_both_backends(self):
+        self.write('yambl-root.lclcfg', "prefix: ''\n")
+        self.write(
+            'model.yambl',
+            "hierarchy H { - 1 'x' } hierarchy Other { - 1 'y' } "
+            'entity A { id id: string attr h: Hierarchy } '
+            'entity B inherits A { @override attr h: exact<H> }',
+        )
+        output = self.root / 'generated'
+        generate(compile_repository(self.root), output, 'sample_model')
+        module = load_generated(output / 'sample_model', 'sample_model')
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                config = self.write(
+                    f'{backend}.lclcfg', f"backend: '{backend}'\npath: '{backend}.data'\n"
+                )
+                good = self.write(
+                    'good.yaplan',
+                    dumps(
+                        Plan(
+                            'good',
+                            None,
+                            (Group('g', (Operation('insert', 'B', ('id', 'h'), (('b', 'H'),)),)),),
+                        )
+                    ),
+                )
+                bad = self.write(
+                    'bad.yaplan',
+                    dumps(
+                        Plan(
+                            'bad',
+                            None,
+                            (
+                                Group(
+                                    'g',
+                                    (Operation('insert', 'B', ('id', 'h'), (('other', 'Other'),)),),
+                                ),
+                            ),
+                        )
+                    ),
+                )
+                with await module.SampleData.create(config) as store:
+                    self.assertEqual(store.apply(good).status, 'committed')
+                    with closing(store.read()) as reader:
+                        self.assertEqual(reader.get_b('b').value.h.value.id, 'H')
+                    before = store.snapshot().tables
+                    with self.assertRaisesRegex(ValueError, 'exact'):
+                        store.apply(bad)
+                    self.assertEqual(store.snapshot().tables, before)
+
     async def test_both_backends_enforce_finite_inputs(self):
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write(

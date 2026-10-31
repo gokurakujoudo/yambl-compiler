@@ -81,6 +81,20 @@ entity B inherits A {}
         self.assertEqual(validate_ir(loads(dumps(first))), ())
         self.assertEqual(validate_ir(loads(dumps(second))), ())
 
+    def test_hierarchy_singleton_narrows_inherited_reference(self):
+        self.write(
+            'model.yambl',
+            "hierarchy H { - 1 'x' } "
+            'entity A { id id: string attr h: Hierarchy } '
+            'entity B inherits A { @override attr h: exact<H> }',
+        )
+        model = compile_repository(self.root)
+        entity = next(item for item in model.definitions if item.identity == 'B')
+        field = next(item for item in entity.fields if item.name == 'h')
+        self.assertEqual(field.type.exact.target, 'H')
+        self.write('model.yambl', 'unavailable')
+        self.assertEqual(validate_ir(loads(dumps(model))), ())
+
     def test_invalid_finite_ir_is_rejected_before_restoration(self):
         self.write('model.yambl', 'entity A { id id: string attr n: one_of[1,2] }')
         model = compile_repository(self.root)

@@ -109,6 +109,24 @@ entity Leaf inherits Child { @override attr choice: exact<3> }
             with self.subTest(expression=expression):
                 self.assertTrue(check([document(f'entity A {{ attr x: {expression} }}')]))
 
+    def test_exact_type_fallback_rejects_nonconstant_and_bound_arguments(self):
+        prefix = "decodes D { - 1 X: 'x' } "
+        for argument, expected in (
+            ('code<D>', 'exact requires a constant value'),
+            ('D.X as Z', 'as binding is only allowed on a mapping key'),
+        ):
+            with self.subTest(argument=argument):
+                source = prefix + f'entity A {{ config attr a: exact<{argument}>=1 }}'
+                messages = [item.message for item in check([document(source)])]
+                self.assertIn(expected, messages)
+        source = prefix + (
+            'entity A { computed attr a: integer { ' 'let y: exact<D.X as Z>=D.X return 1 } }'
+        )
+        self.assertIn(
+            'as binding is only allowed on a mapping key',
+            [item.message for item in check([document(source)])],
+        )
+
     def test_finite_value_cycles_and_evaluation_failures_are_diagnostic(self):
         for source, expected in (
             ('const X: exact<X> = 1', 'constant dependency cycle'),
