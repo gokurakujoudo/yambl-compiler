@@ -47,7 +47,7 @@ from yambl_compiler.ir.model import (
 )
 from yambl_compiler.languages.yambl.computation.records import Expression as CalculationExpression
 from yambl_compiler.languages.yambl.computation.records import TypeHint
-from yambl_compiler.languages.yambl.semantics.computation import Checker
+from yambl_compiler.languages.yambl.semantics.computation import Checker, Computations
 from yambl_compiler.languages.yambl.semantics.computation import Value as CheckedValue
 from yambl_compiler.languages.yambl.semantics.decodes import is_flags
 from yambl_compiler.languages.yambl.semantics.decorators import bind_call, parameters, unique_fields
@@ -57,7 +57,6 @@ from yambl_compiler.languages.yambl.semantics.dimensions import (
 from yambl_compiler.languages.yambl.semantics.dimensions import (
     dimension_at,
     field_dimension,
-    resolve_dimension,
 )
 from yambl_compiler.languages.yambl.semantics.expressions import (
     REGEX_REFERENCE,
@@ -165,10 +164,10 @@ class Lowering:
             'builtin' if unit.document.builtin else 'model',
             path.as_posix(),
             namespace(unit.document),
-            first.line or 1,
-            first.column or 1,
-            last.end_line or 1,
-            last.end_column or 1,
+            cast(int, first.line),
+            cast(int, first.column),
+            cast(int, last.end_line),
+            cast(int, last.end_column),
         )
 
     def identity(self, key: EntityKey, name: str) -> str:
@@ -234,7 +233,7 @@ class Lowering:
             )
             for mode in modes:
                 for sites in self.analysis.entities.candidates(
-                    target_type.key or ('', ''), mode
+                    cast(EntityKey, target_type.key), mode
                 ).values():
                     for site in sites:
                         owner, name = self.owners[id(site.declaration)]
@@ -310,8 +309,6 @@ class Lowering:
                     collect(child)
                 for argument in expression.arguments:
                     collect(argument.expression)
-                for case in expression.cases:
-                    collect(case.expression)
 
             for candidate in candidates:
                 collect(candidate)
@@ -507,14 +504,11 @@ class Lowering:
                     next(part for part in call.children if isinstance(part, Tree)), 'type_expr'
                 )[0]
                 source, path = reverse_path(unit, syntax, self.analysis.entities)
-                if source is not None:
-                    reverse_source = qualified(source)
-                    reverse_steps = tuple(
-                        ReverseStep(
-                            qualified(owner), self.identity(*self.owners[id(site.declaration)])
-                        )
-                        for owner, _, site in path
-                    )
+                reverse_source = qualified(cast(EntityKey, source))
+                reverse_steps = tuple(
+                    ReverseStep(qualified(owner), self.identity(*self.owners[id(site.declaration)]))
+                    for owner, _, site in path
+                )
             result.append(
                 Call(
                     target,
@@ -662,15 +656,13 @@ class Lowering:
                         if not parameter.input_name and value is not None:
                             if parameter.requirement.type.name == 'code':
                                 kind = 'code'
-                                dictionary = parameter.requirement.type.args[0].key
-                                assert dictionary is not None
+                                dictionary = cast(EntityKey, parameter.requirement.type.args[0].key)
                                 target = qualified(dictionary)
                                 text = str(value)
                             elif type(value) is date:
                                 kind, text = 'date', value.isoformat()
                             else:
-                                assert isinstance(value, str)
-                                kind, text = 'string', value
+                                kind, text = 'string', cast(str, value)
                         bindings.append(
                             LookupBinding(
                                 parameter.requirement.name,
@@ -816,18 +808,18 @@ class Lowering:
             )
         return tuple(result)
 
-    def dimensions(self, key: EntityKey, unit: Unit) -> tuple[Dimension, ...]:
+    def dimensions(self, key: EntityKey) -> tuple[Dimension, ...]:
         """Lower entity-local dimension definitions, including extensions.
 
         :param key: Entity identity.
-        :param unit: Declaration context.
         :returns: Sorted portable dimension declarations.
         """
         result: list[Dimension] = []
-        for name in sorted(self.world.dimensions.get(key, {})):
-            dimension = resolve_dimension(unit, key, name, [])
-            assert dimension is not None
-            result.append(self.dimension(dimension))
+        definitions = self.world.dimensions.get(key, {})
+        for name in sorted(definitions):
+            scope, node = definitions[name]
+            identity = (key[0], key[1] + '::dimension.' + name)
+            result.append(self.dimension(dimension_at(scope, node, key, identity, [])))
         return tuple(result)
 
     def dimension(self, dimension: CheckedDimension) -> Dimension:
@@ -862,8 +854,7 @@ class Lowering:
                 visit(expression)
         hierarchy_inputs: tuple[CalculationInput, ...] = ()
         if dimension.hierarchy_default is not None:
-            analyzer = dimension.unit.world.computations
-            assert analyzer is not None
+            analyzer = cast(Computations, dimension.unit.world.computations)
             checker = Checker(analyzer, dimension.owner, dimension.unit)
             environment = (
                 {}
@@ -1058,7 +1049,7 @@ class Lowering:
             (
                 (self.dimension(dimension_at(unit, node, key, key, [])),)
                 if node.data == 'dimension'
-                else self.dimensions(key, unit)
+                else self.dimensions(key)
             ),
             unit.world.constant_expressions.get(key) if node.data == 'constant' else None,
             (

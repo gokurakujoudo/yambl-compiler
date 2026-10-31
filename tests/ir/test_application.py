@@ -189,7 +189,7 @@ import sys
 from pathlib import Path
 original = Path.read_text
 def guarded(path, *args, **kwargs):
-    if path.suffix == '.yambl' or path.name == 'result-constants.json':
+    if path.suffix == '.yambl' or path.name in ('result-constants.json', 'reserved-calculation-names.json'):
         raise AssertionError('unexpected source access: ' + str(path))
     return original(path, *args, **kwargs)
 Path.read_text = guarded

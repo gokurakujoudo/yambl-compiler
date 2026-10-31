@@ -327,8 +327,10 @@ def _prepare[KeyT, IdT: str | int, MatchT](
                             *stored.key_values,
                         )
                         if field.category == 'scd':
-                            assert when is not None
-                            selection = Selection(keys, 'scd', when.isoformat(), when.isoformat())
+                            date_value = cast(date, when)
+                            selection = Selection(
+                                keys, 'scd', date_value.isoformat(), date_value.isoformat()
+                            )
                         else:
                             selection = Selection(keys)
                         cache_key = (current, step.access.identity, selection)
@@ -364,8 +366,6 @@ def _prepare[KeyT, IdT: str | int, MatchT](
                             f'key {key.name}, entity {entity.id}, field {step.access.identity}: {value.message}'
                         )
                     break
-                if not isinstance(value, Success):
-                    raise ValueError(f'key {key.name}, entity {entity.id}: invalid field result')
                 value = cast(Success[object], value)
                 reference = value.value
                 if isinstance(reference, EntityRef):
@@ -377,15 +377,11 @@ def _prepare[KeyT, IdT: str | int, MatchT](
                         continue
                     current = target
                     continue
-                if position + 1 == len(key.steps):
-                    values.append(
-                        str(reference)
-                        if key.type.name == 'string' and isinstance(reference, str)
-                        else reference
-                    )
-                    continue
-                else:
-                    raise ValueError(f'key {key.name}, entity {entity.id}: expected a reference')
+                values.append(
+                    str(reference)
+                    if key.type.name == 'string' and isinstance(reference, str)
+                    else reference
+                )
             else:
                 continue
             break

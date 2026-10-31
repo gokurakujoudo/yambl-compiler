@@ -57,7 +57,7 @@ class Catalog:
         definition = self.definitions.get(name)
         if definition is None or definition.kind != 'entity':
             raise ValueError(f'unknown entity: {name}')
-        if definition.source.origin == 'model' and name in self.layout.roots:
+        if definition.source.origin == 'model':
             root = self.layout.roots[name]
             return Entity(definition, root, self.layout.ids[root], table_name(root), 'id')
         if name not in ('builtins.Decodes', 'builtins.Hierarchy', 'builtins.ConfigGroup'):

@@ -49,7 +49,7 @@ class DocumentationTests(FilesystemCase):
             self.assertIn("Declaring entities::\n\n    sample.Root\n    sample.Zulu", doc)
             self.assertIn("source: code<sample.Sources> (required explicitly)", doc)
             self.assertIn(
-                "Hierarchy selector priority: builtins.Hierarchy (metadata only; not executed)",
+                "Hierarchy selector priority: builtins.Hierarchy (used by best-available selection; exact reads do not apply it)",
                 doc,
             )
             self.assertLess(doc.index("source: code"), doc.index("venue: string"))

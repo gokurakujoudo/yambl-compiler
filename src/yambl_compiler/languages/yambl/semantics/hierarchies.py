@@ -54,17 +54,18 @@ def hierarchy_entries(
             continue
         name, value = str(items[2]), str(items[4])
         symbol = unit.scope.get(name)
-        dictionary = unit.world.declarations.get(symbol.key) if symbol else None
-        if symbol is None or symbol.kind != 'decodes' or dictionary is None:
+        if symbol is None or symbol.kind != 'decodes':
             diagnostics.append(diagnostic(unit.document, entry, f'unknown Decodes: {name}'))
-        elif is_flags(dictionary[1]):
-            diagnostics.append(
-                diagnostic(unit.document, entry, 'Hierarchy entries require ordinary Decodes')
-            )
-        elif value not in {str(tokens(item)[2]) for item in children(dictionary[1], 'entry')}:
-            diagnostics.append(
-                diagnostic(unit.document, entry, f'unknown Decodes code: {name}.{value}')
-            )
+        else:
+            dictionary = unit.world.declarations[symbol.key][1]
+            if is_flags(dictionary):
+                diagnostics.append(
+                    diagnostic(unit.document, entry, 'Hierarchy entries require ordinary Decodes')
+                )
+            elif value not in {str(tokens(item)[2]) for item in children(dictionary, 'entry')}:
+                diagnostics.append(
+                    diagnostic(unit.document, entry, f'unknown Decodes code: {name}.{value}')
+                )
         result.append(
             HierarchyEntry(
                 ordering, value, symbol.key if symbol and symbol.kind == 'decodes' else None, entry

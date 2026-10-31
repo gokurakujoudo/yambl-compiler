@@ -58,12 +58,12 @@ def portable_finite_value(member: FiniteValue) -> Value:
     """
     payload = member.value
     if member.kind == 'structured':
-        assert isinstance(payload, tuple)
+        fields = cast(tuple[tuple[str, FiniteValue], ...], payload)
         return Value(
             'structured',
             '',
             qualified(member.target) if member.target else '',
-            fields=tuple(ValueField(name, portable_finite_value(value)) for name, value in payload),
+            fields=tuple(ValueField(name, portable_finite_value(value)) for name, value in fields),
         )
     if isinstance(payload, bool):
         text = str(payload).lower()
@@ -74,8 +74,8 @@ def portable_finite_value(member: FiniteValue) -> Value:
     elif isinstance(payload, date):
         text = payload.isoformat()
     elif isinstance(payload, Decimal):
-        sign, digits, exponent = payload.as_tuple()
-        assert isinstance(exponent, int)
+        sign, digits, raw_exponent = payload.as_tuple()
+        exponent = cast(int, raw_exponent)
         remaining = list(digits)
         while len(remaining) > 1 and remaining[-1] == 0:
             remaining.pop()
@@ -182,15 +182,15 @@ def portable_flags(type_: Resolved, world: World) -> Value:
     :param world: Declaration index containing its flags dictionary.
     :returns: Typed portable flags value.
     """
-    key = type_.args[0].key
-    declaration = world.declarations[key or ('', '')][1]
+    key = cast(EntityKey, type_.args[0].key)
+    declaration = world.declarations[key][1]
     selected = tuple(filter(None, (type_.exact or '').split('+')))
     mask = sum(
         int(str(tokens(entry)[1]), 0) if '0b' in str(tokens(entry)[1]) else int(tokens(entry)[1])
         for entry in children(declaration, 'entry')
         if str(tokens(entry)[2]) in selected
     )
-    return Value('flags', '', qualified(key) if key else '', selected, str(mask))
+    return Value('flags', '', qualified(key), selected, str(mask))
 
 
 def accepts(expected: Resolved, actual: Resolved, world: World) -> bool:

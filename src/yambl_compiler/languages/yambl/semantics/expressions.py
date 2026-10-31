@@ -322,10 +322,11 @@ class Resolver:
             self.issue(
                 node, f'invalid parameters for {name}; do not mix positional and named parameters'
             )
+            return ()
         result: list[tuple[str, str]] = []
         for key, value in pairs:
             text = string_value(value) if value.type == 'STRING' else integer_text(str(value))
-            if valid and name == 'string' and expand_regex:
+            if name == 'string' and expand_regex:
                 text = self.regex_references(node, text)
             result.append((key, text))
         return tuple(sorted(result))

@@ -32,4 +32,22 @@ New-Item -ItemType Directory -Path build\hello-yambl -Force | Out-Null
 
 ## 开发
 
-已激活环境时，可用 `yambl` 或 `python -m yambl_compiler`。开发者可运行 `python -m black --check src tests`、`python -m ruff check src tests`、`python -m mypy`、`python -m pyright` 和 `python -m unittest discover -s tests -v`。源代码的语句和分支覆盖率门禁由 `python -m coverage run -m unittest discover -s tests -v` 与 `python -m coverage report` 执行。
+已激活环境时，可用 `yambl` 或 `python -m yambl_compiler`。以下示例无需激活环境，直接使用前面创建的解释器检查代码并运行针对性测试：
+
+```powershell
+.\venv\Scripts\python.exe -m black --check src tests
+.\venv\Scripts\python.exe -m ruff check src tests
+.\venv\Scripts\python.exe -m mypy
+.\venv\Scripts\python.exe -c "import subprocess, sys; sys.exit(subprocess.call([sys.executable, '-m', 'pyright', '--pythonpath', sys.executable]))"
+.\venv\Scripts\python.exe -m unittest tests.application.test_repository -v
+```
+
+完整功能与覆盖率门禁先在仓库根目录运行 [CI 工作流](.github/workflows/check.yml)中 `Run functional tests with coverage` 步骤的整段 `python -c` 命令：将命令中的 `python` 换成 `.\venv\Scripts\python.exe`，复制时去掉 YAML 块共同的前导缩进，保留 Python 代码内部缩进。然后依次执行：
+
+```powershell
+.\venv\Scripts\python.exe -m coverage json --fail-under=0 -o build/coverage.json
+.\venv\Scripts\python.exe -m coverage report
+.\venv\Scripts\python.exe -c "import json; r = json.load(open('build/coverage.json')); assert all(f['summary']['missing_lines'] == 0 and f['summary']['missing_branches'] == 0 for f in r['files'].values())"
+```
+
+该功能测试排除性能测试和已确认的长环、十万行规模测试；覆盖率门禁要求报告中每个源码文件的语句和分支均为 100%。

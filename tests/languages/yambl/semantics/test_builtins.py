@@ -1,5 +1,6 @@
 """Bundled model resources are valid and match the authoring repository."""
 
+import json
 from pathlib import Path
 
 from tests.support import FilesystemCase, document, load_generated
@@ -12,12 +13,18 @@ from yambl_compiler.languages.yambl.semantics.builtins import (
     RESULT_CONSTANTS,
     load_models,
 )
-from yambl_compiler.languages.yambl.semantics.symbols import namespace
+from yambl_compiler.languages.yambl.semantics.symbols import RESERVED_CALCULATION_NAMES, namespace
 from yambl_compiler.languages.yambl.semantics.validation import check
 from yambl_compiler.storage.generation import generate
 
 
 class BuiltinTests(FilesystemCase):
+    def test_reserved_value_names_match_the_language_resource(self):
+        names = json.loads(
+            (MODEL_ROOT / 'builtins/reserved-calculation-names.json').read_text(encoding='utf-8')
+        )
+        self.assertEqual(RESERVED_CALCULATION_NAMES, frozenset(names))
+
     def test_result_constants_have_distinct_meanings_and_reserved_names(self):
         expected = {
             'NOT_DEFINED': 'actual type',

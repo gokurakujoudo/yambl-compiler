@@ -85,10 +85,7 @@ def python_package(layout: Layout, package: str) -> str:
             for field in definition.fields:
                 python_type(field.type)
     for stored in layout.fields.values():
-        if (
-            stored.root not in layout.entities
-            or layout.entities[stored.root].source.origin == "builtin"
-        ):
+        if layout.entities[stored.root].source.origin == "builtin":
             continue
         python_type(stored.field.type)
         for dim in stored.dimensions:
@@ -272,14 +269,12 @@ def python_package(layout: Layout, package: str) -> str:
     records = {
         key: names[s.root] + "".join(p.capitalize() for p in s.field.name.split("_")) + "Record"
         for key, s in layout.fields.items()
-        if s.root in names
-        and (s.dimensions or s.field.category in ("snapshot", "scd") or key in accessed_records)
+        if s.dimensions or s.field.category in ("snapshot", "scd") or key in accessed_records
     }
     selections = {
         key: names[s.root] + ''.join(p.capitalize() for p in s.field.name.split('_')) + 'Selection'
         for key, s in layout.fields.items()
-        if s.root in names
-        and (layout.entities[s.root].source.origin != 'builtin' or key in accessed_best)
+        if layout.entities[s.root].source.origin != 'builtin' or key in accessed_best
     }
     dimension_types = {
         key: name.removesuffix('Selection') + 'Dimensions' for key, name in selections.items()
@@ -550,7 +545,6 @@ def python_package(layout: Layout, package: str) -> str:
         )
     for identity, name in requests.items():
         field = computed[identity]
-        assert field.calculation is not None
         reserved_parameters = {"self", "id_value", "best_effort"}
         if any(
             keyword.iskeyword(p.name) or p.name in reserved_parameters for p in contracts[identity]
@@ -618,7 +612,6 @@ def python_package(layout: Layout, package: str) -> str:
         for identity, field in computed.items():
             if roots[identity] != key:
                 continue
-            assert field.calculation is not None
             method = "read_" + field.name
             if method in method_names or {method, field.name} & {f.name for f in root_fields}:
                 raise ValueError(f"{identity}: generated calculation method collision")
@@ -643,8 +636,6 @@ def python_package(layout: Layout, package: str) -> str:
             dimensions = "{" + ", ".join(f"{d.key!r}: {d.key}" for d in stored.dimensions) + "}"
             kw = ", *, " + dims if dims else ""
             method = "read_" + f.name
-            if method in methods:
-                raise ValueError(f"{key}: generated method collision {method}")
             methods.add(method)
             temporal = f.category in ("snapshot", "scd")
             time_key = next(
@@ -671,79 +662,76 @@ def python_package(layout: Layout, package: str) -> str:
                     f"        return cast(ReadResult[{property_type}], self.reader.read_all(self, {f.identity!r}))",
                 ]
             )
-            if f.identity in selections:
-                declarations = {
-                    d.identity: d
-                    for definition in layout.model.definitions
-                    for d in definition.dimensions
-                }
-                selection_dimensions = [
-                    declarations[c.dimension_identity]
-                    for c in f.decorators
-                    if c.target == 'builtins.dimension'
-                ]
-                best_parameters: list[tuple[str, str, bool]] = []
-                if temporal:
-                    best_parameters.append((time_key, 'date', False))
-                for dimension in selection_dimensions:
+            declarations = {
+                d.identity: d
+                for definition in layout.model.definitions
+                for d in definition.dimensions
+            }
+            selection_dimensions = [
+                declarations[c.dimension_identity]
+                for c in f.decorators
+                if c.target == 'builtins.dimension'
+            ]
+            best_parameters: list[tuple[str, str, bool]] = []
+            if temporal:
+                best_parameters.append((time_key, 'date', False))
+            for dimension in selection_dimensions:
+                best_parameters.append(
+                    (
+                        dimension.value_name,
+                        python_type(dimension.type),
+                        bool(dimension.hierarchy_name),
+                    )
+                )
+                if dimension.hierarchy_name:
                     best_parameters.append(
                         (
-                            dimension.value_name,
-                            python_type(dimension.type),
-                            bool(dimension.hierarchy_name),
+                            dimension.hierarchy_name,
+                            'str | EntityRef[object] | HierarchyView',
+                            True,
                         )
                     )
-                    if dimension.hierarchy_name:
-                        best_parameters.append(
-                            (
-                                dimension.hierarchy_name,
-                                'str | EntityRef[object] | HierarchyView',
-                                True,
-                            )
-                        )
-                for dimension in selection_dimensions:
-                    for dependency in dimension.hierarchy_inputs:
-                        if dependency.name not in {item[0] for item in best_parameters}:
-                            annotation = python_type(dependency.type)
-                            if dependency.type.kind == 'reference':
-                                annotation += ' | str'
-                            best_parameters.append((dependency.name, annotation, True))
-                args = ', '.join(
-                    name + ': ' + annotation + (' | Omitted = UNSET' if optional else '')
-                    for name, annotation, optional in best_parameters
-                )
-                values = (
-                    '{'
-                    + ', '.join(repr(name) + ': ' + name for name, _, _ in best_parameters)
-                    + '}'
-                )
-                best_method = method + '_best_available'
-                if best_method in methods or best_method in method_names:
-                    raise ValueError(f'{key}: generated method collision {best_method}')
-                methods.add(best_method)
-                best_result = f'ReadResult[{selections[f.identity]}]'
-                lines.extend(
-                    [
-                        '',
-                        f'    def {best_method}(self'
-                        + (', *, ' + args if args else '')
-                        + f') -> {best_result}:',
-                        *docstring(
-                            [
-                                f'Select {f.identity} and return its value and actual dimensions.',
-                                '',
-                                *(
-                                    f':param {name}: Selection input ({annotation}).'
-                                    for name, annotation, _ in best_parameters
-                                ),
-                                ':returns: Selected value and dimensions, or a non-normal result.',
-                                f':rtype: {best_result}',
-                            ],
-                            8,
-                        ),
-                        f'        return cast({best_result}, self.reader.read_best(self, {f.identity!r}, {values}))',
-                    ]
-                )
+            for dimension in selection_dimensions:
+                for dependency in dimension.hierarchy_inputs:
+                    if dependency.name not in {item[0] for item in best_parameters}:
+                        annotation = python_type(dependency.type)
+                        if dependency.type.kind == 'reference':
+                            annotation += ' | str'
+                        best_parameters.append((dependency.name, annotation, True))
+            args = ', '.join(
+                name + ': ' + annotation + (' | Omitted = UNSET' if optional else '')
+                for name, annotation, optional in best_parameters
+            )
+            values = (
+                '{' + ', '.join(repr(name) + ': ' + name for name, _, _ in best_parameters) + '}'
+            )
+            best_method = method + '_best_available'
+            if best_method in methods or best_method in method_names:
+                raise ValueError(f'{key}: generated method collision {best_method}')
+            methods.add(best_method)
+            best_result = f'ReadResult[{selections[f.identity]}]'
+            lines.extend(
+                [
+                    '',
+                    f'    def {best_method}(self'
+                    + (', *, ' + args if args else '')
+                    + f') -> {best_result}:',
+                    *docstring(
+                        [
+                            f'Select {f.identity} and return its value and actual dimensions.',
+                            '',
+                            *(
+                                f':param {name}: Selection input ({annotation}).'
+                                for name, annotation, _ in best_parameters
+                            ),
+                            ':returns: Selected value and dimensions, or a non-normal result.',
+                            f':rtype: {best_result}',
+                        ],
+                        8,
+                    ),
+                    f'        return cast({best_result}, self.reader.read_best(self, {f.identity!r}, {values}))',
+                ]
+            )
             lines.extend(
                 [
                     "",
@@ -838,7 +826,6 @@ def python_package(layout: Layout, package: str) -> str:
             )
     for identity, name in requests.items():
         field = computed[identity]
-        assert field.calculation is not None
         owner = abstract_owners.get(identity, field.implementation.rsplit(".", 1)[0])
         method = "read_" + snake(names[owner]) + "_" + field.name + "_many"
         result = f"ReadResult[tuple[ReadResult[{python_type(field.type)}], ...]]"

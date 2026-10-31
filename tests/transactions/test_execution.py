@@ -306,10 +306,12 @@ class ExecutionTests(CatalogCase):
             lambda: self.data.image('A', self.scope),
             lambda: self.data.clear('A', self.scope),
             lambda: self.data.put('A', self.scope, Image('A', (), ())),
-            lambda: Execution(self.data).field(Operation('replace', 'A', (), (), self.scope)),
         ):
             with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, 'field'):
                 operation()
+        bad_target = Operation('replace', 'A', (), (), self.scope)
+        with self.assertRaisesRegex(ValueError, 'field'):
+            Execution(self.data).apply(Plan('p', None, (Group('g', (bad_target,)),)))
         with self.assertRaisesRegex(ValueError, 'scope requires owner ID'):
             self.data.image('A.text', ())
         with self.assertRaisesRegex(ValueError, 'replace or delete'):
@@ -328,13 +330,13 @@ class ExecutionTests(CatalogCase):
             with self.subTest(operation=operation), self.assertRaisesRegex(ValueError, 'ID'):
                 execution.validate_claims(Plan('p', None, (Group('g', (operation,)),)))
         with self.assertRaisesRegex(ValueError, 'owner ID'):
-            execution.field(incomplete)
+            execution.apply(Plan('p', None, (Group('g', (incomplete,)),)))
         with self.assertRaisesRegex(ValueError, 'owner ID'):
             execution.validate_expectations(
                 Plan('p', None, (Group('g', (replace(incomplete, expect='one'),)),))
             )
         with self.assertRaisesRegex(ValueError, 'ID column'):
-            execution.entities(missing_id)
+            execution.apply(Plan('p', None, (Group('g', (missing_id,)),)))
         with self.assertRaisesRegex(ValueError, 'only the ID'):
             execution.entities(Operation('delete', 'A', ('key', 'text'), (('a', 'word'),)))
         with self.assertRaisesRegex(ValueError, 'require a field scope'):

@@ -1,6 +1,7 @@
 """Check named lookup paths and infer their preparation parameters."""
 
 from dataclasses import dataclass, replace
+from typing import cast
 
 from lark import Token, Tree
 
@@ -14,9 +15,14 @@ from yambl_compiler.languages.yambl.semantics.computation import (
     Input,
     Value,
 )
-from yambl_compiler.languages.yambl.semantics.entities import EntityIndex
+from yambl_compiler.languages.yambl.semantics.entities import EntityIndex, FieldSite
 from yambl_compiler.languages.yambl.semantics.expressions import Resolver
-from yambl_compiler.languages.yambl.semantics.symbols import EntityKey, Unit, declaration_name
+from yambl_compiler.languages.yambl.semantics.symbols import (
+    RESERVED_CALCULATION_NAMES,
+    EntityKey,
+    Unit,
+    declaration_name,
+)
 from yambl_compiler.languages.yambl.semantics.types import UNKNOWN, Resolved, accepts, common_type
 from yambl_compiler.languages.yambl.syntax.computation import branches, expression
 from yambl_compiler.languages.yambl.syntax.parser import (
@@ -112,6 +118,7 @@ class LookupChecker(Checker):
         super().__init__(computations, owner, unit)
         self.steps: list[LookupStep] = []
         self.descriptor_error = False
+        self.invalid_bindings: set[int] = set()
 
     def issue(self, node: Expression, message: str) -> None:
         """Avoid repeating a descriptor error caused by the same invalid path.
@@ -152,12 +159,11 @@ class LookupChecker(Checker):
         :returns: Resolved value or unknown after a diagnostic.
         """
         result = super().infer(node, environment, expected)
-        if node.kind != 'member' or result.site is None or result.owner is None:
+        if node.kind != 'member' or result.site is None:
             return result
+        owner = cast(EntityKey, result.owner)
         index = self.computations.entities
-        candidates = [result.owner] + [
-            key for key, chain in index.ancestors.items() if result.owner in chain
-        ]
+        candidates = [owner] + [key for key, chain in index.ancestors.items() if owner in chain]
         site = next(
             (
                 index.effective[key][result.name]
@@ -171,7 +177,7 @@ class LookupChecker(Checker):
             return Value(UNKNOWN)
         syntax = children(children(site.declaration, 'field_body')[0], 'type_expr')[0]
         resolved = Resolver(
-            site.unit, self.computations.diagnostics, index.field_types(result.owner), True
+            site.unit, self.computations.diagnostics, index.field_types(owner), True
         ).resolve(syntax)
         types: list[Resolved] = []
         for candidate in candidates:
@@ -186,7 +192,7 @@ class LookupChecker(Checker):
                     )
                 )
         resolved = common_type(types, self.unit.world) or resolved
-        return Value(resolved, site, result.owner, result.name)
+        return Value(resolved, site, owner, result.name)
 
     def field_parameters(self, value: Value, operation: str, node: Expression) -> list[Input]:
         """Collect a stored field's required date and dimensions.
@@ -196,8 +202,8 @@ class LookupChecker(Checker):
         :param node: Source expression.
         :returns: Required parameters.
         """
-        assert value.site is not None
-        body = children(value.site.declaration, 'field_body')[0]
+        site = cast(FieldSite, value.site)
+        body = children(site.declaration, 'field_body')[0]
         mode = field_mode(body)
         if mode not in ('id', 'attr', 'static', 'scd'):
             self.issue(node, f'lookup does not support {mode} fields')
@@ -215,6 +221,21 @@ class LookupChecker(Checker):
         return parameters
 
     def bind_input(
+        self, requirement: Input, expression: Expression, environment: dict[str, Value]
+    ) -> None:
+        """Check a binding and remember failures before compile-time evaluation.
+
+        :param requirement: Field parameter contract.
+        :param expression: Binding expression.
+        :param environment: Lookup self binding.
+        :returns: None; records whether the binding has diagnostics.
+        """
+        before = len(self.computations.diagnostics)
+        self.check_binding(requirement, expression, environment)
+        if len(self.computations.diagnostics) != before:
+            self.invalid_bindings.add(id(expression))
+
+    def check_binding(
         self, requirement: Input, expression: Expression, environment: dict[str, Value]
     ) -> None:
         """Bind a parameter to a public input or a compile-time value.
@@ -249,6 +270,7 @@ class LookupChecker(Checker):
             return False
 
         if not pure(expression):
+            self.invalid_bindings.add(id(expression))
             self.issue(
                 expression,
                 'lookup binding requires a pure expression of inputs, literals, constants or dictionary members',
@@ -268,11 +290,7 @@ class LookupChecker(Checker):
             :param expected: Type expected at this position.
             :returns: None; records inferred input contracts.
             """
-            if (
-                node.kind == 'member'
-                and node.operands[0].kind == 'name'
-                and node.operands[0].value == 'input'
-            ):
+            if node.kind == 'member' and node.operands[0].value == 'input':
                 if node.value not in self.inputs:
                     self.add_input(replace(requirement, name=node.value, type=expected), node)
                 return
@@ -285,7 +303,7 @@ class LookupChecker(Checker):
                 for child in node.operands:
                     infer_inputs(child, Resolved('bool'))
                 return
-            if node.kind == 'call' and node.operands[0].kind == 'name':
+            if node.kind == 'call':
                 signature = SIGNATURES[node.operands[0].value]
                 for index, argument in enumerate(node.arguments):
                     name = argument.name or (signature[index][0] if index < len(signature) else '')
@@ -334,11 +352,14 @@ class LookupChecker(Checker):
         result: list[LookupParameter] = []
         for parameter in step.parameters:
             binding = parameter.binding
+            invalid = binding is not None and id(binding) in self.invalid_bindings
             if binding is not None:
                 binding = self.elaborate(binding)
                 parameter = replace(parameter, binding=binding)
             if binding is None:
                 result.append(replace(parameter, input_name=parameter.requirement.name))
+            elif invalid:
+                result.append(parameter)
             elif (
                 binding.kind == 'member'
                 and binding.operands[0].kind == 'name'
@@ -355,8 +376,8 @@ class LookupChecker(Checker):
                     result.append(
                         replace(parameter, value=evaluate(self.elaborate(binding), resolve))
                     )
-                except ValueError as error:
-                    self.issue(binding, str(error))
+                except (ValueError, ArithmeticError) as error:
+                    self.issue(binding, f'lookup binding evaluation failed: {error}')
                     result.append(parameter)
             else:
                 result.append(parameter)
@@ -436,7 +457,7 @@ def name_diagnostic(unit: Unit, node: Tree[Token], message: str) -> Diagnostic:
     """
     items = tokens(node)
     name = items[next(i for i, item in enumerate(items) if item.type == 'LOOKUP') + 1]
-    return Diagnostic(unit.document.path, name.line or 1, name.column or 1, message)
+    return Diagnostic(unit.document.path, cast(int, name.line), cast(int, name.column), message)
 
 
 def check_lookups(
@@ -465,6 +486,10 @@ def check_lookups(
                 name = str(
                     items[next(i for i, item in enumerate(items) if item.type == 'LOOKUP') + 1]
                 )
+                if name in RESERVED_CALCULATION_NAMES:
+                    diagnostics.append(
+                        name_diagnostic(unit, node, f'reserved calculation name: {name}')
+                    )
                 if not IDENTIFIER.fullmatch(name):
                     diagnostics.append(
                         name_diagnostic(unit, node, 'lookup names must use snake_case')

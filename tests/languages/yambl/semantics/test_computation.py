@@ -4,25 +4,32 @@ import unittest
 from dataclasses import replace
 
 from tests.support import document
-from yambl_compiler.languages.yambl.computation.evaluation import StructuredConstant
 from yambl_compiler.languages.yambl.semantics.computation import Checker, Computations, Input
 from yambl_compiler.languages.yambl.semantics.types import Resolved
 from yambl_compiler.languages.yambl.semantics.validation import analyze
 
 
 class ComputationTests(unittest.TestCase):
-    def test_finite_value_requires_a_declared_scalar_or_structure(self):
-        analysis = self.analyze('value point { attr x: integer } entity A {}')
-        unit = analysis.units[0]
-        computations = unit.world.computations
-        point = StructuredConstant('point', (('x', 2),))
-        result = computations.finite_value(unit, Resolved('point', key=('', 'point')), point)
-        self.assertEqual(result.target, ('', 'point'))
-        self.assertEqual(result.value[0][1].value, 2)
-        with self.assertRaisesRegex(ValueError, 'structured finite value requires a declared type'):
-            computations.finite_value(unit, Resolved('point'), point)
-        with self.assertRaisesRegex(ValueError, 'finite values must be non-collection values'):
-            computations.finite_value(unit, Resolved('integer'), [1, 2])
+    def test_exact_code_local_retains_diagnostics_for_invalid_flags(self):
+        source = (
+            "@flags decodes D { - 1 One: 'one' } "
+            "entity A { computed attr f: string { "
+            "let x: exact<D.Missing> = D.One return 'x' } }"
+        )
+        self.assertIn('unknown Decodes code: D.Missing', self.errors(source))
+
+    def test_finite_structured_constant_reports_invalid_collection_field(self):
+        for type_, literal in (
+            ('values<integer>', '[1,2]'),
+            ('mapping<string, integer>', "{'a':1}"),
+        ):
+            with self.subTest(type=type_):
+                errors = self.errors(
+                    f'value point {{ attr x: {type_} }} '
+                    f'const P: point = {{x:{literal}}} entity A {{ attr f: exact<P> }}'
+                )
+                self.assertIn('value fields cannot be collections', errors)
+                self.assertIn('finite values must be non-collection values', errors)
 
     def test_best_available_requires_explicit_value_and_checks_dimensions(self):
         prefix = '''decodes Sources { - 1 Feed: 'Feed' }
@@ -108,6 +115,15 @@ class ComputationTests(unittest.TestCase):
                 )
         cyclic = first.replace('self.amount::value(day=input.day)', 'self.total::value()')
         self.assertTrue(any('dependency cycle' in e for e in self.errors(root + cyclic + second)))
+
+    def test_records_recovers_from_invalid_temporal_declaration(self):
+        for annotation in ('@temporal', '@temporal()', '@temporal(bad=1)'):
+            source = (
+                f'entity A {{ {annotation} snapshot attr x: integer '
+                'computed attr y: integer { return self.x::records().sum_by(r -> r.value) } }'
+            )
+            with self.subTest(annotation=annotation):
+                self.assertIn('missing decorator argument: time', self.errors(source))
 
     def test_abstract_contract_accepts_extra_input_from_implementations(self):
         source = '''abstract entity Root { abstract computed attr value: integer }

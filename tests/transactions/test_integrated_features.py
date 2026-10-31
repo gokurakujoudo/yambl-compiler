@@ -18,6 +18,34 @@ from yambl_compiler.transactions.writing import dumps
 
 
 class IntegratedFeatureTests(FilesystemCase, unittest.IsolatedAsyncioTestCase):
+    async def test_value_fields_named_like_result_members_on_both_backends(self):
+        names = ('point', 'item')
+        declarations = '\n'.join(
+            f'value {name} {{ attr value: integer attr count: integer }}' for name in names
+        )
+        calculations = '\n'.join(
+            f'computed attr from_{name}: integer {{ '
+            f'let p: {name} = {{value: 1, count: 2}} return p.value + p.count }}'
+            for name in names
+        )
+        self.write('yambl-root.lclcfg', "prefix: ''\n")
+        self.write('model.yambl', f'{declarations}\nentity E {{ id id: string {calculations} }}')
+        output = self.root / 'generated'
+        generate(compile_repository(self.root), output, 'sample_model')
+        module = load_generated(output / 'sample_model', 'sample_model')
+        plan = Plan('insert', None, (Group('g', (Operation('insert', 'E', ('id',), (('e',),)),)),))
+        for backend in ('sqlite', 'files'):
+            with self.subTest(backend=backend):
+                config = self.write(
+                    f'{backend}.lclcfg', f"backend: '{backend}'\npath: '{backend}.data'\n"
+                )
+                with await module.SampleData.create(config) as store:
+                    self.assertEqual(store.apply(plan).status, 'committed')
+                    with closing(store.read()) as reader:
+                        entity = reader.get_e('e').value
+                        for name in names:
+                            self.assertEqual(getattr(entity, f'read_from_{name}')().value, 3)
+
     async def test_builtin_collection_reads_on_both_backends(self):
         self.write('yambl-root.lclcfg', "prefix: ''\n")
         self.write(

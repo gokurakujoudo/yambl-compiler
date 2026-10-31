@@ -6,7 +6,7 @@ from dataclasses import replace
 from lark import Token, Tree
 
 from yambl_compiler.languages.yambl.semantics.expressions import Resolver
-from yambl_compiler.languages.yambl.semantics.symbols import Unit
+from yambl_compiler.languages.yambl.semantics.symbols import RESERVED_CALCULATION_NAMES, Unit
 from yambl_compiler.languages.yambl.semantics.types import FieldTypes, accepts, check_type
 from yambl_compiler.languages.yambl.syntax.parser import (
     Diagnostic,
@@ -47,6 +47,8 @@ def check_field(
     body = children(field, 'field_body')[0]
     mode = field_mode(body)
     name = field_name(body)
+    if name in RESERVED_CALCULATION_NAMES:
+        diagnostics.append(diagnostic(unit.document, body, f'reserved calculation name: {name}'))
     if not re.fullmatch(r'[a-z][a-z0-9]*(?:_[a-z0-9]+)*', name):
         diagnostics.append(diagnostic(unit.document, body, 'field names must use snake_case'))
     if extension and mode == 'id':

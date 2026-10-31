@@ -50,7 +50,7 @@ def line_piece(items: list[Token], indent: int, calculation: bool = False) -> Pi
         if item.type == 'NAME'
         and str(items[i + 1]) == '='
         and str(items[0]) == '@'
-        and (i == 0 or str(items[i - 1]) != ':')
+        and str(items[i - 1]) != ':'
     }
     if calculation:
         for i, item in enumerate(items[:-1]):

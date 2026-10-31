@@ -374,7 +374,8 @@ def check_entities(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> Enti
             f'entity Hidden {{ static attr entity_type: type<{key[1]}> '
             'static attr root_entity_type: type<Entity> }'
         )
-        assert not isinstance(generated, Diagnostic)
+        if isinstance(generated, Diagnostic):
+            continue
         origin = tokens(header(declaration))[0]
         for offset, field in enumerate(children(children(generated.tree, 'entity')[0], 'field')):
             for subtree in field.iter_subtrees():

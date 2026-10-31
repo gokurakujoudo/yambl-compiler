@@ -198,7 +198,7 @@ class LookupTests(unittest.TestCase):
             ),
             (
                 "const BAD: date = parse_date('bad') entity E { @temporal(day:date) scd attr x:string lookup a { x=self.x::value(day=BAD) } }",
-                'cannot evaluate lookup binding: BAD',
+                'lookup binding evaluation failed: cannot evaluate lookup binding: BAD',
             ),
             (
                 "entity E { attr x:string lookup a { x=self.x::value() + 'x' } }",
@@ -436,6 +436,57 @@ class LookupTests(unittest.TestCase):
         )
         fixed = analysis.lookups[('', 'E')]['fixed'].keys[0].steps[0].parameters
         self.assertEqual([item.value for item in fixed], [date(2026, 10, 29), '3'])
+
+    def test_fixed_binding_failures_report_without_evaluating_invalid_expressions(self):
+        cases = (
+            ('1 // 0', 'incompatible binding for parameter: day'),
+            ('parse_date()', 'missing builtin argument: text'),
+            (
+                "parse_date('2024-01-01', '2024-01-02')",
+                'invalid, duplicate or out-of-order builtin argument: ',
+            ),
+            ('parse_date(to_string(1 // 0))', 'lookup binding evaluation failed: Fraction(1, 0)'),
+            (
+                "parse_date('bad')",
+                'lookup binding evaluation failed: parse_date requires YYYY-MM-DD',
+            ),
+        )
+        for binding, expected in cases:
+            with self.subTest(binding=binding):
+                source = f'''
+                    entity E {{
+                        dimension source {{ value index: string }}
+                        @dimension(source) @temporal(day: date) scd attr name: string
+                        lookup fixed {{ name = self.name::value(day={binding}, index='valid') }}
+                    }}
+                '''
+                analysis = analyze([document(source)])
+                self.assertEqual([item.message for item in analysis.diagnostics], [expected])
+                parameters = analysis.lookups[('', 'E')]['fixed'].keys[0].steps[0].parameters
+                self.assertEqual(parameters[1].value, 'valid')
+
+    def test_fixed_binding_selects_branch_using_decimal_and_float_values(self):
+        cases = (
+            ("if to_string(1.00) == '1.00' then 'ok' else to_string(1 // 0)", []),
+            (
+                "if to_string(1.00) == '1.00' then to_string(1 // 0) else 'ok'",
+                ['lookup binding evaluation failed: Fraction(1, 0)'],
+            ),
+            ("if 1 / 2 == 0.5 then 'ok' else to_string(1 // 0)", []),
+            ('to_string(1 / 0)', ['lookup binding evaluation failed: Fraction(1, 0)']),
+        )
+        for binding, expected in cases:
+            with self.subTest(binding=binding):
+                source = f'''
+                    entity E {{
+                        dimension d {{ value origin: string }}
+                        @dimension(d) attr name: string
+                        lookup fixed {{ name = self.name::value(origin={binding}) }}
+                    }}
+                '''
+                self.assertEqual(
+                    [item.message for item in analyze([document(source)]).diagnostics], expected
+                )
 
     def test_supported_types_and_branch_names(self):
         analysis = analyze([document("""

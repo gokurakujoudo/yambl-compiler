@@ -9,7 +9,7 @@ from enum import Enum
 from types import MappingProxyType
 from typing import cast
 
-from yambl_compiler.ir.model import Type
+from yambl_compiler.ir.model import Calculation, Type
 from yambl_compiler.storage.arithmetic import Number, aggregate, failure, lift, numeric
 from yambl_compiler.storage.batch import Batch, FieldRequest
 from yambl_compiler.storage.configuration import Configuration
@@ -772,16 +772,15 @@ class Computing:
                 groups.setdefault(field.implementation, []).append(lane)
         for implementation, lanes in groups.items():
             field = self.reader.implementations[implementation]
-            assert field.calculation is not None
+            calculation = cast(Calculation, field.calculation)
             supplied = {**frame.inputs, **arguments}
             inputs = {
-                p.name: supplied.get(p.name, self.literal(frame, UNSET))
-                for p in field.calculation.inputs
+                p.name: supplied.get(p.name, self.literal(frame, UNSET)) for p in calculation.inputs
             }
             child = Frame(tuple(lanes), owners, inputs, frame.modes)
             pending = {
                 p.name: p
-                for p in field.calculation.inputs
+                for p in calculation.inputs
                 if p.default is not None and not p.default_dimension
             }
             # Inference has rejected cycles; emitted ordering is topological at generation time.
@@ -804,7 +803,7 @@ class Computing:
             for lane in lanes:
                 try:
                     parameter_values: list[object] = []
-                    for parameter in field.calculation.inputs:
+                    for parameter in calculation.inputs:
                         result = at(inputs[parameter.name], lane)
                         if isinstance(result, NonNormalResult):
                             output[lane] = result

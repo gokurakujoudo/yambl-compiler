@@ -31,7 +31,7 @@ def validate_relationships(
             (call for call in stored.field.decorators if call.target == 'builtins.relationship'),
             None,
         )
-        if relation is None or not stored.table:
+        if relation is None:
             continue
         bounds = {item.name: item.type.exact.text for item in relation.bound if item.type.exact}
         owners = {

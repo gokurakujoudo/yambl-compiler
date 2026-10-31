@@ -178,9 +178,7 @@ class Computations:
         :raises ValueError: If a value cannot be represented as a finite member.
         """
         if isinstance(payload, StructuredConstant):
-            if type_.key is None:
-                raise ValueError('structured finite value requires a declared type')
-            declarations = unit.world.fields[type_.key]
+            declarations = unit.world.fields[cast(EntityKey, type_.key)]
             fields: list[tuple[str, FiniteValue]] = []
             for name, value in payload.fields:
                 field_unit, declaration = declarations[name]
@@ -300,7 +298,9 @@ class Computations:
                 self.finite_types[identity] = (syntax, value_type)
                 return value_type
             self.check_pure(checker, node)
-            if value_type.kind in ('collection', 'reference') or value_type.name == 'non_normal':
+            if value_type.kind in ('collection', 'reference') or (
+                value_type.kind == 'unknown' and value_type.name == 'non_normal'
+            ):
                 checker.issue(
                     node, 'finite values must be non-collection values without entity instances'
                 )
@@ -345,10 +345,11 @@ class Computations:
                 self.diagnostics.append(diagnostic(unit.document, syntax, str(error)))
             else:
                 if is_exact and len(values) == 1:
-                    assert common is not None
                     only = next(iter(values))
                     result = replace(
-                        common, exact=portable_finite_value(only).text, exact_value=only
+                        cast(Resolved, common),
+                        exact=portable_finite_value(only).text,
+                        exact_value=only,
                     )
                 elif len(values) < 2:
                     self.diagnostics.append(
@@ -359,8 +360,7 @@ class Computations:
                         )
                     )
                 else:
-                    assert common is not None
-                    result = replace(common, allowed_values=values)
+                    result = replace(cast(Resolved, common), allowed_values=values)
         self.finite_active.remove(identity)
         self.finite_types[identity] = (syntax, result)
         return result
@@ -425,8 +425,7 @@ class Computations:
                 payload = self.constant_values[symbol.key]
                 if not dot:
                     return payload
-                assert isinstance(payload, StructuredConstant)
-                return dict(payload.fields)[code]
+                return dict(cast(StructuredConstant, payload).fields)[code]
         if symbol is not None and symbol.kind == 'decodes' and dot:
             return code
         raise ValueError(f'not a pure constant dependency: {name}')
@@ -465,8 +464,8 @@ class Computations:
                 payload = evaluate(elaborated, lambda name: self.resolve_constant(unit, name))
                 if expected.name == 'decimal' and expected.params:
                     numeric = Decimal(str(payload))
-                    _, digits, exponent = numeric.as_tuple()
-                    assert isinstance(exponent, int)
+                    _, digits, exponent_value = numeric.as_tuple()
+                    exponent = cast(int, exponent_value)
                     params = dict(expected.params)
                     if max(0, -exponent) > int(params['scale']) or max(
                         0, len(digits) + exponent
@@ -652,9 +651,7 @@ class Checker:
                     ),
                 )
             elif resolved.name == 'code' and resolved.exact is not None:
-                declaration = self.unit.world.declarations.get(resolved.args[0].key or ('', ''))
-                if declaration and is_flags(declaration[1]):
-                    values = (portable_flags(resolved, self.unit.world),)
+                values = (portable_flags(resolved, self.unit.world),)
         return replace(
             hint,
             arguments=tuple(self.checked_hint(argument) for argument in hint.arguments),
@@ -915,9 +912,8 @@ class Checker:
             while pending:
                 dependency = pending.pop()
                 if dependency == name:
-                    assert parameter.default is not None
                     self.issue(
-                        parameter.default,
+                        cast(Expression, parameter.default),
                         f"calculation parameter default cycle: {name}",
                     )
                     break
@@ -933,15 +929,14 @@ class Checker:
         :param node: Source invocation.
         :returns: Required and optional dependencies.
         """
-        assert value.site is not None and value.owner is not None
         if operation == "at":
             self.issue(node, "::at(...) was removed; use ::value(...) instead")
             operation = "value"
-        site = value.site
+        site = cast(FieldSite, value.site)
         body = children(site.declaration, "field_body")[0]
         mode = field_mode(body)
         declared = field_owner(site.unit, children(body, "type_expr")[0])
-        owner = declared.key if declared else value.owner
+        owner = declared.key if declared else cast(EntityKey, value.owner)
         self.accesses.append(Access(node.span, owner, value.name, operation))
         if mode == "computed":
             if operation != "value":
@@ -1037,7 +1032,7 @@ class Checker:
         :param environment: Use-site calculation environment.
         :returns: None; merges inferred dependencies into the calculation.
         """
-        assert dimension.hierarchy_default is not None
+        default = cast(Expression, dimension.hierarchy_default)
         checker = Checker(self.computations, owner, dimension.unit)
         checker.declared = dict(self.declared)
         checker.inputs = dict(self.declared)
@@ -1048,8 +1043,8 @@ class Checker:
             else {'self': Value(Resolved(owner[1], 'reference', key=owner))}
         )
         checker.read(
-            checker.infer(dimension.hierarchy_default, default_environment),
-            dimension.hierarchy_default,
+            checker.infer(default, default_environment),
+            default,
         )
         self.dependencies.update(checker.dependencies)
         for name, parameter in checker.inputs.items():
@@ -1236,14 +1231,22 @@ class Checker:
                     Resolver(self.unit, self.computations.diagnostics, {}).evaluate(syntax).type
                 )
             parent = self.read(self.infer(receiver, environment), receiver, navigation=True)
-            if parent.type.name in ('record', 'selection', 'dimensions'):
+            if parent.type.key is None and parent.type.name in (
+                'record',
+                'selection',
+                'dimensions',
+            ):
                 names = [name for name, _ in parent.type.params]
                 if node.value not in names:
                     self.issue(node, f'unknown {parent.type.name} member: {node.value}')
                     return Value(UNKNOWN)
                 self.literal_hints[node.span] = self.hint(parent.type, node.span)
                 return Value(parent.type.args[names.index(node.value)])
-            if parent.type.name == "partial" and node.value in ("value", "issues"):
+            if (
+                parent.type.key is None
+                and parent.type.name == "partial"
+                and node.value in ("value", "issues")
+            ):
                 return Value(
                     parent.type.args[0]
                     if node.value == "value"
@@ -1315,7 +1318,7 @@ class Checker:
                     self.issue(
                         node, 'ordered comparison requires numbers, strings, dates or datetimes'
                     )
-                if len(operands) == 2 and not (
+                if not (
                     self.compatible(operands[0].base(), operands[1])
                     or self.compatible(operands[1].base(), operands[0])
                 ):
@@ -1362,7 +1365,10 @@ class Checker:
         :returns: Complete literal type.
         """
         if node.kind == 'sequence':
-            if expected and expected.name not in ('collection', 'values', 'sequence'):
+            if expected and (
+                expected.kind != 'collection'
+                or expected.name not in ('collection', 'values', 'sequence')
+            ):
                 self.issue(node, 'sequence literal requires collection or values context')
                 return Value(UNKNOWN)
             element = expected.args[0] if expected and expected.args else None
@@ -1504,7 +1510,7 @@ class Checker:
                     'string' if RETURNS[selected.value] == 'string' else 'value',
                 )
             )
-        if selected.kind not in ("member", "descriptor") or not selected.operands:
+        if selected.kind not in ("member", "descriptor"):
             self.issue(node, "expression is only valid in its binding or method context")
             return Value(UNKNOWN)
         receiver = selected.operands[0]
@@ -1535,11 +1541,8 @@ class Checker:
                 members: list[tuple[str, Resolved]] = []
                 if mode == 'snapshot':
                     calls = annotations(value.site.declaration, 'temporal')
-                    name = (
-                        str(tokens(children(calls[0], 'pair_argument')[0])[0])
-                        if calls
-                        else 'as_of_date'
-                    )
+                    pairs = children(calls[0], 'pair_argument') if calls else []
+                    name = str(tokens(pairs[0])[0]) if pairs else 'as_of_date'
                     members.append((name, Resolved('date')))
                 elif mode == 'scd':
                     members.extend(
@@ -1628,8 +1631,9 @@ class Checker:
                         selected_input is not None
                         and selected_input.default_dimension == dimension.identity
                     ):
-                        assert value.owner is not None
-                        self.dimension_inputs(dimension, value.owner, node, explicit, environment)
+                        self.dimension_inputs(
+                            dimension, cast(EntityKey, value.owner), node, explicit, environment
+                        )
             if method == 'best_available':
                 dimensions: list[tuple[str, Resolved]] = []
                 for call in annotations(value.site.declaration, 'dimension'):
@@ -1691,7 +1695,8 @@ class Checker:
             self.issue(node, f"{method} requires one lambda argument")
             return Value(UNKNOWN)
         if (
-            value.type.name not in ("collection", "values", "sequence", "grouped")
+            value.type.kind != 'collection'
+            or value.type.name not in ("collection", "values", "sequence", "grouped")
             or not value.type.args
         ):
             self.issue(node, f"{method} requires a sequence")
@@ -1711,7 +1716,11 @@ class Checker:
                 self.issue(function, f"{method} predicate requires bool")
             return Value(Resolved('bool')) if method == 'all' else value
         if method == "flat_map":
-            if returned.name not in ("sequence", "collection", "values") or not returned.args:
+            if (
+                returned.kind != 'collection'
+                or returned.name not in ("sequence", "collection", "values")
+                or not returned.args
+            ):
                 self.issue(function, "flat_map requires a sequence result")
                 return Value(UNKNOWN)
             return Value(Resolved("sequence", "collection", args=returned.args))

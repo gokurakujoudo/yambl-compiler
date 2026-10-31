@@ -9,7 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
-from tests.storage.test_runtime import RuntimeTests
+from tests.storage import test_runtime
 from yambl_compiler.storage.backends import (
     FileBackend,
     Selection,
@@ -19,7 +19,7 @@ from yambl_compiler.storage.backends import (
 from yambl_compiler.storage.results import EntityRef, Status, Success
 
 
-class DualTests(RuntimeTests):
+class DualTests(test_runtime.RuntimeTests):
     """Reuse the seeded SQLite fixture for backend parity assertions."""
 
     def files(self):
@@ -379,16 +379,17 @@ class DualTests(RuntimeTests):
     def test_indexed_row_cache_is_bounded_and_returns_detached_rows(self):
         self.writer.executemany(
             "INSERT INTO tb_a (id, entity_type) VALUES (?, ?)",
-            [(f"id{i:04}", "A") for i in range(1025)],
+            [(f"id{i:04}", "A") for i in range(3)],
         )
         path = self.files()
         backend = FileBackend(path, self.layout)
-        selections = [Selection((("id", f"id{i:04}"),)) for i in range(1025)]
-        groups = backend.rows_many("tb_a", selections)
-        self.assertEqual(len(groups), 1025)
-        self.assertEqual(len(backend.row_cache), 1024)
+        selections = [Selection((("id", f"id{i:04}"),)) for i in range(3)]
+        with patch('yambl_compiler.storage.backends._ROW_CACHE_LIMIT', 2):
+            groups = backend.rows_many("tb_a", selections)
+        self.assertEqual(len(groups), 3)
+        self.assertEqual(len(backend.row_cache), 2)
         groups[-1][0]["id"] = "changed"
-        self.assertEqual(backend.rows("tb_a", {"id": "id1024"})[0]["id"], "id1024")
+        self.assertEqual(backend.rows("tb_a", {"id": "id0002"})[0]["id"], "id0002")
         backend.close()
         self.assertEqual(len(backend.row_cache), 0)
 

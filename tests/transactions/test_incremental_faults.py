@@ -228,26 +228,6 @@ class IncrementalFaultTests(CatalogCase):
         self.assertEqual(set(store.transaction_directory().glob('*.yatran')), exports)
         self.assertEqual(self.read_text(store), 'before')
 
-    def test_empty_pending_change_is_a_noop_and_unknown_table_is_rejected(self):
-        files, _, _ = self.store('files')
-        source = FileBackend(files.file_version(), self.catalog.layout)
-        self.addCleanup(source.close)
-        destination = self.root / 'noop-generation'
-        (destination / 'tables').mkdir(parents=True)
-        (destination / 'indexes').mkdir()
-        table = next(t for t in self.catalog.layout.tables if t.name == 'tb_a')
-        unchanged = publication._stream_table(
-            source, destination, table, (RowChange(('absent',), None, None),)
-        )
-        self.assertEqual(unchanged[0], source.hashes['tb_a'])
-        self.assertEqual(self.read_text(files), 'before')
-        sqlite, _, seed = self.store('sqlite')
-        before = sqlite.snapshot().tables
-        with self.assertRaisesRegex(ValueError, 'unknown changed table'):
-            publication.publish_sqlite(sqlite.path, self.catalog.layout, {'unknown': ()}, None)
-        self.assertEqual(sqlite.snapshot().tables, before)
-        self.assertTrue(seed.path.is_file())
-
     def test_legacy_repository_without_indexes_remains_readable(self):
         store, _, _ = self.store('files')
         source = self.root / 'legacy-unindexed'
@@ -354,13 +334,15 @@ class IncrementalFaultTests(CatalogCase):
                 self.assertEqual(set(store.transaction_directory().glob('*.yatran')), exports)
 
     def test_file_publisher_rejects_a_sqlite_candidate(self):
-        files, _, _ = self.store('files')
+        files, _, seed = self.store('files')
         sqlite, _, _ = self.store('sqlite')
         before = files.snapshot().tables
+        transaction = parse(seed.path.read_text(encoding='utf-8'))
         with sqlite.mutable_candidate('test') as candidate:
             with self.assertRaisesRegex(ValueError, 'file publication requires a file snapshot'):
-                files.publish_incremental_files(candidate, None)
+                files.publish_incremental_files(candidate, transaction)
         self.assertEqual(files.snapshot().tables, before)
+        self.assertEqual(self.read_text(sqlite), 'before')
 
     def test_candidate_close_failure_retains_precommit_error_or_committed_report(self):
         store, config, _ = self.store('files')

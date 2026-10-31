@@ -148,12 +148,6 @@ class Emitter:
                 )
             ):
                 return f"engine.code({frame}, {self.references[receiver.value]!r}, {node.value!r})"
-            if node.annotation and node.annotation.name == 'record':
-                return f'engine.record_member({frame}, {emit(receiver)}, {node.value!r})'
-            if node.annotation and node.annotation.name in ('selection', 'dimensions'):
-                return f'engine.construct({frame}, lambda *values: getattr(values[0], {node.value!r}), [{emit(receiver)}])'
-            if node.value in ("value", "issues"):
-                return f"engine.partial_member({frame}, {emit(receiver)}, {node.value!r})"
             if node.annotation and any(
                 d.identity == node.annotation.target
                 and d.kind == 'value'
@@ -161,6 +155,12 @@ class Emitter:
                 for d in self.model.definitions
             ):
                 return f'engine.construct({frame}, lambda *values: getattr(values[0], {node.value!r}), [{emit(receiver)}])'
+            if node.annotation and node.annotation.name == 'record':
+                return f'engine.record_member({frame}, {emit(receiver)}, {node.value!r})'
+            if node.annotation and node.annotation.name in ('selection', 'dimensions'):
+                return f'engine.construct({frame}, lambda *values: getattr(values[0], {node.value!r}), [{emit(receiver)}])'
+            if node.value in ("value", "issues"):
+                return f"engine.partial_member({frame}, {emit(receiver)}, {node.value!r})"
             raise ValueError(f'unresolved field operation: {node.value}')
         if node.kind in ("unary", "binary"):
             if node.value == "??":
@@ -276,7 +276,7 @@ def programs(model: Model) -> str:
 
     :param model: Checked model with resolved calculation dependencies.
     :returns: Self-contained package module source.
-    :raises ValueError: For unsupported expressions or default cycles.
+    :raises ValueError: For unsupported expressions.
     """
     lines = [
         '"""Generated batch calculation programs; no source evaluation at runtime."""',
@@ -362,8 +362,6 @@ def programs(model: Model) -> str:
                         for name, default in pending.items()
                         if not dependencies(default).intersection(pending)
                     ]
-                    if not ready:
-                        raise ValueError(f"{field.identity}: parameter default cycle")
                     for name in ready:
                         function(
                             "default:" + field.implementation + ":" + name,

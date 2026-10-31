@@ -107,9 +107,12 @@ def run(path: Path, operation: Literal['check', 'format'], verify: bool = False)
         paths = source_files(path, dependencies=operation == 'check')
         root = find_root(path.resolve()) if operation == 'check' else None
         prefix = read_prefix(root / ROOT_NAME) if root is not None else ''
-        builtin = root in (MODEL_ROOT.resolve(), AUTHOR_ROOT.resolve())
-        if root is not None and builtin and prefix:
-            raise ValueError(f'{root / ROOT_NAME}:1:1: error: built-in prefix must be empty')
+        builtin_root = root if root in (MODEL_ROOT.resolve(), AUTHOR_ROOT.resolve()) else None
+        builtin = builtin_root is not None
+        if builtin_root is not None and prefix:
+            raise ValueError(
+                f'{builtin_root / ROOT_NAME}:1:1: error: built-in prefix must be empty'
+            )
         documents: list[Document] = []
         originals: dict[Path, bytes] = {}
         for source in paths:

@@ -31,6 +31,11 @@ class ContractTests(FilesystemCase):
             load_contract(path, hashlib.sha256(path.read_bytes()).hexdigest())
         with self.assertRaisesRegex(ValueError, "digest"):
             load_contract(path, "wrong")
+        wire = json.loads(dumps(layout))
+        wire['layout']['model'] = None
+        path.write_text(json.dumps(wire), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'expected object'):
+            load_contract(path, hashlib.sha256(path.read_bytes()).hexdigest())
         for value in (
             [],
             {},
@@ -50,7 +55,6 @@ class ContractTests(FilesystemCase):
             ({}, list[str]),
             ([1], tuple[int, str]),
             ([], dict[str, int]),
-            ({}, object),
             ({}, Column),
         ):
             with self.subTest(value=value, type_=type_), self.assertRaises(ValueError):

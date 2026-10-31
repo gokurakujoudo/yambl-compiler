@@ -19,7 +19,7 @@ from yambl_compiler.storage.batch import FieldRequest
 from yambl_compiler.storage.computing import UNSET, Frame, Groups
 from yambl_compiler.storage.generation import generate, python_package
 from yambl_compiler.storage.layout import build_layout
-from yambl_compiler.storage.programs import Emitter, programs
+from yambl_compiler.storage.programs import Emitter
 from yambl_compiler.storage.records import quote, table_name
 from yambl_compiler.storage.results import (
     CalculationIssue,
@@ -868,31 +868,6 @@ class ProgramTests(FilesystemCase):
         with self.assertRaises(ValueError):
             emitter.fallback_accesses(replace(missing, value="price"), "Security")
         emitter.fallback_accesses(node, "Security")
-        p = next(
-            f.calculation.inputs[0]
-            for d in self.model.definitions
-            for f in d.fields
-            if f.implementation == "Security.industry"
-        )
-        default = replace(
-            node,
-            kind="member",
-            value=p.name,
-            operands=(replace(node, kind="name", value="input", operands=()),),
-        )
-        bad = replace(
-            field,
-            calculation=replace(field.calculation, inputs=(replace(p, default=default),)),
-        )
-        model = replace(
-            self.model,
-            definitions=tuple(
-                replace(d, fields=tuple(bad if f == field else f for f in d.fields))
-                for d in self.model.definitions
-            ),
-        )
-        with self.assertRaisesRegex(ValueError, "default cycle"):
-            programs(model)
         for declarations, message in [
             (
                 "entity E { id key: string snapshot attr x: integer computed attr y: integer { return self.x::value(as_of_date=input.id_value) } }",

@@ -251,16 +251,16 @@ class Available:
                 )
                 selection = self.batch.selection(point, stored, field)
                 if field.category == "snapshot":
-                    assert request.point.when is not None
+                    when = cast(date, request.point.when)
                     ordinal = max(
                         date.min.toordinal(),
-                        request.point.when.toordinal() - request.fallback_days,
+                        when.toordinal() - request.fallback_days,
                     )
                     selection = Selection(
                         selection.keys,
                         "snapshot",
                         date.fromordinal(ordinal).isoformat(),
-                        request.point.when.isoformat(),
+                        when.isoformat(),
                     )
                 complete = self.batch.full.get((request.point.owner, request.point.identity))
                 if complete is not None:
@@ -349,23 +349,18 @@ class Available:
                 reader.layout.fields[request.point.identity], specs[request][0], row
             )
             if isinstance(result, Success):
-                try:
-                    selected_dimensions = {
-                        dimension.key: reader.decode(dimension.type, row['dim_' + dimension.key])
-                        for dimension in stored.dimensions
-                    }
-                    result = replace(
-                        result,
-                        value=reader.selection(
-                            request.point.identity, result.value, selected_dimensions
-                        ),
-                    )
-                except (ValueError, TypeError, KeyError) as error:
-                    result = NonNormalResult(Status.ERROR, str(error))
+                selected_dimensions = {
+                    dimension.key: reader.decode(dimension.type, row['dim_' + dimension.key])
+                    for dimension in stored.dimensions
+                }
+                result = replace(
+                    result,
+                    value=reader.selection(
+                        request.point.identity, result.value, selected_dimensions
+                    ),
+                )
             results[request] = result
         for request, result in results.items():
             if not isinstance(result, NonNormalResult) or result.status != Status.ERROR:
                 self.cache[request] = result
-        return tuple(
-            results.get(r, self.cache.get(r, NonNormalResult(Status.ERROR))) for r in requests
-        )
+        return tuple(results[r] if r in results else self.cache[r] for r in requests)

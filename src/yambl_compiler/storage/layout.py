@@ -73,10 +73,10 @@ def supported(type_: Type, entities: dict[str, Definition], model: Model) -> boo
             'builtins.ConfigGroup',
         )
     if type_.name == "collection":
-        return len(type_.arguments) == 1 and (
-            type_.arguments[0].target in entities
-            or type_.arguments[0].target
-            in ('builtins.Decodes', 'builtins.Hierarchy', 'builtins.ConfigGroup')
+        return type_.arguments[0].target in entities or type_.arguments[0].target in (
+            'builtins.Decodes',
+            'builtins.Hierarchy',
+            'builtins.ConfigGroup',
         )
     if type_.name == "code":
         target = type_.arguments[0].target
@@ -102,7 +102,23 @@ def build_layout(model: Model) -> Layout:
     :returns: Shared physical model.
     :raises ValueError: On unsupported types, IDs or generated-name collisions.
     """
+    builtin_ids = {
+        'builtins.Decodes': 'decodes_id',
+        'builtins.Hierarchy': 'hierarchy_id',
+        'builtins.ConfigGroup': 'config_group_id',
+    }
     for definition in model.definitions:
+        if definition.identity in builtin_ids:
+            identifiers = [field for field in definition.fields if field.category == 'id']
+            expected = builtin_ids[definition.identity]
+            if (
+                len(identifiers) != 1
+                or identifiers[0].name != expected
+                or identifiers[0].type.name != 'string'
+            ):
+                raise ValueError(
+                    f'{definition.identity}: builtin storage requires the directly declared string ID {expected}'
+                )
         if (
             definition.kind == "entity"
             and definition.source.origin == "builtin"
@@ -474,10 +490,10 @@ def sparse_columns(table: Table, field_: Field, value: str) -> None:
 
 
 def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
-    """Store embedded built-in models without enabling their query algorithms.
+    """Build tables and field mappings for embedded built-in entities.
 
     :param model: IR containing the exact built-in definitions used by compilation.
-    :param stored: Field mappings extended with storage-only built-in fields.
+    :param stored: Field mappings extended with built-in fields.
     :returns: Built-in identity and member tables, including declared dictionary rows.
     """
     definitions = {d.identity: d for d in model.definitions}
@@ -493,7 +509,7 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
         name = table_name(identity)
         table = Table(
             name,
-            f"Built-in identity table for {identity}; storage only",
+            f"Built-in identity table for {identity}",
             [Column(id_.name, meaning=id_.identity + ": string")],
             (id_.name,),
         )
@@ -569,7 +585,7 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
                             Column(key, meaning="Logical field qualified name"),
                             Column(
                                 "value",
-                                meaning="JSON object: type (resolved IR Type), value (payload); no configuration execution",
+                                meaning="JSON object: type (resolved IR Type), value (payload); used in configuration evaluation",
                             ),
                         ]
                     )
@@ -581,7 +597,7 @@ def builtin_tables(model: Model, stored: dict[str, StoredField]) -> list[Table]:
                 tables.append(
                     Table(
                         members,
-                        f"Unordered members for {f.identity}; storage only",
+                        f"Unordered members for {f.identity}",
                         columns,
                         (id_.name, key),
                         checks,

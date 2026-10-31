@@ -33,6 +33,9 @@ VALUES = {
     "dimension_ref",
     "input_type",
 }
+RESERVED_CALCULATION_NAMES = frozenset(
+    ('sequence', 'grouped', 'record', 'selection', 'dimensions', 'partial', 'issues', 'non_normal')
+)
 GENERICS = {
     'collection',
     'values',
@@ -172,11 +175,10 @@ def model_units(units: Sequence[Unit]) -> list[Unit]:
                 selected.append(node)
                 continue
             owner = world.declarations.get(('builtins', declaration_name(node)))
-            active = owner is not None and owner[0].document.builtin
             if node.data == 'extension':
-                active = owner is None or active
+                active = owner is None or owner[0].document.builtin
             else:
-                active = active and owner is not None and owner[1] is node
+                active = owner is not None and owner[0].document.builtin and owner[1] is node
             if active:
                 selected.append(node)
                 present = True
@@ -280,7 +282,7 @@ def resolve_scopes(
         )
         for node in children(doc.tree, kind)
     }
-    reserved = VALUES | GENERICS | set(declarations) | set(constants or {}) | {'Entity'}
+    reserved = VALUES | GENERICS | set(declarations) | set(constants or {}) | {'Entity', 'one_of'}
     symbols: dict[EntityKey, Symbol] = {}
     world = World(reserved=reserved, constants=dict(constants or {}))
     for document in documents:
@@ -330,6 +332,10 @@ def resolve_scopes(
                     )
                 )
             model_definition = namespace(document) == 'builtins' and name in declarations
+            if name in RESERVED_CALCULATION_NAMES:
+                diagnostics.append(
+                    diagnostic(document, header(declaration), f'reserved calculation name: {name}')
+                )
             if (name in reserved and not model_definition) or key in symbols:
                 diagnostics.append(
                     diagnostic(

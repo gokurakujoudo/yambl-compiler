@@ -24,8 +24,8 @@ entity Item {
     id key: string
     static attr source: code<Sources>
     config attr default_source: code<Sources>
-    dimension dimensions { value vendor: code<Sources> }
-    @dimension(dimensions)
+    dimension vendor_source { value vendor: code<Sources> }
+    @dimension(vendor_source)
     @temporal(day: date)
     snapshot attr price: decimal
     @temporal(day: date)

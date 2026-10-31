@@ -237,9 +237,10 @@ class Configuration:
             if not isinstance(result, NonNormalResult) or result.status != Status.ERROR:
                 self.cache[key] = result
         return tuple(
-            computed.get(
-                (r.owner, r.identity),
-                self.cache.get((r.owner, r.identity), NonNormalResult(Status.ERROR)),
+            (
+                computed[(r.owner, r.identity)]
+                if (r.owner, r.identity) in computed
+                else self.cache[(r.owner, r.identity)]
             )
             for r in requests
         )

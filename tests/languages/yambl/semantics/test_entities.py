@@ -11,6 +11,15 @@ from yambl_compiler.languages.yambl.syntax.parser import children, tokens
 
 
 class EntityTests(unittest.TestCase):
+    def test_invalid_keyword_entity_names_report_errors_without_crashing(self):
+        for name in ('exact', 'one_of'):
+            with self.subTest(name=name):
+                messages = [
+                    diagnostic.message for diagnostic in check([document(f'entity {name} {{}}')])
+                ]
+                self.assertIn('declaration names must use PascalCase', messages)
+                self.assertIn(f'duplicate or reserved declaration: {name}', messages)
+
     def test_abstract_override_inputs_are_compared_by_calculation_contract(self):
         source = document('''
 abstract entity Root { abstract computed attr label: string }

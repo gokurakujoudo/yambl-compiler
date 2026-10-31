@@ -240,6 +240,26 @@ entity A {
         )
         self.assertEqual({v.text for v in fields['ratio'].type.allowed_values}, {'0.5', '1.5'})
 
+    def test_nested_structured_finite_values_preserve_type_and_decimal(self):
+        self.write(
+            'model.yambl',
+            '''
+value inner { attr amount: decimal }
+value structured { attr nested: inner }
+const A: structured = {nested: {amount: 1.20}}
+const B: structured = {nested: {amount: 2.30}}
+entity E { attr selected: one_of[A, B] }
+''',
+        )
+        model = compile_repository(self.root)
+        self.assertEqual(validate_ir(loads(dumps(model))), ())
+        entity = next(item for item in model.definitions if item.identity == 'E')
+        values = next(item for item in entity.fields if item.name == 'selected').type.allowed_values
+        self.assertEqual({value.target for value in values}, {'structured'})
+        self.assertEqual(
+            {value.fields[0].value.fields[0].value.text for value in values}, {'1.2', '2.3'}
+        )
+
     def test_nested_and_dictionary_local_annotations_round_trip(self):
         self.write(
             'model.yambl',

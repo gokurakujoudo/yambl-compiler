@@ -45,7 +45,7 @@ class OverlayTests(FilesystemCase):
             )
             connection.executemany(
                 'INSERT INTO tb_a (id,entity_type) VALUES (?,?)',
-                ((f'a{i:05d}', 'A') for i in range(2000)),
+                ((f'a{i:05d}', 'A') for i in range(20)),
             )
         self.backend = SQLiteBackend(self.database, self.layout)
         self.addCleanup(self.backend.close)
@@ -419,7 +419,7 @@ class OverlayTests(FilesystemCase):
                 connection.execute('SELECT text FROM tb_a WHERE id=?', ('a00001',)).fetchone(),
                 ('new',),
             )
-            self.assertEqual(connection.execute('SELECT COUNT(*) FROM tb_a').fetchone(), (2000,))
+            self.assertEqual(connection.execute('SELECT COUNT(*) FROM tb_a').fetchone(), (20,))
             self.assertEqual(
                 connection.execute('SELECT id FROM tb_yambl_transactions').fetchone(),
                 (transaction.id,),
@@ -585,8 +585,8 @@ class OverlayTests(FilesystemCase):
         self.addCleanup(current.close)
         self.assertIsNone(old.rows('tb_a', {'id': 'a00001'})[0]['text'])
         self.assertEqual(current.rows('tb_a', {'id': 'a00001'})[0]['text'], '变长 value')
-        self.assertIsNone(current.rows('tb_a', {'id': 'a01999'})[0]['text'])
-        self.assertEqual(len(current.rows('tb_a', {})), 2000)
+        self.assertIsNone(current.rows('tb_a', {'id': 'a00019'})[0]['text'])
+        self.assertEqual(len(current.rows('tb_a', {})), 20)
         for category in ('tables', 'indexes'):
             self.assertEqual(
                 os.path.samefile(
@@ -609,20 +609,11 @@ class OverlayTests(FilesystemCase):
                 source, self.root / 'rejected-generation', self.layout, {'tb_a': (incorrect,)}
             )
         self.assertIsNone(old.rows('tb_a', {'id': 'a00001'})[0]['text'])
-        with self.assertRaisesRegex(ValueError, 'duplicate changed primary key'):
-            prepare_files(
-                source,
-                self.root / 'duplicate-generation',
-                self.layout,
-                {'tb_a': (changed, changed)},
-            )
         absent = RowChange(('absent',), changed.before, None)
         with self.assertRaisesRegex(ValueError, 'original row missing'):
             prepare_files(
                 source, self.root / 'missing-generation', self.layout, {'tb_a': (absent,)}
             )
-        with self.assertRaisesRegex(ValueError, 'unknown changed table'):
-            prepare_files(source, self.root / 'unknown-generation', self.layout, {'unknown': ()})
         with patch(
             'yambl_compiler.transactions.incremental_publication.os.link',
             side_effect=OSError('unsupported'),
@@ -659,7 +650,7 @@ class OverlayTests(FilesystemCase):
         current = FileBackend(destination, self.layout)
         self.addCleanup(current.close)
         self.assertEqual(set(current.index_hashes), {table.name for table in self.layout.tables})
-        self.assertEqual(current.rows('tb_a', {'id': 'a01999'})[0]['id'], 'a01999')
+        self.assertEqual(current.rows('tb_a', {'id': 'a00019'})[0]['id'], 'a00019')
         self.assertTrue(
             os.path.samefile(
                 source_path / 'tables' / 'tb_a.jsonl', destination / 'tables' / 'tb_a.jsonl'

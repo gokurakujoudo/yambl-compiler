@@ -273,7 +273,7 @@
     "entity Base {} entity A inherits Base { @overload attr x: decimal[-0018,-0] } entity B inherits Base { @overload attr x: decimal[scale:0,precision:-18] }"
   ],
   [
-    "value record { attr entity: Item attr child: leaf } value leaf { attr code: string } entity Item { attr x: values<record> }"
+    "value data_record { attr entity: Item attr child: leaf } value leaf { attr code: string } entity Item { attr x: values<data_record> }"
   ],
   [
     "value a { attr b: b } value b { attr a: a }"
@@ -306,8 +306,8 @@
     "value a inherits b {}"
   ],
   [
-    "namespace a value record { attr x: string }",
-    "namespace b from a import record entity A { attr x: record }"
+    "namespace a value data_record { attr x: string }",
+    "namespace b from a import data_record entity A { attr x: data_record }"
   ],
   [
     "entity A { attr h: Hierarchy attr e: values<hierarchy_entry> attr d: values<decodes_entry> }"

@@ -106,7 +106,7 @@ def fail(node: Tree[LarkToken], message: str) -> DocumentError:
     :returns: Located exception.
     """
     token = tokens(node)[0]
-    return DocumentError(message, token.line or 1, token.column or 1)
+    return DocumentError(message, cast(int, token.line), cast(int, token.column))
 
 
 def tree(text: str, language: str) -> Tree[LarkToken]:
@@ -278,8 +278,8 @@ def positioned(token: LarkToken) -> Token:
     return Token(
         str(token),
         'comment' if str(token).startswith('#') else 'content',
-        token.line or 1,
-        token.column or 1,
+        cast(int, token.line),
+        cast(int, token.column),
     )
 
 

@@ -329,11 +329,7 @@ def validate_data(
                     )
     groups: dict[tuple[str, tuple[tuple[str, str], ...], str], list[tuple[str, str, str, str]]] = {}
     for identity, stored in layout.fields.items():
-        if (
-            not stored.table
-            or stored.root not in layout.entities
-            or layout.entities[stored.root].source.origin == "builtin"
-        ):
+        if not stored.table or layout.entities[stored.root].source.origin == "builtin":
             continue
         identities = {
             str(r["id"]): actual_type(layout, stored.root, r) for r in data[table_name(stored.root)]

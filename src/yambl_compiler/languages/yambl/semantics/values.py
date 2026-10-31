@@ -47,9 +47,10 @@ def check_values(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> None:
                     diagnostics.append(
                         diagnostic(unit.document, node, 'value fields cannot be collections')
                     )
-                target = unit.world.declarations.get(resolved.key or ('', ''))
+                target_key = resolved.key or ('', '')
+                target = unit.world.declarations.get(target_key)
                 if target is not None and target[1].data == 'value':
-                    edges[key].add(resolved.key or ('', ''))
+                    edges[key].add(target_key)
     for key in edges:
         pending = list(edges[key])
         seen: set[EntityKey] = set()

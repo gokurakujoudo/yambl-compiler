@@ -106,8 +106,7 @@ class IncrementalData(Data):
                             raise ValueError(f'missing owner in {child.name}')
                 for stored in self.layout.fields.values():
                     if (
-                        stored.root in self.layout.entities
-                        and self.layout.entities[stored.root].source.origin == 'model'
+                        self.layout.entities[stored.root].source.origin == 'model'
                         and table_name(stored.root) == name
                         and stored.table
                         and stored.table != name
@@ -166,7 +165,6 @@ class IncrementalData(Data):
                 for identity, stored in self.layout.fields.items():
                     if (
                         stored.table != name
-                        or stored.root not in self.layout.entities
                         or self.layout.entities[stored.root].source.origin != 'model'
                         or any(row[key] != value for key, value in stored.key_values)
                     ):

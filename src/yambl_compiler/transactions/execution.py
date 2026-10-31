@@ -2,6 +2,7 @@
 
 import json
 from decimal import Decimal
+from typing import cast
 
 from yambl_compiler.ir.model import Field
 from yambl_compiler.languages.shared.model import Condition, ObjectValue, Symbol, Value
@@ -81,12 +82,9 @@ class Execution:
         :param operation: Field replacement or deletion.
         :returns: Actual scope change.
         """
-        entity, field, stored = self.data.catalog.target(operation.target)
-        if field is None or stored is None:
-            raise ValueError('scope operation requires a field target')
-        owner = next((c for c in operation.scope if c.name == entity.id.name), None)
-        if owner is None or owner.end is not None:
-            raise ValueError('field scope requires owner ID')
+        entity, resolved, _ = self.data.catalog.target(operation.target)
+        field = cast(Field, resolved)
+        owner = next(c for c in operation.scope if c.name == entity.id.name)
         actual = self.data.actual(entity, owner.value)
         self.data.catalog.field(actual, field.name)
         before = self.data.image(operation.target, operation.scope)
@@ -281,8 +279,6 @@ class Execution:
         :returns: One entity change or individual field changes for each row.
         """
         entity = self.data.catalog.entity(operation.target)
-        if entity.id.name not in operation.columns:
-            raise ValueError('entity operation requires its ID column')
         if operation.kind == 'delete' and operation.columns != (entity.id.name,):
             raise ValueError('entity deletion accepts only the ID column')
         selected = operation.rows

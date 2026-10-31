@@ -181,7 +181,7 @@ def field_documentation(
 
 
 def dimension_documentation(field: Field) -> list[str]:
-    """Describe dimensions and optional selectors without implying selector execution.
+    """Describe dimensions and how selectors relate to exact reads.
 
     :param field: Field declaration containing bound dimension decorators.
     :returns: One literal section, or no section when no dimensions exist.
@@ -193,7 +193,7 @@ def dimension_documentation(field: Field) -> list[str]:
             text = f"{variation.key}: {type_label(variation.type)} (required explicitly)"
             for selector in call.bound:
                 if selector.name == "selector":
-                    text += f"\n    Hierarchy selector {selector.key}: {type_label(selector.type)} (metadata only; not executed)"
+                    text += f"\n    Hierarchy selector {selector.key}: {type_label(selector.type)} (used by best-available selection; exact reads do not apply it)"
             dimensions.append((variation.key, text))
     return (
         literal_section("Dimensions", "\n".join(text for _, text in sorted(dimensions)))

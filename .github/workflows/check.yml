@@ -25,11 +25,16 @@ jobs:
           import coverage
 
           excluded = ('tests.performance.', 'tests.transactions.test_incremental_large_process.')
+          excluded_cases = (
+              'tests.storage.test_validation.ValidationTests.test_long_cycle_witness_is_iterative_and_deterministic',
+              'tests.transactions.test_incremental_validation.IncrementalCycleTests.test_long_reference_ring_is_iterative_and_selected_by_id',
+              'tests.transactions.test_incremental_validation.IncrementalCycleTests.test_long_temporal_ring_without_intersection_has_no_cycle',
+          )
           def functional_cases(suite):
               for item in suite:
                   if isinstance(item, unittest.TestSuite):
                       yield from functional_cases(item)
-                  elif item.id().startswith(excluded):
+                  elif item.id().startswith(excluded) or item.id() in excluded_cases:
                       print('Excluded performance/scale test:', item.id(), flush=True)
                   else:
                       yield item

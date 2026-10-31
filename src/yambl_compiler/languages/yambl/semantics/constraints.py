@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import cast
 
 from lark import Token, Tree
 
@@ -10,11 +11,17 @@ from yambl_compiler.languages.yambl.semantics.computation import (
     IDENTIFIER,
     Access,
     Checker,
+    Computations,
     Value,
 )
 from yambl_compiler.languages.yambl.semantics.entities import EntityIndex
 from yambl_compiler.languages.yambl.semantics.expressions import Resolver
-from yambl_compiler.languages.yambl.semantics.symbols import EntityKey, Unit, declaration_name
+from yambl_compiler.languages.yambl.semantics.symbols import (
+    RESERVED_CALCULATION_NAMES,
+    EntityKey,
+    Unit,
+    declaration_name,
+)
 from yambl_compiler.languages.yambl.semantics.types import Resolved
 from yambl_compiler.languages.yambl.syntax.computation import (
     branches,
@@ -82,8 +89,7 @@ def check_constraints(
     """
     result: dict[EntityKey, dict[str, Constraint]] = {}
     for unit in units:
-        analyzer = unit.world.computations
-        assert analyzer is not None
+        analyzer = cast(Computations, unit.world.computations)
         for declaration in (
             *children(unit.document.tree, 'entity'),
             *children(unit.document.tree, 'extension'),
@@ -95,6 +101,10 @@ def check_constraints(
             local = result.setdefault(owner, {})
             for node in children(declaration, 'constraint'):
                 name = str(tokens(node)[1])
+                if name in RESERVED_CALCULATION_NAMES:
+                    diagnostics.append(
+                        diagnostic(unit.document, node, f'reserved calculation name: {name}')
+                    )
                 if not IDENTIFIER.fullmatch(name):
                     diagnostics.append(
                         diagnostic(unit.document, node, 'constraint names must use snake_case')

@@ -106,7 +106,7 @@ class PlanValidator:
         :raises ValueError: On invalid names, coordinates, types or operation shapes.
         """
         entity, field, stored = self.catalog.target(operation.target)
-        if field is None or stored is None:
+        if field is None:
             if operation.kind == 'insert' and entity.definition.abstract:
                 raise ValueError(
                     f'cannot instantiate abstract entity: {entity.definition.identity}'
@@ -131,6 +131,7 @@ class PlanValidator:
                 for row in operation.rows:
                     self.value(entity, current, binding, row[index])
             return
+        stored = cast(StoredField, stored)
         if not operation.scope or operation.kind not in ('replace', 'delete'):
             raise ValueError('field operations require replace or delete with scope')
         filters, interval = self.data.selection(entity, field, stored, operation.scope)

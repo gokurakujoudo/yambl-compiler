@@ -741,11 +741,7 @@ class Reader:
         logicals = {f.identity: f for f in self._layout.model.fields}
         owner_rows: dict[str, dict[str, str]] = {}
         for identity, stored in self._layout.fields.items():
-            if (
-                not stored.table
-                or stored.root not in self._layout.entities
-                or self._layout.entities[stored.root].source.origin != 'model'
-            ):
+            if not stored.table or self._layout.entities[stored.root].source.origin != 'model':
                 continue
             logical = logicals[identity]
             implementations = [self._implementations[name] for name in logical.implementations]

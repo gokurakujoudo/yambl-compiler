@@ -349,11 +349,10 @@ class Batch:
                         if owner_result.status == Status.ERROR:
                             failure = owner_result
                         continue
-                    implementation = self.implementation(
-                        owner_result.value.target, stored.field.identity
+                    implementation = cast(
+                        Field,
+                        self.implementation(owner_result.value.target, stored.field.identity),
                     )
-                    if implementation is None:
-                        continue
                     selected.append((owner_result.value, implementation, row))
                 applicable.append(selected)
                 failures.append(failure)

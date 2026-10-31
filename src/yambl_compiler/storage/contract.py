@@ -3,7 +3,7 @@
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict
 from pathlib import Path
 from types import UnionType
 from typing import Literal, cast, get_args, get_origin, get_type_hints
@@ -100,8 +100,6 @@ def decode(value: JSON, expected: object, path: str = "$") -> object:
         raise ValueError(f"{path}: expected object")
     if origin is dict:
         return {k: decode(v, args[1], path + "." + k) for k, v in value.items()}
-    if not is_dataclass(expected):
-        raise ValueError(f"{path}: unsupported contract type")
     hints = get_type_hints(cast(type[object], expected))
     if set(value) != set(hints):
         raise ValueError(f"{path}: missing or unknown fields")

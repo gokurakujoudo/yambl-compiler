@@ -11,10 +11,10 @@ class ValueTests(unittest.TestCase):
     def test_imports_forward_references_and_generics(self):
         docs = [
             document(
-                'namespace a from b import record entity Item { attr x: record attr all: values<record> attr indexed: mapping<string, record> }'
+                'namespace a from b import data_record entity Item { attr x: data_record attr all: values<data_record> attr indexed: mapping<string, data_record> }'
             ),
             document(
-                "namespace b @title('Record') value record { @description('ref') attr item: Item static attr nested: leaf } value leaf { attr x: decimal[18, 4] } entity Item { id item_id: string }"
+                "namespace b @title('Record') value data_record { @description('ref') attr item: Item static attr nested: leaf } value leaf { attr x: decimal[18, 4] } entity Item { id item_id: string }"
             ),
         ]
         self.assertEqual(check(docs), [])

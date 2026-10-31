@@ -17,6 +17,57 @@ class LiteralTests(unittest.TestCase):
         """
         return [d.message for d in analyze([document(source)]).diagnostics if d.severity == 'error']
 
+    def test_internal_calculation_names_are_reserved_for_models_and_fields(self) -> None:
+        """Reject model and field names while permitting calculation locals.
+
+        :returns: None.
+        """
+        for name in (
+            'record',
+            'selection',
+            'dimensions',
+            'partial',
+            'sequence',
+            'grouped',
+            'issues',
+            'non_normal',
+        ):
+            sources = (
+                f'value {name} {{}}',
+                f'type {name} = integer',
+                f'dimension {name} {{ value source: string }}',
+                f'@targets(DecoratorTargets.All) decorator @{name}() ',
+                f'entity A {{ id {name}: string }}',
+                f'entity A {{ attr {name}: integer }}',
+                f'entity A {{ computed attr {name}: integer {{ return 1 }} }}',
+                f'entity A {{}} extend A {{ attr {name}: integer }}',
+                f'value point {{ attr {name}: integer }}',
+                f'entity A {{ dimension {name} {{ value source: string }} }}',
+                f'entity A {{ attr x: integer lookup {name} {{ x = self.x::value() }} }}',
+                f'entity A {{ constraint {name} {{ assert true }} }}',
+            )
+            for source in sources:
+                with self.subTest(name=name, source=source):
+                    self.assertIn(f'reserved calculation name: {name}', self.errors(source))
+        self.assertEqual(
+            self.errors(
+                'value point { attr value: integer attr count: integer } '
+                'entity A { computed attr x: integer { '
+                'let record: point = {value: 1, count: 2} return record.value + record.count } }'
+            ),
+            [],
+        )
+        for source in (
+            'namespace sequence @targets(DecoratorTargets.All) decorator @tag(record: integer) '
+            '@tag(record=1) entity A {}',
+            'entity A { attr x: integer dimension d { value sequence: string } '
+            'lookup by_x { issues = self.x::value() } }',
+            'entity A { @extra_input_param(partial: integer = 1) '
+            'computed attr x: integer { let grouped = input.partial return grouped } }',
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(self.errors(source), [])
+
     def test_valid(self) -> None:
         """Check declarations, collections, structured values and builtin calls.
 

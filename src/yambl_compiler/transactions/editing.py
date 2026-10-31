@@ -297,8 +297,9 @@ class Data:
         :returns: Portable data image.
         """
         entity, field, stored = self.catalog.target(target)
-        if field is None or stored is None:
+        if field is None:
             raise ValueError('field image requires a field target')
+        stored = cast(StoredField, stored)
         filters, interval = self.selection(entity, field, stored, conditions)
         coords = self.coordinates(entity, field, stored)
         rows: list[tuple[Value, ...]] = []
@@ -367,8 +368,9 @@ class Data:
         :returns: None.
         """
         entity, field, stored = self.catalog.target(target)
-        if field is None or stored is None:
+        if field is None:
             raise ValueError('scope deletion requires a field')
+        stored = cast(StoredField, stored)
         filters, interval = self.selection(entity, field, stored, conditions)
         for row in self.select(stored.table, filters):
             if not self.matches(row, filters, interval, field.category):
@@ -468,8 +470,9 @@ class Data:
         :raises ValueError: On invalid columns, out-of-scope rows or payloads.
         """
         entity, field, stored = self.catalog.target(target)
-        if field is None or stored is None:
+        if field is None:
             raise ValueError('replacement requires a field')
+        stored = cast(StoredField, stored)
         filters, interval = self.selection(entity, field, stored, conditions)
         coords = self.coordinates(entity, field, stored)
         constants = {c.name: c.value for c in conditions if c.end is None}
@@ -561,7 +564,7 @@ class Data:
         if not owned_data:
             for image in images[1:]:
                 _, _, stored = self.catalog.target(image.target)
-                assert stored is not None
+                stored = cast(StoredField, stored)
                 if image.rows and (
                     stored.table != entity.table
                     or any(row[-1] != Symbol('NO_ENTRY') for row in image.rows)

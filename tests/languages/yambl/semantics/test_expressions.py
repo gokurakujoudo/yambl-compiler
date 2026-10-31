@@ -266,12 +266,26 @@ entity A {
             ("type bad = string['${missing}']", 'unknown string format type: missing'),
             ("type id = integer type bad = string['${id}']", 'requires a constrained string'),
             ("type id = string type bad = string['${id}']", 'requires a constrained string'),
+            ("type x = string[bad: 'a'] type y = string['${x}']", 'requires a constrained string'),
+            (
+                "type x = string[regex: 123] type y = string['${x}']",
+                'requires a constrained string',
+            ),
             ("type a = string['${b}'] type b = string['${a}']", 'type dependency cycle'),
         ]:
             with self.subTest(source=source):
                 diagnostics = check([document(source)])
                 self.assertTrue(any(expected in item.message for item in diagnostics), diagnostics)
                 self.assertTrue(all(item.line > 0 and item.column > 0 for item in diagnostics))
+
+    def test_invalid_string_parameters_do_not_break_later_references(self):
+        for parameter in ("bad: 'a'", 'regex: 123'):
+            source = f"type x = string[{parameter}] type y = string['${{x}}']"
+            messages = [item.message for item in check([document(source)])]
+            self.assertTrue(any('invalid parameters for string' in message for message in messages))
+            self.assertTrue(
+                any('requires a constrained string type: x' in message for message in messages)
+            )
 
     def test_expression_errors_are_located(self):
         for source, expected in INVALID:

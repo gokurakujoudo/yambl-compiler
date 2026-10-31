@@ -6,7 +6,7 @@ from decimal import Decimal, localcontext
 from unittest import TestCase
 from unittest.mock import patch
 
-from tests.storage.test_dual import DualTests
+from tests.storage import test_dual
 from yambl_compiler.storage.arithmetic import aggregate, failure, lift, numeric
 from yambl_compiler.storage.batch import FieldRequest
 from yambl_compiler.storage.configuration import Configuration
@@ -112,7 +112,7 @@ class ArithmeticTests(TestCase):
                 construction()
 
 
-class ConfigurationTests(DualTests):
+class ConfigurationTests(test_dual.DualTests):
     def test_typed_collection_assignments_and_invalid_group_records(self):
         self.group("peers", 1, {"A.peers": ["10", "11"]})
         reader = self.open()

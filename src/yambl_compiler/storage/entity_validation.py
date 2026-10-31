@@ -11,7 +11,7 @@ from yambl_compiler.storage.results import EntityRef, NonNormalResult, Partial, 
 from yambl_compiler.storage.validation import ValidationIssue
 
 if TYPE_CHECKING:
-    from yambl_compiler.ir.model import Type
+    from yambl_compiler.ir.model import Field, Type
     from yambl_compiler.storage.runtime import Reader
 
 
@@ -83,10 +83,10 @@ def validate_entities(reader: 'Reader') -> tuple[ValidationIssue, ...]:
                 continue
             values: list[object] = []
             for field, result in zip(key.fields, results, strict=True):
-                assert isinstance(result, Success)
-                implementation = reader._batch.implementation(actual, field)
-                assert implementation is not None
-                values.append(value_key(result.value, implementation.type, reader))
+                implementation = cast('Field', reader._batch.implementation(actual, field))
+                values.append(
+                    value_key(cast(Success[object], result).value, implementation.type, reader)
+                )
             seen.setdefault(tuple(values), []).append(reference)
         for identities in seen.values():
             if len(identities) > 1:

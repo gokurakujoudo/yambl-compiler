@@ -221,9 +221,7 @@ def unique_fields(
     """
     if node.data != 'entity':
         return ()
-    entity = unit.scope.get(declaration_name(node))
-    if entity is None:
-        return ()
+    entity = unit.scope[declaration_name(node)]
     fields = unit.world.fields.get(entity.key, {})
     ancestors = unit.world.parents.get(entity.key, [])
     root = ancestors[-1] if ancestors else entity.key
@@ -415,7 +413,7 @@ def bind_call(
         if description is not None
         else []
     )
-    if name == "dimension" and symbol.key == unit.scope["dimension"].key:
+    if name == "dimension":
         from yambl_compiler.languages.yambl.semantics.computation import structural
         from yambl_compiler.languages.yambl.semantics.dimensions import field_dimension
 

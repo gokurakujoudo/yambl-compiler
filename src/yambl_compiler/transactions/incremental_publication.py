@@ -46,8 +46,6 @@ def _stream_table(
     :raises ValueError: If a changed row no longer matches its source image.
     """
     pending = {change.key: change for change in changes}
-    if len(pending) != len(changes):
-        raise ValueError(f'duplicate changed primary key in {table.name}')
     table_hash = hashlib.sha256()
     index_hash = hashlib.sha256()
     original_hash = hashlib.sha256()
@@ -98,8 +96,7 @@ def _stream_table(
         for change in pending.values():
             if change.before is not None:
                 raise ValueError(f'original row missing in {table.name}')
-            if change.after is not None:
-                write(change.after)
+            write(cast(Row, change.after))
         output.flush()
         offsets.flush()
         os.fsync(output.fileno())
@@ -166,9 +163,6 @@ def prepare_files(
     :raises ValueError: If changed rows do not match the source snapshot.
     :raises OSError: If generation preparation fails.
     """
-    tables = {table.name: table for table in layout.tables}
-    if set(changes) - tables.keys():
-        raise ValueError('unknown changed table')
     source.check_snapshot()
     destination.mkdir(parents=True)
     if transaction is not None:
@@ -226,12 +220,9 @@ def publish_sqlite(
     :param changes: Physical table changes with original and final images.
     :param transaction: Sealed transaction record for recovery and rollback.
     :returns: None after the transaction commits.
-    :raises ValueError: If an original row disappeared or an unknown table is supplied.
+    :raises ValueError: If an original row disappeared.
     :raises sqlite3.Error: If publication fails before the commit completes.
     """
-    tables = {table.name: table for table in layout.tables}
-    if set(changes) - tables.keys():
-        raise ValueError('unknown changed table')
     connection = sqlite3.connect(path)
     try:
         connection.execute('BEGIN IMMEDIATE')

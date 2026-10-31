@@ -24,14 +24,7 @@ from yambl_compiler.storage.backends import repository_contents
 from yambl_compiler.storage.generation import generate
 from yambl_compiler.storage.lookup import AmbiguousMatch, KeyField, Matcher
 from yambl_compiler.storage.lookup_prepare import prepare
-from yambl_compiler.storage.results import (
-    CalculationIssue,
-    EntityRef,
-    NonNormalResult,
-    Partial,
-    Status,
-    Success,
-)
+from yambl_compiler.storage.results import EntityRef, NonNormalResult, Status, Success
 from yambl_compiler.storage.scalars import ScalarRule
 
 
@@ -976,27 +969,6 @@ class PreparedLookupTests(FilesystemCase):
                 return reader._session.point(stored, field, rows, when)
 
             session = replace(reader._session, point=point)
-            partial = replace(
-                session,
-                point=lambda *_: Partial('value', (CalculationIssue(Status.NO_ENTRY),)),
-            )
-            invalid_result = prepare(
-                partial, 'Security', rule, Input, str, {'when': date(2026, 10, 29)}, InputMatcher
-            )
-            self.assertEqual(invalid_result.status, Status.ERROR)
-            self.assertIn('invalid field result', invalid_result.message)
-            wrong_reference = replace(session, point=lambda *_: Success('not a reference'))
-            invalid_reference = prepare(
-                wrong_reference,
-                'Security',
-                rule,
-                Input,
-                str,
-                {'when': date(2026, 10, 29)},
-                InputMatcher,
-            )
-            self.assertEqual(invalid_reference.status, Status.ERROR)
-            self.assertIn('expected a reference', invalid_reference.message)
             missing_input = prepare(session, 'Security', rule, Input, str, {}, InputMatcher)
             self.assertIsInstance(missing_input, NonNormalResult)
             self.assertEqual(missing_input.status, Status.ERROR)

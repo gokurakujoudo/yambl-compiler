@@ -16,7 +16,7 @@ def code_type_name(target: str) -> str:
     if local.endswith('::subtypes'):
         local = local.removesuffix('::subtypes') + 'Subtypes'
     name = local + 'Code'
-    if not name.isidentifier() or keyword.iskeyword(name):
+    if not name.isidentifier():
         raise ValueError(f'{target}: unsupported Python code type name')
     return name
 

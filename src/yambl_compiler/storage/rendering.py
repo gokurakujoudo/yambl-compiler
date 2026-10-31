@@ -83,8 +83,11 @@ def reference(layout: Layout) -> str:
         f"Model SHA-256: `{layout.model.model_digest}`.",
         f"IR revision: {layout.model.format_revision}. Storage layout revision: {LAYOUT_REVISION}.",
         "",
-        "Physical state columns use integers: VALUE = 0, NO_ENTRY = 1, EMPTY = 2, and NOT_APPLICABLE = 3. A missing row is NO_ENTRY. "
-        "EMPTY has a NULL payload. An existing VALUE collection header with no members is an empty collection.",
+        "Physical state columns use integers: VALUE = 0, NO_ENTRY = 1, EMPTY = 2, and NOT_APPLICABLE = 3. "
+        "NO_ENTRY means no field value is recorded; a missing applicable row also gives NO_ENTRY. "
+        "EMPTY means a record exists without a value; NOT_APPLICABLE "
+        "means the field is defined but does not apply. EMPTY has a NULL payload. "
+        "An existing VALUE collection header with no members is an empty collection.",
         "",
         "Snapshot dates match exactly. SCD periods use [valid_from, valid_to); both boundaries are required, "
         "between 1900-01-01 and 2999-12-31. The reader reports overlapping periods as ERROR.",
@@ -102,6 +105,10 @@ def reference(layout: Layout) -> str:
         "non-normal states use NULL in every lane. Integer and decimal lanes use exact TEXT. "
         "References use the target ID lane. These groups do not change field identity or reading semantics.",
         "",
+        "Boolean payloads use INTEGER 0 or 1. Integer and snowflake IDs use canonical decimal TEXT; "
+        "decimal payloads use exact decimal TEXT. Dates use ISO date TEXT and datetimes use UTC ISO TEXT. "
+        "Reference payloads use the target ID's encoding.",
+        "",
         "Configuration uses one long table per root entity, keyed by (id, field), with state and typed "
         "string/bool/int/decimal/date/datetime payload columns as needed. It shares the sparse layout rules: "
         "one corresponding lane for VALUE scalars and NULL in all lanes for non-normal states. "
@@ -109,11 +116,16 @@ def reference(layout: Layout) -> str:
         "",
         "Built-in tables store Decodes, Hierarchy and ConfigGroup. Declared dictionaries, including "
         "generated None/All flags entries, are inserted from the embedded IR. Built-in member tables "
-        "have foreign keys to their owner. These tables have no generated read methods or selection engine.",
+        "have foreign keys to their owner; the directly declared string IDs are decodes_id, "
+        "hierarchy_id and config_group_id respectively. "
+        "Built-in fields can be read through the generic reader, "
+        "including best-available selection.",
         "",
         "ConfigGroup mapping values are JSON objects with type (a resolved IR Type object) and value "
-        "(the JSON payload). SQL checks the envelope; field membership, type compatibility and configuration "
-        "execution are not implemented for these storage-only mappings.",
+        "(the JSON payload). SQL checks the envelope; model-aware validation checks field membership "
+        "and type compatibility. Readers apply matching groups when resolving config fields.",
+        "",
+        "Model defaults are applied by the reader only for NO_ENTRY; they are not SQL defaults.",
         "",
         "## Tables",
         "",
@@ -165,8 +177,7 @@ def reference(layout: Layout) -> str:
                     if f.identity == identity:
                         default = f.default.text if f.default else "none"
                         lines.append(
-                            f"- Implementation `{f.implementation}`; model default: {markdown_cell(default)}. "
-                            "Model defaults are applied by the reader only for NO_ENTRY; they are not SQL defaults."
+                            f"- Implementation `{f.implementation}`; model default: {markdown_cell(default)}."
                         )
             lines.append("")
         if table.rows:
@@ -198,8 +209,7 @@ def manifest(layout: Layout) -> str:
         "fields": {
             k: {
                 **asdict(v),
-                "readable": v.root in layout.entities
-                and layout.entities[v.root].source.origin != "builtin",
+                "readable": layout.entities[v.root].source.origin != "builtin",
             }
             for k, v in layout.fields.items()
         },

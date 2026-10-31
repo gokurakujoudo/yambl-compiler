@@ -122,8 +122,7 @@ def decode_scalar(
             target = type_.arguments[0].target
             if codes is not None and value not in codes:
                 raise ValueError(f'unknown code for {target}')
-            assert code_type is not None
-            result = code_type(value)
+            result = cast(type[str], code_type)(value)
         else:
             result = value
     check_finite(type_, result)
@@ -155,8 +154,7 @@ def encode_input(type_: Type, value: object, code_type: type[str] | None = None)
         valid = isinstance(value, datetime)
         encoded = cast(str, convert('format_datetime', (value,))) if valid else ''
     elif type_.name == 'code':
-        assert code_type is not None
-        valid = isinstance(value, code_type)
+        valid = isinstance(value, cast(type[str], code_type))
         encoded = str(value)
     else:
         valid = type(value) is str
@@ -191,9 +189,9 @@ class ScalarRule:
         if self.value_type.kind == 'reference':
             if not isinstance(value, EntityRef) or value.target != self.value_type.target:
                 raise ValueError('dimension requires a reference of the declared type')
-            assert self.reference_id is not None
-            encoded = encode_input(self.reference_id, value.id)
-            identity = decode_scalar(self.reference_id, encoded)
+            reference_id = cast(Type, self.reference_id)
+            encoded = encode_input(reference_id, value.id)
+            identity = decode_scalar(reference_id, encoded)
             if not reference_matches(self.value_type, identity):
                 raise ValueError('reference violates exact constraint')
             return EntityRef[object](self.value_type.target, cast(str | int, identity))

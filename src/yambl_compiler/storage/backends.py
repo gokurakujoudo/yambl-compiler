@@ -23,6 +23,8 @@ from yambl_compiler.storage.records import (
 
 type Row = dict[str, object]
 
+_ROW_CACHE_LIMIT = 1024
+
 
 class RowValidationError(ValueError):
     """Retain an untrusted row identifier alongside the original diagnostic."""
@@ -564,7 +566,7 @@ class FileBackend:
         self._check()
         for key in pending:
             self.row_cache[key] = found[key]
-            if len(self.row_cache) > 1024:
+            if len(self.row_cache) > _ROW_CACHE_LIMIT:
                 self.row_cache.popitem(last=False)
         return [
             dict(found[(table, self.stamps[table], cast(int, entry["_offset"]))])

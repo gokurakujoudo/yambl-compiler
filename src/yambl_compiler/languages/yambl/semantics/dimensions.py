@@ -9,6 +9,7 @@ from lark import Token, Tree
 from yambl_compiler.languages.yambl.computation.records import Expression
 from yambl_compiler.languages.yambl.semantics.expressions import Resolver
 from yambl_compiler.languages.yambl.semantics.symbols import (
+    RESERVED_CALCULATION_NAMES,
     EntityKey,
     Unit,
     declaration_name,
@@ -72,6 +73,10 @@ def collect_dimensions(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> 
             target = unit.world.dimensions.setdefault(owner.key, {})
             for node in children(declaration, "dimension"):
                 name = str(tokens(node)[1])
+                if name in RESERVED_CALCULATION_NAMES:
+                    diagnostics.append(
+                        diagnostic(unit.document, node, f'reserved calculation name: {name}')
+                    )
                 if name in target:
                     diagnostics.append(
                         diagnostic(
@@ -241,8 +246,8 @@ def check_dimensions(units: Sequence[Unit], diagnostics: list[Diagnostic]) -> No
                     diagnostic(unit.document, node, 'shared dimension cannot use self')
                 )
             name = declaration_name(node)
-            symbol = unit.scope.get(name)
-            if symbol is not None and symbol.kind == 'dimension':
+            symbol = unit.scope[name]
+            if symbol.kind == 'dimension':
                 dimension_at(unit, node, symbol.key, symbol.key, diagnostics)
         for owner, definitions in unit.world.dimensions.items():
             for name, (scope, node) in definitions.items():
