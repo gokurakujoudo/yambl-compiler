@@ -88,6 +88,23 @@ def has_error(value: object) -> bool:
     return False
 
 
+@dataclass(frozen=True)
+class _EmptyDimensions:
+    """Represent the coordinates of an undimensioned selection."""
+
+
+@dataclass(frozen=True)
+class _UndimensionedSelection:
+    """Retain a selected value when no field-specific class was generated.
+
+    :param value: Selected field value.
+    :param dimensions: Empty dimensions for the selected field.
+    """
+
+    value: object
+    dimensions: _EmptyDimensions
+
+
 @dataclass(frozen=True, eq=False)
 class EntityHandle:
     """Retain immutable identity and privately cached lazy field data.
@@ -191,7 +208,9 @@ class Reader:
         :param dimensions: Decoded coordinates from the selected row.
         :returns: Field-specific immutable selection.
         """
-        selection, dimension_type = self.selection_types[identity]
+        selection, dimension_type = self.selection_types.get(
+            identity, (_UndimensionedSelection, _EmptyDimensions)
+        )
         return selection(value=value, dimensions=dimension_type(**dimensions))
 
     def calculate(

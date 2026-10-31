@@ -119,6 +119,18 @@ entity E {
                             reader.read(group, 'builtins.ConfigGroup.then_set', {}),
                             Success({'E.limit': 5}),
                         )
+                        selected = reader.read_best(group, 'builtins.ConfigGroup.then_set', {})
+                        self.assertEqual(selected.value.value, {'E.limit': 5})
+                        self.assertEqual(vars(selected.value.dimensions), {})
+                        with self.assertRaises(TypeError):
+                            selected.value.value['E.limit'] = 100
+                        dictionary = reader.get_decodes('builtins.AttrCats').value
+                        selected_entries = reader.read_best(
+                            dictionary, 'builtins.Decodes.entries', {}
+                        )
+                        self.assertTrue(
+                            any(item.code == 'Static' for item in selected_entries.value.value)
+                        )
                         self.assertEqual(entity.limit, Success(5, 'config_group', ('group',)))
 
     async def test_combined_features_and_transaction_failures(self):
